@@ -18,7 +18,7 @@ class CategoryDefinitions:
     
     # Ana kategori eşikleri (1.5x kritik eşik)
     CRITICAL_THRESHOLD = 1.5
-    HIGH_MULTIPLIER_THRESHOLD = 3.0
+    HIGH_MULTIPLIER_THRESHOLD = 10.0  # Gerçek yüksek çarpan eşiği
     
     # 3 Ana Kategori
     CATEGORIES = {
@@ -66,19 +66,21 @@ class CategoryDefinitions:
         elif value < 2.0:
             return 'İyi (1.7x - 2.0x)'
         elif value < 3.0:
-            return 'Yüksek (2.0x - 3.0x)'
+            return 'Orta Yüksek (2.0x - 3.0x)'
         elif value < 5.0:
-            return 'Çok Yüksek (3.0x - 5.0x)'
+            return 'Yüksek (3.0x - 5.0x)'
         elif value < 10.0:
-            return 'Nadir (5.0x - 10.0x)'
+            return 'Çok Yüksek (5.0x - 10.0x)'
         elif value < 20.0:
-            return 'Çok Nadir (10.0x - 20.0x)'
+            return 'Nadir (10.0x - 20.0x)'
         elif value < 50.0:
-            return 'Mega (20.0x - 50.0x)'
+            return 'Çok Nadir (20.0x - 50.0x)'
         elif value < 100.0:
-            return 'Süper Mega (50.0x - 100.0x)'
+            return 'Mega (50.0x - 100.0x)'
+        elif value < 200.0:
+            return 'Süper Mega (100.0x - 200.0x)'
         else:
-            return 'Ultra (100.0x+)'
+            return 'Ultra (200.0x+)'
 
 
 class FeatureEngineering:
@@ -88,7 +90,7 @@ class FeatureEngineering:
     """
     
     @staticmethod
-    def extract_basic_features(values: List[float], window_sizes: List[int] = [5, 10, 20, 50]) -> Dict[str, float]:
+    def extract_basic_features(values: List[float], window_sizes: List[int] = [25, 50, 100, 200, 500]) -> Dict[str, float]:
         """
         Temel özellikler: Ortalama, std, min, max
         
@@ -245,9 +247,242 @@ class FeatureEngineering:
         return features
     
     @staticmethod
+    def extract_sequence_pattern_features(values: List[float]) -> Dict[str, float]:
+        """
+        Sequence pattern özellikleri - Model bu pattern'leri öğrenecek
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Sequence pattern özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 10:
+            # Son 10 elin kategori sequence'i encoding
+            recent_10_categories = [CategoryDefinitions.get_category_numeric(v) for v in values[-10:]]
+            
+            # Pattern tekrarı skoru
+            pattern_length = 3
+            if len(values) >= pattern_length * 2:
+                recent_pattern = values[-pattern_length:]
+                previous_pattern = values[-pattern_length*2:-pattern_length]
+                
+                # Benzerlik skoru (0-1 arası)
+                similarity = 0
+                for i in range(pattern_length):
+                    cat_recent = CategoryDefinitions.get_category_numeric(recent_pattern[i])
+                    cat_prev = CategoryDefinitions.get_category_numeric(previous_pattern[i])
+                    if cat_recent == cat_prev:
+                        similarity += 1
+                features['pattern_repetition_score'] = similarity / pattern_length
+            
+            # Kategorilerin dağılımı
+            features['loss_zone_count_10'] = sum(1 for c in recent_10_categories if c == 0)
+            features['safe_zone_count_10'] = sum(1 for c in recent_10_categories if c == 1)
+            features['high_zone_count_10'] = sum(1 for c in recent_10_categories if c == 2)
+        
+        return features
+    
+    @staticmethod
+    def extract_statistical_distribution_features(values: List[float]) -> Dict[str, float]:
+        """
+        İstatistiksel dağılım özellikleri
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Dağılım özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 50:
+            recent_50 = values[-50:]
+            
+            # Skewness (çarpıklık) ve Kurtosis (basıklık)
+            from scipy import stats
+            try:
+                features['skewness_50'] = float(stats.skew(recent_50))
+                features['kurtosis_50'] = float(stats.kurtosis(recent_50))
+            except:
+                features['skewness_50'] = 0.0
+                features['kurtosis_50'] = 0.0
+            
+            # Percentile'lar
+            features['percentile_25'] = np.percentile(recent_50, 25)
+            features['percentile_50'] = np.percentile(recent_50, 50)
+            features['percentile_75'] = np.percentile(recent_50, 75)
+            features['percentile_90'] = np.percentile(recent_50, 90)
+            
+            # IQR (Interquartile Range)
+            features['iqr'] = features['percentile_75'] - features['percentile_25']
+        
+        return features
+    
+    @staticmethod
+    def extract_multi_timeframe_momentum(values: List[float]) -> Dict[str, float]:
+        """
+        Çoklu zaman dilimleri momentum özellikleri
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Momentum özellikleri
+        """
+        features = {}
+        
+        # Momentum hesaplama fonksiyonu
+        def calc_momentum(window):
+            if len(window) < 2:
+                return 0.0
+            # Son değer ile ortalama arasındaki fark
+            return (window[-1] - np.mean(window)) / (np.std(window) + 1e-8)
+        
+        # Farklı zaman dilimleri için momentum
+        timeframes = {'short_25': 25, 'medium_50': 50, 'medium_100': 100, 'long_200': 200}
+        
+        for name, size in timeframes.items():
+            if len(values) >= size:
+                recent = values[-size:]
+                features[f'momentum_{name}'] = calc_momentum(recent)
+                
+                # Trend strength (yönlü hareketin gücü)
+                changes = [recent[i] - recent[i-1] for i in range(1, len(recent))]
+                positive_changes = sum(1 for c in changes if c > 0)
+                features[f'trend_strength_{name}'] = (positive_changes / len(changes)) * 2 - 1  # -1 ile 1 arası
+        
+        # Acceleration (ivme) - momentum değişim hızı
+        if len(values) >= 100:
+            momentum_50_old = calc_momentum(values[-100:-50]) if len(values) >= 100 else 0
+            momentum_50_new = calc_momentum(values[-50:])
+            features['acceleration'] = momentum_50_new - momentum_50_old
+        
+        return features
+    
+    @staticmethod
+    def extract_recovery_pattern_features(values: List[float]) -> Dict[str, float]:
+        """
+        Recovery (toparlanma) pattern özellikleri - Model öğrenecek
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Recovery pattern özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 50:
+            recent_50 = values[-50:]
+            recent_10 = values[-10:]
+            
+            # Volatilite normalizasyonu (soğuma bitişi göstergesi)
+            volatility_50 = np.std(recent_50)
+            volatility_10 = np.std(recent_10)
+            
+            # Volatilite düşüyorsa toparlanma olabilir
+            if volatility_50 > 0:
+                features['volatility_normalization'] = 1 - (volatility_10 / volatility_50)
+            else:
+                features['volatility_normalization'] = 0.0
+            
+            # Büyük çarpandan sonra stabilizasyon
+            max_in_50 = max(recent_50)
+            if max_in_50 > 10.0:  # Büyük çarpan varsa
+                # Son 10 elde ne kadar stabilize
+                recent_10_std = np.std(recent_10)
+                features['post_big_multiplier_stability'] = 1 / (1 + recent_10_std)
+            else:
+                features['post_big_multiplier_stability'] = 0.5  # Neutral
+            
+            # Trend değişimi (düşüşten yükselişe geçiş)
+            if len(recent_50) >= 20:
+                first_half_mean = np.mean(recent_50[:25])
+                second_half_mean = np.mean(recent_50[25:])
+                features['trend_reversal'] = (second_half_mean - first_half_mean) / (first_half_mean + 1e-8)
+        
+        return features
+    
+    @staticmethod
+    def extract_anomaly_detection_features(values: List[float]) -> Dict[str, float]:
+        """
+        Anomali tespit özellikleri - Model için ipucu
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Anomali özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 50:
+            recent_50 = values[-50:]
+            current_value = values[-1]
+            
+            # Z-score (standart sapma cinsinden sapma)
+            mean_50 = np.mean(recent_50)
+            std_50 = np.std(recent_50)
+            
+            if std_50 > 0:
+                features['z_score'] = (current_value - mean_50) / std_50
+                features['is_outlier'] = 1.0 if abs(features['z_score']) > 2.0 else 0.0
+            else:
+                features['z_score'] = 0.0
+                features['is_outlier'] = 0.0
+            
+            # Median Absolute Deviation (MAD) - daha robust anomali tespiti
+            median_50 = np.median(recent_50)
+            mad = np.median([abs(v - median_50) for v in recent_50])
+            
+            if mad > 0:
+                features['mad_score'] = (current_value - median_50) / (1.4826 * mad)
+            else:
+                features['mad_score'] = 0.0
+            
+            # Son değerin percentile'i
+            features['current_value_percentile'] = sum(1 for v in recent_50 if v <= current_value) / len(recent_50)
+        
+        return features
+    
+    @staticmethod
+    def extract_cooling_period_features(values: List[float]) -> Dict[str, float]:
+        """
+        Soğuma dönemi özellikleri - Model öğrenecek (net kural yok)
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Soğuma pattern özellikleri (model için)
+        """
+        features = {}
+        
+        if len(values) >= 50:
+            # Büyük çarpanlardan mesafe
+            features.update(FeatureEngineering.extract_distance_features(
+                values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]
+            ))
+            
+            # Son 10 elde volatilite pattern
+            if len(values) >= 10:
+                recent_10 = values[-10:]
+                features['recent_volatility_pattern'] = np.std(recent_10) / (np.mean(recent_10) + 1e-8)
+            
+            # Ardışık düşük değer sayısı
+            if len(values) >= 10:
+                below_2x_count = sum(1 for v in values[-10:] if v < 2.0)
+                features['low_value_streak_10'] = below_2x_count
+        
+        return features
+    
+    @staticmethod
     def extract_all_features(values: List[float]) -> Dict[str, float]:
         """
-        Tüm özellikleri çıkar
+        Tüm özellikleri çıkar - Geliştirilmiş versiyon
         
         Args:
             values: Geçmiş değerler listesi
@@ -257,20 +492,40 @@ class FeatureEngineering:
         """
         all_features = {}
         
-        # Temel özellikler
+        # Temel özellikler (güncellenen pencere boyutlarıyla)
         all_features.update(FeatureEngineering.extract_basic_features(values))
         
         # Eşik özellikleri
         all_features.update(FeatureEngineering.extract_threshold_features(values))
         
-        # Mesafe özellikleri
-        all_features.update(FeatureEngineering.extract_distance_features(values))
+        # Mesafe özellikleri (genişletilmiş milestones)
+        all_features.update(FeatureEngineering.extract_distance_features(
+            values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]
+        ))
         
         # Ardışıklık özellikleri
         all_features.update(FeatureEngineering.extract_streak_features(values))
         
         # Volatilite özellikleri
         all_features.update(FeatureEngineering.extract_volatility_features(values))
+        
+        # YENİ: Sequence pattern özellikleri
+        all_features.update(FeatureEngineering.extract_sequence_pattern_features(values))
+        
+        # YENİ: İstatistiksel dağılım özellikleri
+        all_features.update(FeatureEngineering.extract_statistical_distribution_features(values))
+        
+        # YENİ: Multi-timeframe momentum
+        all_features.update(FeatureEngineering.extract_multi_timeframe_momentum(values))
+        
+        # YENİ: Recovery pattern
+        all_features.update(FeatureEngineering.extract_recovery_pattern_features(values))
+        
+        # YENİ: Anomaly detection
+        all_features.update(FeatureEngineering.extract_anomaly_detection_features(values))
+        
+        # YENİ: Soğuma dönemi pattern'leri (model için)
+        all_features.update(FeatureEngineering.extract_cooling_period_features(values))
         
         # Son değer
         if len(values) > 0:

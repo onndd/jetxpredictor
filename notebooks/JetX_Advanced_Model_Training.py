@@ -29,7 +29,7 @@ from google.colab import drive
 drive.mount('/content/drive')
 
 # Gerekli kütüphaneleri yükle
-!pip install -q tensorflow scikit-learn pandas numpy matplotlib seaborn plotly joblib
+!pip install -q tensorflow scikit-learn pandas numpy scipy matplotlib seaborn plotly joblib
 
 # İçe aktarımlar
 import numpy as np
@@ -40,6 +40,7 @@ import sqlite3
 import joblib
 import warnings
 from typing import List, Dict, Tuple
+from scipy import stats
 
 # TensorFlow/Keras
 import tensorflow as tf
@@ -97,130 +98,31 @@ print(f"1.5x Üstü: {above_threshold} ({above_threshold/len(df)*100:.2f}%)")
 
 """## 3. Özellik Mühendisliği
 
-Üç paralel akış:
-- Ham veri akışı
-- Kategori dönüşüm akışı  
-- Özellik türetme akışı
+GELİŞTİRİLMİŞ - category_definitions.py'den import ediyoruz
 """
 
-class FeatureEngineer:
-    """
-    Detaylı özellik mühendisliği sınıfı
-    MODEL_MIMARISI.md'deki spesifikasyonlara göre
-    """
-    
-    def __init__(self, window_size=50):
-        self.window_size = window_size
-        
-    def extract_basic_features(self, window):
-        """Temel istatistiksel özellikler"""
-        features = {}
-        for size in [5, 10, 20, 50]:
-            if len(window) >= size:
-                recent = window[-size:]
-                features[f'mean_{size}'] = np.mean(recent)
-                features[f'std_{size}'] = np.std(recent)
-                features[f'min_{size}'] = np.min(recent)
-                features[f'max_{size}'] = np.max(recent)
-                features[f'median_{size}'] = np.median(recent)
-        return features
-    
-    def extract_threshold_features(self, window, threshold=1.5):
-        """1.5x eşik özellikleri"""
-        features = {}
-        if len(window) >= 10:
-            recent_10 = window[-10:]
-            recent_50 = window[-50:] if len(window) >= 50 else window
-            
-            features['below_threshold_10'] = sum(1 for v in recent_10 if v < threshold)
-            features['above_threshold_10'] = sum(1 for v in recent_10 if v >= threshold)
-            features['threshold_ratio_10'] = features['above_threshold_10'] / 10
-            
-            if len(recent_50) > 0:
-                features['threshold_ratio_50'] = sum(1 for v in recent_50 if v >= threshold) / len(recent_50)
-            
-            features['in_critical_zone_10'] = sum(1 for v in recent_10 if 1.45 <= v <= 1.55)
-        return features
-    
-    def extract_distance_features(self, window, milestones=[10.0, 20.0, 50.0, 100.0]):
-        """Büyük çarpanlardan bu yana geçen mesafe"""
-        features = {}
-        for milestone in milestones:
-            distance = len(window)
-            for i in range(len(window) - 1, -1, -1):
-                if window[i] >= milestone:
-                    distance = len(window) - 1 - i
-                    break
-            features[f'distance_from_{int(milestone)}x'] = distance
-        return features
-    
-    def extract_streak_features(self, window):
-        """Ardışık pattern özellikleri"""
-        features = {}
-        if len(window) >= 2:
-            rising_streak = 0
-            falling_streak = 0
-            
-            for i in range(len(window) - 1, 0, -1):
-                if window[i] > window[i - 1]:
-                    rising_streak += 1
-                    if falling_streak > 0:
-                        break
-                elif window[i] < window[i - 1]:
-                    falling_streak += 1
-                    if rising_streak > 0:
-                        break
-                else:
-                    break
-            
-            features['rising_streak'] = rising_streak
-            features['falling_streak'] = falling_streak
-        return features
-    
-    def extract_volatility_features(self, window):
-        """Volatilite özellikleri"""
-        features = {}
-        if len(window) >= 10:
-            recent = window[-10:]
-            changes = [recent[i] - recent[i-1] for i in range(1, len(recent))]
-            features['volatility_10'] = np.std(changes) if changes else 0
-            features['mean_change_10'] = np.mean(changes) if changes else 0
-            features['range_10'] = np.max(recent) - np.min(recent)
-        return features
-    
-    def extract_all_features(self, window):
-        """Tüm özellikleri birleştir"""
-        all_features = {}
-        all_features.update(self.extract_basic_features(window))
-        all_features.update(self.extract_threshold_features(window))
-        all_features.update(self.extract_distance_features(window))
-        all_features.update(self.extract_streak_features(window))
-        all_features.update(self.extract_volatility_features(window))
-        
-        if len(window) > 0:
-            all_features['last_value'] = window[-1]
-        
-        return all_features
+# category_definitions.py'den FeatureEngineering sınıfını import et
+from category_definitions import FeatureEngineering, CategoryDefinitions
 
 def create_dataset(data, window_size=50):
     """
     Zaman serisi verisi için özellikler ve hedefler oluştur
+    GELİŞTİRİLMİŞ: category_definitions.py'deki yeni özelliklerle
     """
-    feature_engineer = FeatureEngineer(window_size)
     X_features = []
     X_sequences = []
     y_regression = []
     y_classification = []
     
     for i in range(window_size, len(data)):
-        window = data[i-window_size:i]
+        window = data[i-window_size:i].tolist()
         target = data[i]
         
-        # Özellik çıkarma
-        features = feature_engineer.extract_all_features(window)
+        # Geliştirilmiş özellik çıkarma (category_definitions'dan)
+        features = FeatureEngineering.extract_all_features(window)
         X_features.append(list(features.values()))
         
-        # Sequence (LSTM/TCN için)
+        # Sequence (TCN/N-BEATS için)
         X_sequences.append(window)
         
         # Hedefler
@@ -235,26 +137,41 @@ def create_dataset(data, window_size=50):
         'feature_names': list(features.keys())
     }
 
-# Dataset oluştur
-print("\
-🔧 Özellikler çıkarılıyor...")
-dataset = create_dataset(df['value'].values, window_size=50)
+# Dataset oluştur - Kısa pencere (50)
+print("\n🔧 Özellikler çıkarılıyor (50 pencere)...")
+dataset_50 = create_dataset(df['value'].values, window_size=50)
 
-print(f"\
-✅ Özellikler hazır!")
-print(f"Özellik sayısı: {dataset['X_features'].shape[1]}")
-print(f"Sequence boyutu: {dataset['X_sequences'].shape}")
-print(f"Örnek sayısı: {len(dataset['y_regression'])}")
-print(f"Hedef dağılımı: {np.bincount(dataset['y_classification'])}")
+print(f"✅ 50 Pencere - Özellikler hazır!")
+print(f"Özellik sayısı: {dataset_50['X_features'].shape[1]}")
+print(f"Sequence boyutu: {dataset_50['X_sequences'].shape}")
+print(f"Örnek sayısı: {len(dataset_50['y_regression'])}")
+print(f"Hedef dağılımı: {np.bincount(dataset_50['y_classification'])}")
+
+# Dataset oluştur - Orta pencere (200)
+print("\n🔧 Özellikler çıkarılıyor (200 pencere)...")
+dataset_200 = create_dataset(df['value'].values, window_size=200)
+
+print(f"✅ 200 Pencere - Özellikler hazır!")
+print(f"Örnek sayısı: {len(dataset_200['y_regression'])}")
+
+# Dataset oluştur - Uzun pencere (500)
+print("\n🔧 Özellikler çıkarılıyor (500 pencere)...")
+dataset_500 = create_dataset(df['value'].values, window_size=500)
+
+print(f"✅ 500 Pencere - Özellikler hazır!")
+print(f"Örnek sayısı: {len(dataset_500['y_regression'])}")
+
+# Ana dataset olarak 50 pencereyi kullan
+dataset = dataset_50
 
 """## 4. N-BEATS Model Bloğu
 
-Üç farklı pencere bloğu: 50, 200, 500
+ÜÇ PENCERE BLOĞU: 50, 200, 500 - TÜMÜ AKTİF
 """
 
 def create_nbeats_block(input_shape, units=64, name_prefix='nbeats'):
     """
-    Basitleştirilmiş N-BEATS bloğu
+    N-BEATS bloğu - Basis expansion ile
     """
     inputs = layers.Input(shape=input_shape, name=f'{name_prefix}_input')
     
@@ -274,12 +191,17 @@ def create_nbeats_block(input_shape, units=64, name_prefix='nbeats'):
     model = Model(inputs=inputs, outputs=[forward, features], name=name_prefix)
     return model
 
-# Kısa pencere bloğu (50)
+# Kısa pencere bloğu (50) - 64 boyut
 nbeats_short = create_nbeats_block((50,), units=64, name_prefix='nbeats_short')
 print("✅ N-BEATS Kısa Pencere (50 el) - 64 boyut")
 
-# Orta pencere bloğu (200) - Daha büyük window için yeni dataset gerekir
-# Uzun pencere bloğu (500) - Daha büyük window için yeni dataset gerekir
+# Orta pencere bloğu (200) - 128 boyut
+nbeats_medium = create_nbeats_block((200,), units=128, name_prefix='nbeats_medium')
+print("✅ N-BEATS Orta Pencere (200 el) - 128 boyut")
+
+# Uzun pencere bloğu (500) - 256 boyut
+nbeats_long = create_nbeats_block((500,), units=256, name_prefix='nbeats_long')
+print("✅ N-BEATS Uzun Pencere (500 el) - 256 boyut")
 
 """## 5. TCN (Temporal Convolutional Network) Modülü
 
@@ -353,42 +275,65 @@ def create_psychological_analyzer(input_shape):
 psych_model = create_psychological_analyzer((dataset['X_features'].shape[1],))
 print("✅ Psikolojik Analiz Motoru - 32 boyut")
 
-"""## 7. Ensemble Fusion - Hibrit Model
+"""## 7. Ensemble Fusion - Gelişmiş Hibrit Model
 
-N-BEATS + TCN + Psikolojik Motor birleşimi
+3 N-BEATS (50,200,500) + TCN + Psikolojik Motor
 """
 
-def create_hybrid_model(feature_dim, sequence_length=50):
+def create_advanced_hybrid_model(feature_dim):
     """
-    Tam hibrit model: N-BEATS + TCN + Psikolojik Motor
+    Gelişmiş hibrit model: 3 N-BEATS + TCN + Psikolojik Motor
     """
     # Inputs
     feature_input = layers.Input(shape=(feature_dim,), name='feature_input')
-    sequence_input = layers.Input(shape=(sequence_length,), name='sequence_input')
+    seq_50_input = layers.Input(shape=(50,), name='seq_50_input')
+    seq_200_input = layers.Input(shape=(200,), name='seq_200_input')
+    seq_500_input = layers.Input(shape=(500,), name='seq_500_input')
     
-    # 1. N-BEATS Bloğu (%60 ağırlık)
-    nbeats_forecast, nbeats_features = nbeats_short(sequence_input)
+    # 1. ÜÇ N-BEATS Bloğu
+    # Kısa pencere (50) - 64 boyut
+    nbeats_short_forecast, nbeats_short_features = nbeats_short(seq_50_input)
     
-    # 2. TCN Bloğu (%60 ağırlık)
-    tcn_features = tcn_model(sequence_input)
+    # Orta pencere (200) - 128 boyut
+    nbeats_medium_forecast, nbeats_medium_features = nbeats_medium(seq_200_input)
+    
+    # Uzun pencere (500) - 256 boyut
+    nbeats_long_forecast, nbeats_long_features = nbeats_long(seq_500_input)
+    
+    # N-BEATS tahminlerini ağırlıklı birleştir
+    weighted_forecast = layers.Average()([
+        layers.Lambda(lambda x: x * 0.5)(nbeats_short_forecast),
+        layers.Lambda(lambda x: x * 0.3)(nbeats_medium_forecast),
+        layers.Lambda(lambda x: x * 0.2)(nbeats_long_forecast)
+    ])
+    
+    # N-BEATS özelliklerini birleştir: 64 + 128 + 256 = 448 boyut
+    nbeats_combined = layers.Concatenate()([
+        nbeats_short_features,
+        nbeats_medium_features,
+        nbeats_long_features
+    ])
+    
+    # 2. TCN Bloğu (50 pencere üzerinde) - 512 boyut
+    tcn_features = tcn_model(seq_50_input)
     
     # N-BEATS + TCN füzyonu
-    time_series_features = layers.Concatenate()([nbeats_features, tcn_features])
+    time_series_features = layers.Concatenate()([nbeats_combined, tcn_features])  # 448 + 512 = 960
     time_series_features = layers.Dense(256, activation='relu')(time_series_features)
     time_series_features = layers.Dropout(0.3)(time_series_features)
     
-    # 3. Psikolojik Motor (%30 ağırlık)
+    # 3. Psikolojik Motor - 32 boyut
     psych_features = psych_model(feature_input)
     
-    # 4. İstatistiksel Baseline (%10 ağırlık)
+    # 4. İstatistiksel Baseline - 16 boyut
     stat_features = layers.Dense(16, activation='relu')(feature_input)
     
-    # Ensemble Fusion
+    # Ensemble Fusion: 256 + 32 + 16 = 304 boyut
     all_features = layers.Concatenate()([
-        time_series_features,  # 256
-        psych_features,        # 32
-        stat_features          # 16
-    ])  # Toplam 304 boyut
+        time_series_features,
+        psych_features,
+        stat_features
+    ])
     
     # Final katmanlar
     x = layers.Dense(128, activation='relu')(all_features)
@@ -406,52 +351,79 @@ def create_hybrid_model(feature_dim, sequence_length=50):
     # 3. Güven skoru
     confidence_output = layers.Dense(1, activation='sigmoid', name='confidence_output')(x)
     
+    # 4. Pattern risk skoru (YENİ - soğuma, tuzak detection için)
+    pattern_risk_output = layers.Dense(1, activation='sigmoid', name='pattern_risk_output')(x)
+    
     # Model oluştur
     model = Model(
-        inputs=[feature_input, sequence_input],
-        outputs=[regression_output, classification_output, confidence_output],
-        name='JetX_Hybrid_Model'
+        inputs=[feature_input, seq_50_input, seq_200_input, seq_500_input],
+        outputs=[regression_output, classification_output, confidence_output, pattern_risk_output],
+        name='JetX_Advanced_Hybrid_Model'
     )
     
     return model
 
-# Hibrit modeli oluştur
-hybrid_model = create_hybrid_model(
-    feature_dim=dataset['X_features'].shape[1],
-    sequence_length=50
+# Gelişmiş hibrit modeli oluştur
+print("\n🔨 Gelişmiş Hibrit Model oluşturuluyor...")
+hybrid_model = create_advanced_hybrid_model(
+    feature_dim=dataset['X_features'].shape[1]
 )
 
-print("\
-✅ Hibrit Model Oluşturuldu!")
+print("\n✅ Gelişmiş Hibrit Model Oluşturuldu!")
+print("📊 Model Yapısı:")
+print(f"  - 3 N-BEATS bloğu (50, 200, 500 pencere)")
+print(f"  - TCN bloğu (512 boyut)")
+print(f"  - Psikolojik analiz motoru (32 boyut)")
+print(f"  - 4 çıktı: regresyon, classification, confidence, pattern_risk")
 hybrid_model.summary()
 
 """## 8. Model Eğitimi
 
-Multi-task learning loss ile eğitim
+Multi-task learning loss ile eğitim - GELİŞTİRİLMİŞ (4 çıktı)
 """
 
-# Veri hazırlama
-X_feat_temp, X_feat_test, X_seq_temp, X_seq_test, y_reg_temp, y_reg_test, y_class_temp, y_class_test = train_test_split(
-    dataset['X_features'], 
-    dataset['X_sequences'],
-    dataset['y_regression'],
-    dataset['y_classification'],
-    test_size=0.15,
-    shuffle=False
-)
+# Veri hazırlama - 500 pencere dataset'i kullanıyoruz (en kapsayıcı)
+# Test split
+split_idx_test = int(len(dataset_500['X_features']) * 0.85)
+X_feat_train_val = dataset_500['X_features'][:split_idx_test]
+X_feat_test = dataset_500['X_features'][split_idx_test:]
+y_reg_train_val = dataset_500['y_regression'][:split_idx_test]
+y_reg_test = dataset_500['y_regression'][split_idx_test:]
+y_class_train_val = dataset_500['y_classification'][:split_idx_test]
+y_class_test = dataset_500['y_classification'][split_idx_test:]
 
-X_feat_train, X_feat_val, X_seq_train, X_seq_val, y_reg_train, y_reg_val, y_class_train, y_class_val = train_test_split(
-    X_feat_temp,
-    X_seq_temp,
-    y_reg_temp,
-    y_class_temp,
-    test_size=0.176,
-    shuffle=False
-)
+# Validation split
+split_idx_val = int(len(X_feat_train_val) * 0.85)
+X_feat_train = X_feat_train_val[:split_idx_val]
+X_feat_val = X_feat_train_val[split_idx_val:]
+y_reg_train = y_reg_train_val[:split_idx_val]
+y_reg_val = y_reg_train_val[split_idx_val:]
+y_class_train = y_class_train_val[:split_idx_val]
+y_class_val = y_class_train_val[split_idx_val:]
 
-print(f"Train: {len(X_feat_train)} ({len(X_feat_train)/len(dataset['X_features'])*100:.1f}%)")
-print(f"Val: {len(X_feat_val)} ({len(X_feat_val)/len(dataset['X_features'])*100:.1f}%)")
-print(f"Test: {len(X_feat_test)} ({len(X_feat_test)/len(dataset['X_features'])*100:.1f}%)")
+# Sequence data - 3 farklı pencere için
+# 50 pencere sequences
+seq_50_train_val = dataset_500['X_sequences'][:split_idx_test, -50:]
+seq_50_test = dataset_500['X_sequences'][split_idx_test:, -50:]
+seq_50_train = seq_50_train_val[:split_idx_val]
+seq_50_val = seq_50_train_val[split_idx_val:]
+
+# 200 pencere sequences
+seq_200_train_val = dataset_500['X_sequences'][:split_idx_test, -200:]
+seq_200_test = dataset_500['X_sequences'][split_idx_test:, -200:]
+seq_200_train = seq_200_train_val[:split_idx_val]
+seq_200_val = seq_200_train_val[split_idx_val:]
+
+# 500 pencere sequences
+seq_500_train_val = dataset_500['X_sequences'][:split_idx_test]
+seq_500_test = dataset_500['X_sequences'][split_idx_test:]
+seq_500_train = seq_500_train_val[:split_idx_val]
+seq_500_val = seq_500_train_val[split_idx_val:]
+
+print(f"\n📊 Veri Bölümleme:")
+print(f"Train: {len(X_feat_train)} ({len(X_feat_train)/len(dataset_500['X_features'])*100:.1f}%)")
+print(f"Val: {len(X_feat_val)} ({len(X_feat_val)/len(dataset_500['X_features'])*100:.1f}%)")
+print(f"Test: {len(X_feat_test)} ({len(X_feat_test)/len(dataset_500['X_features'])*100:.1f}%)")
 
 # Normalizasyon
 scaler = StandardScaler()
@@ -459,27 +431,30 @@ X_feat_train_scaled = scaler.fit_transform(X_feat_train)
 X_feat_val_scaled = scaler.transform(X_feat_val)
 X_feat_test_scaled = scaler.transform(X_feat_test)
 
-# Multi-task loss weights
-# α₁ × Kategori Loss + α₂ × Regresyon Loss + α₃ × Güven Loss
+# Multi-task loss weights - 4 çıktı için
 loss_weights = {
-    'regression_output': 0.3,      # α₂
-    'classification_output': 0.5,   # α₁ (en önemli: 1.5x eşik)
-    'confidence_output': 0.2        # α₃
+    'regression_output': 0.25,           # α₁ - Değer tahmini
+    'classification_output': 0.45,       # α₂ - 1.5x eşik (EN ÖNEMLİ)
+    'confidence_output': 0.15,           # α₃ - Güven skoru
+    'pattern_risk_output': 0.15          # α₄ - Pattern risk (YENİ)
 }
 
 # Model derleme
+print("\n🔨 Model derleniyor...")
 hybrid_model.compile(
     optimizer=Adam(learning_rate=0.001),
     loss={
         'regression_output': 'huber',  # Outlier'lara daha az duyarlı
         'classification_output': 'binary_crossentropy',  # 1.5x eşik
-        'confidence_output': 'mse'
+        'confidence_output': 'mse',
+        'pattern_risk_output': 'mse'  # Pattern risk
     },
     loss_weights=loss_weights,
     metrics={
         'regression_output': ['mae', 'mse'],
         'classification_output': ['accuracy'],
-        'confidence_output': ['mae']
+        'confidence_output': ['mae'],
+        'pattern_risk_output': ['mae']
     }
 )
 
@@ -507,26 +482,30 @@ callbacks = [
     )
 ]
 
-# Dummy güven skorları (eğitim için)
+# Dummy skorları (eğitim için)
 y_conf_train = np.random.uniform(0.6, 1.0, size=(len(y_reg_train),))
 y_conf_val = np.random.uniform(0.6, 1.0, size=(len(y_reg_val),))
+y_pattern_risk_train = np.random.uniform(0.0, 0.5, size=(len(y_reg_train),))
+y_pattern_risk_val = np.random.uniform(0.0, 0.5, size=(len(y_reg_val),))
 
 # Eğitim
-print("\
-🚀 Model eğitimi başlıyor...")
+print("\n🚀 Model eğitimi başlıyor...")
+print("💡 İpucu: GPU varsa eğitim ~10-20 dakika sürer")
 history = hybrid_model.fit(
-    [X_feat_train_scaled, X_seq_train],
+    [X_feat_train_scaled, seq_50_train, seq_200_train, seq_500_train],
     {
         'regression_output': y_reg_train,
         'classification_output': y_class_train,
-        'confidence_output': y_conf_train
+        'confidence_output': y_conf_train,
+        'pattern_risk_output': y_pattern_risk_train
     },
     validation_data=(
-        [X_feat_val_scaled, X_seq_val],
+        [X_feat_val_scaled, seq_50_val, seq_200_val, seq_500_val],
         {
             'regression_output': y_reg_val,
             'classification_output': y_class_val,
-            'confidence_output': y_conf_val
+            'confidence_output': y_conf_val,
+            'pattern_risk_output': y_pattern_risk_val
         }
     ),
     epochs=100,
@@ -535,22 +514,24 @@ history = hybrid_model.fit(
     verbose=1
 )
 
+print("\n✅ Eğitim tamamlandı!")
+
 """## 9. Model Değerlendirme ve Export"""
 
 # Test seti değerlendirmesi
-print("\
-📊 Test seti değerlendirmesi...")
+print("\n📊 Test seti değerlendirmesi...")
 y_conf_test = np.random.uniform(0.6, 1.0, size=(len(y_reg_test),))
+y_pattern_risk_test = np.random.uniform(0.0, 0.5, size=(len(y_reg_test),))
 
-predictions = hybrid_model.predict([X_feat_test_scaled, X_seq_test])
-y_reg_pred, y_class_pred_proba, y_conf_pred = predictions
+# Tahmin yap
+predictions = hybrid_model.predict([X_feat_test_scaled, seq_50_test, seq_200_test, seq_500_test])
+y_reg_pred, y_class_pred_proba, y_conf_pred, y_pattern_risk_pred = predictions
 
 # 1.5x eşik doğruluğu (EN ÖNEMLİ METRİK)
 y_class_pred = (y_class_pred_proba > 0.5).astype(int).flatten()
 threshold_accuracy = accuracy_score(y_class_test, y_class_pred)
 
-print(f"\
-🎯 1.5x Eşik Doğruluğu: {threshold_accuracy:.4f} ({threshold_accuracy*100:.2f}%)")
+print(f"\n🎯 1.5x Eşik Doğruluğu: {threshold_accuracy:.4f} ({threshold_accuracy*100:.2f}%)")
 print(f"Hedef: %75+")
 
 if threshold_accuracy >= 0.75:
@@ -558,9 +539,23 @@ if threshold_accuracy >= 0.75:
 else:
     print("⚠️ Hedef henüz ulaşılamadı, daha fazla eğitim gerekebilir")
 
+# Regresyon metrikleri
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+mae = mean_absolute_error(y_reg_test, y_reg_pred)
+rmse = np.sqrt(mean_squared_error(y_reg_test, y_reg_pred))
+r2 = r2_score(y_reg_test, y_reg_pred)
+
+print(f"\n📈 Regresyon Metrikleri:")
+print(f"MAE: {mae:.4f}")
+print(f"RMSE: {rmse:.4f}")
+print(f"R²: {r2:.4f}")
+
+# Pattern risk ortalama
+avg_pattern_risk = np.mean(y_pattern_risk_pred)
+print(f"\n⚠️ Ortalama Pattern Risk: {avg_pattern_risk:.4f}")
+
 # Classification report
-print("\
-📋 Classification Report:")
+print("\n📋 Classification Report:")
 print(classification_report(y_class_test, y_class_pred, target_names=['< 1.5x', '≥ 1.5x']))
 
 # Confusion Matrix
@@ -569,7 +564,7 @@ plt.figure(figsize=(8, 6))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
             xticklabels=['< 1.5x', '≥ 1.5x'],
             yticklabels=['< 1.5x', '≥ 1.5x'])
-plt.title('Confusion Matrix')
+plt.title('Confusion Matrix - 1.5x Eşik Tahmini')
 plt.ylabel('Gerçek')
 plt.xlabel('Tahmin')
 plt.show()

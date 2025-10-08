@@ -66,17 +66,17 @@ class JetXPredictor:
             print(f"⚠️ Model yükleme hatası: {e}")
             print("Model henüz eğitilmemiş olabilir. Önce Google Colab'da eğitin.")
     
-    def extract_features_from_history(self, history: List[float]) -> np.ndarray:
+    def extract_features_from_history(self, history: List[float]) -> Dict:
         """
-        Geçmiş verilerden özellik çıkarır
+        Geçmiş verilerden özellik çıkarır ve sequence'ler oluşturur
         
         Args:
             history: Geçmiş değerler listesi
             
         Returns:
-            Feature array
+            Dictionary containing features and sequences
         """
-        # Tüm özellikleri çıkar
+        # Tüm özellikleri çıkar (geliştirilmiş feature engineering)
         features_dict = FeatureEngineering.extract_all_features(history)
         
         # Dictionary'yi array'e çevir
@@ -86,7 +86,17 @@ class JetXPredictor:
         if self.scaler is not None:
             feature_values = self.scaler.transform(feature_values)
         
-        return feature_values
+        # Sequence'leri hazırla (3 farklı pencere)
+        seq_50 = np.array(history[-50:]).reshape(1, -1) if len(history) >= 50 else None
+        seq_200 = np.array(history[-200:]).reshape(1, -1) if len(history) >= 200 else None
+        seq_500 = np.array(history[-500:]).reshape(1, -1) if len(history) >= 500 else None
+        
+        return {
+            'features': feature_values,
+            'seq_50': seq_50,
+            'seq_200': seq_200,
+            'seq_500': seq_500
+        }
     
     def predict(
         self,
@@ -113,28 +123,47 @@ class JetXPredictor:
                 'recommendation': 'BEKLE'
             }
         
-        if len(history) < 50:
+        # Minimum veri kontrolü - artık 500 veri gerekiyor (uzun pencere için)
+        if len(history) < 500:
             return {
-                'error': 'En az 50 geçmiş veri gerekli',
+                'error': f'En az 500 geçmiş veri gerekli (mevcut: {len(history)})',
                 'predicted_value': None,
                 'confidence': 0.0,
                 'above_threshold': None,
                 'category': None,
-                'recommendation': 'BEKLE'
+                'recommendation': 'BEKLE',
+                'pattern_risk': 0.0
             }
         
         try:
-            # Özellikleri çıkar
-            features = self.extract_features_from_history(history)
+            # Özellikleri ve sequence'leri çıkar
+            model_inputs = self.extract_features_from_history(history)
             
-            # Tahmin yap
-            prediction = self.model.predict(features, verbose=0)
+            # Model inputları hazırla
+            input_data = [
+                model_inputs['features'],
+                model_inputs['seq_50'],
+                model_inputs['seq_200'],
+                model_inputs['seq_500']
+            ]
             
-            # Tahmin edilen değer
-            predicted_value = float(prediction[0][0]) if len(prediction[0]) == 1 else float(prediction[0])
+            # Tahmin yap (4 çıktı: regression, classification, confidence, pattern_risk)
+            predictions = self.model.predict(input_data, verbose=0)
             
-            # Güven skorunu hesapla (model çıktısına göre ayarlanabilir)
-            confidence = self._calculate_confidence(history, predicted_value)
+            # Çıktıları ayır
+            if len(predictions) == 4:
+                regression_pred, classification_pred, confidence_pred, pattern_risk_pred = predictions
+                predicted_value = float(regression_pred[0][0])
+                model_confidence = float(confidence_pred[0][0])
+                pattern_risk = float(pattern_risk_pred[0][0])
+            else:
+                # Eski model formatı (geriye dönük uyumluluk)
+                predicted_value = float(predictions[0][0])
+                model_confidence = 0.5
+                pattern_risk = 0.0
+            
+            # Güven skorunu hesapla (model çıktısı + heuristic)
+            confidence = (model_confidence + self._calculate_confidence(history, predicted_value)) / 2
             
             # 1.5x eşik kontrolü
             above_threshold = predicted_value >= CategoryDefinitions.CRITICAL_THRESHOLD
@@ -156,6 +185,7 @@ class JetXPredictor:
                 'category': category,
                 'detailed_category': detailed_category,
                 'recommendation': recommendation,
+                'pattern_risk': round(pattern_risk, 2),
                 'warnings': warnings,
                 'mode': mode
             }
@@ -167,7 +197,8 @@ class JetXPredictor:
                 'confidence': 0.0,
                 'above_threshold': None,
                 'category': None,
-                'recommendation': 'BEKLE'
+                'recommendation': 'BEKLE',
+                'pattern_risk': 0.0
             }
     
     def _calculate_confidence(
@@ -256,7 +287,7 @@ class JetXPredictor:
         confidence: float
     ) -> List[str]:
         """
-        Uyarılar oluşturur
+        Uyarılar oluşturur - GELİŞTİRİLMİŞ (pattern_risk dahil)
         
         Args:
             history: Geçmiş veriler
@@ -280,17 +311,38 @@ class JetXPredictor:
         if predicted_value < CategoryDefinitions.CRITICAL_THRESHOLD:
             warnings.append(f"❌ TAHMİN 1.5x ALTINDA ({predicted_value:.2f}x) - OYNAMA!")
         
-        # Büyük çarpan sonrası soğuma
-        if len(history) >= 10:
-            recent = history[-10:]
-            if max(recent) > 10.0:
-                warnings.append("❄️ Son 10 elde büyük çarpan var - Soğuma dönemi olabilir")
-        
-        # Yüksek volatilite
-        if len(history) >= 10:
-            recent = history[-10:]
-            if np.std(recent) > 5.0:
-                warnings.append("📊 Yüksek volatilite tespit edildi")
+        # GELİŞTİRİLMİŞ: Özelliklerden pattern kontrolü (model öğrenecek)
+        try:
+            features = FeatureEngineering.extract_all_features(history)
+            
+            # Soğuma dönemi pattern'leri (model öğreniyor, net kural yok)
+            if len(history) >= 50:
+                # Büyük çarpandan mesafe
+                distance_10x = features.get('distance_from_10x', 999)
+                distance_20x = features.get('distance_from_20x', 999)
+                
+                # Son 10-15 elde büyük çarpan olduysa
+                if distance_10x < 15 or distance_20x < 20:
+                    volatility = features.get('recent_volatility_pattern', 0)
+                    if volatility > 0.5:  # Yüksek volatilite
+                        warnings.append("❄️ SOĞUMA DÖNEMİ OLABİLİR!")
+                        warnings.append("📊 Tavsiye: Sonraki 10-15 eli oynama")
+                        warnings.append("🎲 JetX çok düzensiz olabilir")
+                        warnings.append("📉 Tahmin doğruluğu düşebilir")
+            
+            # Recovery (toparlanma) işareti
+            volatility_norm = features.get('volatility_normalization', 0)
+            if volatility_norm > 0.6:  # Volatilite normalleşiyor
+                warnings.append("✅ TOPARLANMA İŞARETİ tespit edildi")
+                warnings.append("💚 Güvenli oynamaya başlayabilirsiniz")
+            
+            # Anomali tespiti
+            z_score = features.get('z_score', 0)
+            if abs(z_score) > 2.5:
+                warnings.append(f"🔔 Anormal değer tespit edildi (Z-score: {z_score:.2f})")
+            
+        except:
+            pass  # Özellik çıkarma hatası varsa devam et
         
         # Genel uyarı
         warnings.append("⚠️ Bu tahmin %100 doğru değildir, para kaybedebilirsiniz")

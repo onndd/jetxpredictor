@@ -6,9 +6,7 @@ streamlit>=1.28.0
 # Veri İşleme
 numpy>=1.24.0
 pandas>=2.0.0
-
-# Veritabanı
-sqlite3  # Python'da yerleşik, ancak belirtiyoruz
+scipy>=1.10.0  # Statistical analysis (skewness, kurtosis)
 
 # Machine Learning
 tensorflow>=2.14.0  # veya
