@@ -1,0 +1,82 @@
+# JetX Predictor - Konfigürasyon Dosyası
+
+# Veritabanı Ayarları
+database:
+  path: "data/jetx_data.db"
+  backup_path: "data/backups/"
+
+# Model Ayarları
+model:
+  path: "models/jetx_model.h5"
+  scaler_path: "models/scaler.pkl"
+  sequence_length: 50
+  
+  # Model hiperparametreleri (eğitim sonrası güncellenecek)
+  hyperparameters:
+    units: 128
+    dropout: 0.2
+    learning_rate: 0.001
+
+# Özellik Çıkarma Ayarları
+features:
+  window_sizes: [5, 10, 20, 50]
+  milestones: [10.0, 20.0, 50.0, 100.0]
+  
+# Tahmin Ayarları
+prediction:
+  # Kritik eşik
+  critical_threshold: 1.5
+  high_multiplier_threshold: 3.0
+  
+  # Güven eşikleri (mod bazında)
+  confidence_thresholds:
+    aggressive: 0.50
+    normal: 0.65
+    rolling: 0.80
+  
+  # Varsayılan mod
+  default_mode: "normal"
+  
+  # Risk yönetimi
+  max_consecutive_losses: 3  # Bu kadar ardışık yanlış tahmin sonrası uyarı
+  
+# Streamlit Arayüz Ayarları
+ui:
+  theme: "dark"  # dark veya light
+  page_title: "JetX Predictor"
+  page_icon: "🚀"
+  
+  # Grafik ayarları
+  chart:
+    default_window: 100  # Son kaç el gösterilecek
+    update_interval: 1000  # ms cinsinden
+  
+  # Uyarı ayarları
+  alerts:
+    sound_enabled: true
+    critical_zone_alert: true
+    loss_streak_alert: true
+    cooling_period_alert: true
+
+# GitHub Entegrasyonu
+github:
+  repository_url: "https://github.com/USERNAME/jetxpredictor"
+  models_release: true  # Modelleri GitHub Release olarak yükle
+  
+# Google Colab - GitHub entegrasyonu
+colab:
+  github_clone: true  # Colab'da GitHub'dan klonla
+  model_download_from_release: true  # Modelleri GitHub Release'den indir
+  
+# Loglama
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "data/app.log"
+  max_size_mb: 10
+  backup_count: 5
+
+# Cache Ayarları
+cache:
+  enabled: true
+  ttl_seconds: 300  # 5 dakika
+  max_size: 100  # Maksimum cache item sayısı
