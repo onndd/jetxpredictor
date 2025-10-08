@@ -207,7 +207,7 @@ class JetXPredictor:
         predicted_value: float
     ) -> float:
         """
-        Güven skorunu hesaplar
+        Güven skorunu hesaplar - BIAS TEMİZLENDİ
         
         Args:
             history: Geçmiş veriler
@@ -216,9 +216,7 @@ class JetXPredictor:
         Returns:
             Güven skoru (0-1 arası)
         """
-        # Basit bir güven hesaplama
-        # Gerçek uygulamada model çıktısından alınabilir veya daha karmaşık olabilir
-        
+        # Model kendi güvenini hesaplıyor, bu sadece yardımcı
         confidence = 0.65  # Başlangıç değeri
         
         # Son değerlerin volatilitesine göre ayarla
@@ -228,19 +226,18 @@ class JetXPredictor:
             
             # Düşük volatilite = yüksek güven
             if volatility < 2.0:
-                confidence += 0.15
+                confidence += 0.10
             elif volatility > 5.0:
-                confidence -= 0.15
+                confidence -= 0.10
         
         # Tahmin edilen değer makul aralıkta mı?
         if 1.0 <= predicted_value <= 10.0:
             confidence += 0.10
         elif predicted_value > 50.0:
-            confidence -= 0.20
+            confidence -= 0.15
         
-        # Kritik bölgede ise güveni azalt
-        if 1.45 <= predicted_value <= 1.55:
-            confidence -= 0.10
+        # ÖNCEKİ BIAS KALDIRILDI: 1.45-1.55 arası güveni düşürmüyoruz
+        # Model 1.5 altı tahmin yapabilmeli!
         
         # 0-1 aralığında tut
         return max(0.0, min(1.0, confidence))
@@ -252,7 +249,7 @@ class JetXPredictor:
         above_threshold: bool
     ) -> str:
         """
-        Mod bazlı öneri verir
+        Mod bazlı öneri verir - BİAS TEMİZLENDİ
         
         Args:
             confidence: Güven skoru
@@ -260,16 +257,23 @@ class JetXPredictor:
             above_threshold: 1.5x üstü mü
             
         Returns:
-            Öneri ('OYNA', 'BEKLE', 'RİSKLİ')
+            Öneri ('OYNA', 'BEKLE', 'RİSKLİ', 'BEKLE_ALTI')
         """
         threshold = CONFIDENCE_THRESHOLDS.get(mode, 0.65)
         
         if confidence < threshold:
             return 'BEKLE'
         
+        # DEĞIŞIKLIK: 1.5 altı tahminleri de gösteriyoruz artık
+        # Model eğer güvenli bir şekilde 1.5 altı tahmin ediyorsa kullanıcı bilmeli!
         if not above_threshold:
-            return 'BEKLE'  # 1.5x altı tahmin ediliyorsa bekle
+            # 1.5 altı tahmin - kullanıcıyı UYAR ama göster
+            if confidence >= 0.75:  # Çok yüksek güvenle 1.5 altı tahmin ediyorsa
+                return 'BEKLE_ALTI'  # Yeni öneri tipi: kesinlikle beklenmeli
+            else:
+                return 'BEKLE_ALTI'
         
+        # 1.5 üstü tahminler
         if confidence >= threshold and above_threshold:
             if mode == 'rolling' and confidence >= 0.80:
                 return 'OYNA'

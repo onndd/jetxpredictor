@@ -107,7 +107,7 @@ class RiskManager:
         history: Optional[List[float]] = None
     ) -> Dict:
         """
-        Mod bazlı oyun önerisi verir
+        Mod bazlı oyun önerisi verir - BIAS TEMİZLENDİ
         
         Args:
             prediction_result: Predictor'dan gelen tahmin
@@ -119,6 +119,7 @@ class RiskManager:
         confidence = prediction_result.get('confidence', 0)
         above_threshold = prediction_result.get('above_threshold', False)
         predicted_value = prediction_result.get('predicted_value', 0)
+        recommendation = prediction_result.get('recommendation', 'BEKLE')
         
         # Mod bazlı eşik
         confidence_threshold = CONFIDENCE_THRESHOLDS.get(self.mode, 0.65)
@@ -133,43 +134,48 @@ class RiskManager:
         else:
             reasons.append(f"Güven seviyesi yeterli ({confidence:.0%})")
             
-        # 2. Eşik kontrolü
+        # 2. Eşik kontrolü - DEĞIŞIKLIK: 1.5 altı tahminleri de gösteriyoruz
         if not above_threshold:
-            reasons.append(f"Tahmin 1.5x altında ({predicted_value:.2f}x) - RİSKLİ")
+            reasons.append(f"⚠️ TAHMİN 1.5x ALTINDA ({predicted_value:.2f}x)")
+            reasons.append(f"💰 PARA KAYBI RİSKİ YÜKSEK - KESINLIKLE OYNAMA!")
+            # 1.5 altı tahminlerde should_play false ama kullanıcı görebilir
+            should_play = False
+            risk_level = 'CRITICAL'
         else:
-            reasons.append(f"Tahmin 1.5x üstünde ({predicted_value:.2f}x)")
+            reasons.append(f"✅ Tahmin 1.5x üstünde ({predicted_value:.2f}x)")
             
         # 3. Ardışık kayıp kontrolü
         if self.consecutive_losses >= 3:
             reasons.append(f"⚠️ {self.consecutive_losses} ardışık yanlış tahmin - DUR!")
         
-        # 4. Mod bazlı karar
-        if self.mode == 'rolling':
-            # Rolling: Çok konservatif
-            if confidence >= 0.80 and above_threshold and self.consecutive_losses < 2:
-                should_play = True
-                risk_level = 'LOW'
-                reasons.append("✅ Rolling mod: Yüksek güven ve düşük risk")
-            else:
-                reasons.append("❌ Rolling mod: Koşullar uygun değil - BEKLE")
-                
-        elif self.mode == 'normal':
-            # Normal: Dengeli
-            if confidence >= 0.65 and above_threshold and self.consecutive_losses < 3:
-                should_play = True
-                risk_level = 'MEDIUM'
-                reasons.append("✅ Normal mod: Koşullar uygun")
-            else:
-                reasons.append("❌ Normal mod: Koşullar uygun değil - BEKLE")
-                
-        elif self.mode == 'aggressive':
-            # Aggressive: Risk alır
-            if confidence >= 0.50 and above_threshold:
-                should_play = True
-                risk_level = 'HIGH'
-                reasons.append("⚠️ Agresif mod: Riskli ama oynanabilir")
-            else:
-                reasons.append("❌ Agresif mod bile oynamayı önermez")
+        # 4. Mod bazlı karar - SADECE 1.5 ÜSTÜ İÇİN
+        if above_threshold:
+            if self.mode == 'rolling':
+                # Rolling: Çok konservatif
+                if confidence >= 0.80 and self.consecutive_losses < 2:
+                    should_play = True
+                    risk_level = 'LOW'
+                    reasons.append("✅ Rolling mod: Yüksek güven ve düşük risk")
+                else:
+                    reasons.append("❌ Rolling mod: Koşullar uygun değil - BEKLE")
+                    
+            elif self.mode == 'normal':
+                # Normal: Dengeli
+                if confidence >= 0.65 and self.consecutive_losses < 3:
+                    should_play = True
+                    risk_level = 'MEDIUM'
+                    reasons.append("✅ Normal mod: Koşullar uygun")
+                else:
+                    reasons.append("❌ Normal mod: Koşullar uygun değil - BEKLE")
+                    
+            elif self.mode == 'aggressive':
+                # Aggressive: Risk alır
+                if confidence >= 0.50:
+                    should_play = True
+                    risk_level = 'HIGH'
+                    reasons.append("⚠️ Agresif mod: Riskli ama oynanabilir")
+                else:
+                    reasons.append("❌ Agresif mod bile oynamayı önermez")
         
         # 5. Kritik bölge uyarısı
         if 1.45 <= predicted_value <= 1.55:
@@ -182,7 +188,8 @@ class RiskManager:
             'risk_level': risk_level,
             'reasons': reasons,
             'mode': self.mode,
-            'confidence_threshold': confidence_threshold
+            'confidence_threshold': confidence_threshold,
+            'below_threshold_warning': not above_threshold  # Yeni: 1.5 altı uyarısı
         }
     
     def get_betting_suggestion(
