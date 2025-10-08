@@ -27,6 +27,100 @@ class CategoryDefinitions:
         'HIGH_ZONE': 'Yüksek Çarpan (> 3.0x)'
     }
     
+    # 15 KATEGORİ SETİ - Farklı perspektiflerden analiz için
+    # Her set değerleri farklı granülarite ve odakta kategorilere ayırır
+    # Model bu setleri özellik olarak kullanarak çok boyutlu pattern öğrenir
+    
+    CATEGORY_SET_1 = [  # Standart Dağılım
+        (1.00, 1.20), (1.20, 1.35), (1.35, 1.49), (1.50, 1.70), (1.70, 2.00),
+        (2.00, 3.00), (3.00, 5.00), (5.00, 10.00), (10.00, 20.00), (20.00, 50.00),
+        (50.00, 100.00), (100.00, 200.00), (200.00, 500.00), (500.00, 1000.00), (1000.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_2 = [  # Alt Bölge Hassas
+        (1.00, 1.10), (1.10, 1.20), (1.20, 1.30), (1.30, 1.40), (1.40, 1.45),
+        (1.45, 1.49), (1.50, 1.55), (1.55, 1.65), (1.65, 1.80), (1.80, 2.20),
+        (2.20, 3.50), (3.50, 7.00), (7.00, 15.00), (15.00, 50.00), (50.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_3 = [  # Üst Bölge Hassas
+        (1.00, 1.49), (1.50, 2.00), (2.00, 3.00), (3.00, 4.50), (4.50, 6.50),
+        (6.50, 9.00), (9.00, 12.00), (12.00, 18.00), (18.00, 25.00), (25.00, 40.00),
+        (40.00, 70.00), (70.00, 150.00), (150.00, 300.00), (300.00, 700.00), (700.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_4 = [  # Psikolojik Bariyerler
+        (1.00, 1.49), (1.50, 1.99), (2.00, 2.99), (3.00, 4.99), (5.00, 9.99),
+        (10.00, 19.99), (20.00, 29.99), (30.00, 49.99), (50.00, 74.99), (75.00, 99.99),
+        (100.00, 199.99), (200.00, 499.99), (500.00, 999.99), (1000.00, 1999.99), (2000.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_5 = [  # Kumar Stratejisi Odaklı
+        (1.00, 1.30), (1.30, 1.45), (1.45, 1.49), (1.50, 1.60), (1.60, 1.85),
+        (1.85, 2.30), (2.30, 3.20), (3.20, 5.50), (5.50, 11.00), (11.00, 25.00),
+        (25.00, 60.00), (60.00, 180.00), (180.00, 450.00), (450.00, 1200.00), (1200.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_6 = [  # Mikro Hassas (1.5 civarı)
+        (1.00, 1.25), (1.25, 1.38), (1.38, 1.44), (1.44, 1.47), (1.47, 1.49),
+        (1.50, 1.52), (1.52, 1.56), (1.56, 1.62), (1.62, 1.75), (1.75, 2.10),
+        (2.10, 3.00), (3.00, 6.00), (6.00, 20.00), (20.00, 100.00), (100.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_7 = [  # Logaritmik Ölçek
+        (1.00, 1.49), (1.50, 2.00), (2.00, 2.70), (2.70, 3.70), (3.70, 5.00),
+        (5.00, 7.40), (7.40, 10.00), (10.00, 15.00), (15.00, 22.00), (22.00, 33.00),
+        (33.00, 50.00), (50.00, 100.00), (100.00, 220.00), (220.00, 500.00), (500.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_8 = [  # Risk Seviyeleri
+        (1.00, 1.35), (1.35, 1.43), (1.43, 1.49), (1.50, 1.65), (1.65, 1.90),
+        (1.90, 2.50), (2.50, 4.00), (4.00, 8.00), (8.00, 15.00), (15.00, 30.00),
+        (30.00, 75.00), (75.00, 200.00), (200.00, 600.00), (600.00, 1500.00), (1500.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_9 = [  # Yüzde Tabanlı
+        (1.00, 1.20), (1.20, 1.35), (1.35, 1.49), (1.50, 1.75), (1.75, 2.00),
+        (2.00, 2.50), (2.50, 3.50), (3.50, 5.00), (5.00, 10.00), (10.00, 25.00),
+        (25.00, 50.00), (50.00, 100.00), (100.00, 300.00), (300.00, 1000.00), (1000.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_10 = [  # Oyuncu Psikolojisi
+        (1.00, 1.15), (1.15, 1.30), (1.30, 1.49), (1.50, 1.70), (1.70, 2.00),
+        (2.00, 2.50), (2.50, 3.50), (3.50, 5.00), (5.00, 8.00), (8.00, 15.00),
+        (15.00, 35.00), (35.00, 80.00), (80.00, 250.00), (250.00, 800.00), (800.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_11 = [  # Frekans Tabanlı
+        (1.00, 1.40), (1.40, 1.49), (1.50, 1.80), (1.80, 2.20), (2.20, 3.00),
+        (3.00, 4.50), (4.50, 7.00), (7.00, 12.00), (12.00, 20.00), (20.00, 40.00),
+        (40.00, 100.00), (100.00, 300.00), (300.00, 700.00), (700.00, 2000.00), (2000.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_12 = [  # Kısa Vadeli Trader
+        (1.00, 1.10), (1.10, 1.25), (1.25, 1.40), (1.40, 1.49), (1.50, 1.58),
+        (1.58, 1.68), (1.68, 1.82), (1.82, 2.05), (2.05, 2.40), (2.40, 3.20),
+        (3.20, 5.50), (5.50, 12.00), (12.00, 50.00), (50.00, 500.00), (500.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_13 = [  # Uzun Vadeli Pattern
+        (1.00, 1.49), (1.50, 1.95), (1.95, 2.80), (2.80, 4.20), (4.20, 6.50),
+        (6.50, 11.00), (11.00, 18.00), (18.00, 28.00), (28.00, 45.00), (45.00, 85.00),
+        (85.00, 160.00), (160.00, 350.00), (350.00, 750.00), (750.00, 1800.00), (1800.00, float('inf'))
+    ]
+    
+    CATEGORY_SET_14 = [  # Matematiksel Bölümler
+        (1.00, 1.33), (1.33, 1.49), (1.50, 1.67), (1.67, 2.00), (2.00, 2.67),
+        (2.67, 3.67), (3.67, 5.33), (5.33, 8.33), (8.33, 13.33), (13.33, 23.33),
+        (23.33, 53.33), (53.33, 133.33), (133.33, 333.33), (333.33, 1333.33), (1333.33, float('inf'))
+    ]
+    
+    CATEGORY_SET_15 = [  # Dinamik Hassas
+        (1.00, 1.18), (1.18, 1.32), (1.32, 1.42), (1.42, 1.49), (1.50, 1.54),
+        (1.54, 1.60), (1.60, 1.72), (1.72, 1.88), (1.88, 2.15), (2.15, 2.75),
+        (2.75, 4.40), (4.40, 9.50), (9.50, 32.00), (32.00, 250.00), (250.00, float('inf'))
+    ]
+    
     @staticmethod
     def get_category(value: float) -> str:
         """Değeri kategoriye ata"""
@@ -51,6 +145,24 @@ class CategoryDefinitions:
     def is_above_threshold(value: float) -> bool:
         """1.5x eşiğinin üstünde mi?"""
         return value >= CategoryDefinitions.CRITICAL_THRESHOLD
+    
+    @staticmethod
+    def get_category_set_index(value: float, category_set: List[Tuple[float, float]]) -> int:
+        """
+        Verilen değerin kategori setindeki index'ini döndürür
+        
+        Args:
+            value: Değer
+            category_set: Kategori seti (tuple listesi)
+            
+        Returns:
+            Kategori index'i (0-14 arası)
+        """
+        for idx, (min_val, max_val) in enumerate(category_set):
+            if min_val <= value < max_val:
+                return idx
+        # Son kategoriye düşer (inf olan)
+        return len(category_set) - 1
     
     @staticmethod
     def get_detailed_category(value: float) -> str:
@@ -480,6 +592,74 @@ class FeatureEngineering:
         return features
     
     @staticmethod
+    def extract_category_set_features(values: List[float]) -> Dict[str, float]:
+        """
+        15 Kategori Seti Özellikleri - Çok boyutlu analiz için
+        
+        Her değer 15 farklı perspektiften kategorilere ayrılır.
+        Model bu farklı bakış açılarından cross-correlation pattern'lerini öğrenir.
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            15 kategori seti özelliği (her biri 0-14 arası integer)
+        """
+        features = {}
+        
+        if len(values) > 0:
+            current_value = values[-1]
+            
+            # 15 farklı kategori setinden değerin kategorisini bul
+            features['cat_set_1'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_1
+            )
+            features['cat_set_2'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_2
+            )
+            features['cat_set_3'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_3
+            )
+            features['cat_set_4'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_4
+            )
+            features['cat_set_5'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_5
+            )
+            features['cat_set_6'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_6
+            )
+            features['cat_set_7'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_7
+            )
+            features['cat_set_8'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_8
+            )
+            features['cat_set_9'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_9
+            )
+            features['cat_set_10'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_10
+            )
+            features['cat_set_11'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_11
+            )
+            features['cat_set_12'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_12
+            )
+            features['cat_set_13'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_13
+            )
+            features['cat_set_14'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_14
+            )
+            features['cat_set_15'] = CategoryDefinitions.get_category_set_index(
+                current_value, CategoryDefinitions.CATEGORY_SET_15
+            )
+        
+        return features
+    
+    @staticmethod
     def extract_all_features(values: List[float]) -> Dict[str, float]:
         """
         Tüm özellikleri çıkar - Geliştirilmiş versiyon
@@ -526,6 +706,9 @@ class FeatureEngineering:
         
         # YENİ: Soğuma dönemi pattern'leri (model için)
         all_features.update(FeatureEngineering.extract_cooling_period_features(values))
+        
+        # YENİ: 15 Kategori Seti Özellikleri (çok boyutlu analiz)
+        all_features.update(FeatureEngineering.extract_category_set_features(values))
         
         # Son değer
         if len(values) > 0:
