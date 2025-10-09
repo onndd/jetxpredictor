@@ -11,10 +11,10 @@ from tensorflow.keras import backend as K
 
 def threshold_killer_loss(y_true, y_pred):
     """
-    1.5 altı yanlış tahmine ÇOK BÜYÜK CEZA
+    1.5 altı yanlış tahmine DENGELI CEZA
     
     Bu loss fonksiyonu modelin 1.5 altında yanlış tahmin yapmasını önlemek için tasarlanmıştır.
-    Para kaybı riskini minimize eder.
+    Para kaybı riskini minimize eder. YUMUŞATILMIŞ versiyonu - lazy learning'i önler.
     
     Args:
         y_true: Gerçek değerler
@@ -25,23 +25,23 @@ def threshold_killer_loss(y_true, y_pred):
     """
     mae = K.abs(y_true - y_pred)
     
-    # 1.5 altıyken üstü tahmin = 12x ceza (PARA KAYBI!) - 3. Tur: 15→12 (Dengeli)
+    # 1.5 altıyken üstü tahmin = 2x ceza (PARA KAYBI - yumuşatıldı: 12→2)
     false_positive = K.cast(
         tf.logical_and(y_true < 1.5, y_pred >= 1.5),
         'float32'
-    ) * 12.0
+    ) * 2.0
     
-    # 1.5 üstüyken altı tahmin = 6x ceza - 3. Tur: 8→6 (Dengeli)
+    # 1.5 üstüyken altı tahmin = 1.5x ceza (yumuşatıldı: 6→1.5)
     false_negative = K.cast(
         tf.logical_and(y_true >= 1.5, y_pred < 1.5),
         'float32'
-    ) * 6.0
+    ) * 1.5
     
-    # Kritik bölge (1.4-1.6) = 10x ceza - 3. Tur: 12→10 (Hassas Bölge)
+    # Kritik bölge (1.4-1.6) = 2.5x ceza (yumuşatıldı: 10→2.5)
     critical_zone = K.cast(
         tf.logical_and(y_true >= 1.4, y_true <= 1.6),
         'float32'
-    ) * 10.0
+    ) * 2.5
     
     weight = K.maximum(K.maximum(false_positive, false_negative), critical_zone)
     weight = K.maximum(weight, 1.0)
@@ -49,13 +49,13 @@ def threshold_killer_loss(y_true, y_pred):
     return K.mean(mae * weight)
 
 
-def ultra_focal_loss(gamma=5.0, alpha=0.85):
+def ultra_focal_loss(gamma=2.5, alpha=0.75):
     """
-    Focal loss - yanlış tahminlere çok büyük ceza
+    Focal loss - yanlış tahminlere dengeli ceza (YUMUŞATILMIŞ)
     
     Args:
-        gamma: Focal loss parametresi (yüksek = daha agresif)
-        alpha: Class balancing parametresi
+        gamma: Focal loss parametresi (yumuşatıldı: 5.0→2.5, daha dengeli)
+        alpha: Class balancing parametresi (yumuşatıldı: 0.85→0.75)
         
     Returns:
         Loss fonksiyonu
