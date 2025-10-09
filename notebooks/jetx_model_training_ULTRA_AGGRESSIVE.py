@@ -279,7 +279,32 @@ def ultra_focal_loss(gamma=3.0, alpha=0.85):
         return -K.mean(focal_weight * K.log(pt))
     return loss
 
-# CLASS WEIGHTS - 5X (1.5 altı için!) - Yumuşatıldı: 10x → 5x
+def create_weighted_binary_crossentropy(weight_0, weight_1):
+    """
+    Sınıf ağırlıklarını doğrudan içeren weighted binary crossentropy loss fonksiyonu
+    
+    Args:
+        weight_0: 1.5 altı (class 0) için ağırlık
+        weight_1: 1.5 üstü (class 1) için ağırlık
+    
+    Returns:
+        Ağırlıklı binary crossentropy loss fonksiyonu
+    """
+    def loss(y_true, y_pred):
+        # Binary crossentropy hesapla
+        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+        bce = -(y_true * K.log(y_pred) + (1 - y_true) * K.log(1 - y_pred))
+        
+        # Class weight'leri uygula
+        # y_true = 1 ise weight_1, y_true = 0 ise weight_0 kullan
+        weights = y_true * weight_1 + (1 - y_true) * weight_0
+        
+        # Ağırlıklı loss'u döndür
+        return K.mean(bce * weights)
+    
+    return loss
+
+# CLASS WEIGHTS - 7X (1.5 altı için!) - LAZY LEARNING'İ ÖNLEMEK İÇİN
 # y_thr_tr shape (N, 1) olduğu için flatten etmeliyiz
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
@@ -304,13 +329,13 @@ def lr_schedule(epoch, lr):
     else:
         return initial_lr * 0.05
 
-# COMPILE
+# COMPILE - WEIGHTED BCE İLE LAZY LEARNING ÖNLENDİ
 model.compile(
     optimizer=Adam(initial_lr),
     loss={
         'regression': threshold_killer_loss,
         'classification': 'categorical_crossentropy',
-        'threshold': ultra_focal_loss()
+        'threshold': create_weighted_binary_crossentropy(w0, w1)
     },
     loss_weights={
         'regression': 0.25,
@@ -318,15 +343,15 @@ model.compile(
         'threshold': 0.60  # 0.5 -> 0.6
     },
     metrics={
-        'regression': ['mae'], 
-        'classification': ['accuracy'], 
+        'regression': ['mae'],
+        'classification': ['accuracy'],
         'threshold': ['accuracy', 'binary_crossentropy']
     }
 )
 
-print("\n✅ Model compiled (3. Düzeltme Turu - Dengeli Yaklaşım):")
+print("\n✅ Model compiled (4. Düzeltme - Weighted BCE ile Lazy Learning Önlendi):")
 print(f"- Threshold Killer Loss (12x ceza - dengeli)")
-print(f"- Ultra Focal Loss (gamma=3.0 - yumuşak)")
+print(f"- Weighted Binary Crossentropy (class weight doğrudan entegre)")
 print(f"- Class weight: {w0:.1f}x (azınlık sınıfına odaklanma)")
 print(f"- Initial LR: {initial_lr} (hassas öğrenme)")
 
