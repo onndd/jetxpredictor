@@ -5,17 +5,17 @@
 AMAÇ: 1.5 altı değerleri tahmin edebilen model eğitmek
 
 STRATEJI:
-├── AŞAMA 1: Regression-Only (200 epoch) - Değer öğrenme
-├── AŞAMA 2: Threshold Fine-Tuning (150 epoch) - 1.5 eşik öğrenme  
-└── AŞAMA 3: Full Model Fine-Tuning (150 epoch) - Final optimizasyon
+├── AŞAMA 1: Foundation Training (100 epoch) - Threshold baştan aktif
+├── AŞAMA 2: Threshold Fine-Tuning (80 epoch) - Yumuşak class weights (5x)
+└── AŞAMA 3: Full Model Fine-Tuning (80 epoch) - Dengeli final (7x)
 
 HEDEFLER:
-- 1.5 ALTI Doğruluk: %75-80%+
-- 1.5 ÜSTÜ Doğruluk: %80-85%+
+- 1.5 ALTI Doğruluk: %70-80%+
+- 1.5 ÜSTÜ Doğruluk: %75-85%+
 - Para kaybı riski: %20 altı
 - MAE: < 2.0
 
-SÜRE: ~2.5 saat (GPU ile)
+SÜRE: ~1.5 saat (GPU ile)
 """
 
 import subprocess
@@ -293,23 +293,76 @@ class ProgressiveMetricsCallback(callbacks.Callback):
             total_below = below_mask.sum()
             risk = false_positive / total_below if total_below > 0 else 0
             
-            print(f"\n📊 {self.stage_name} - Epoch {epoch+1}:")
-            print(f"  🔴 1.5 ALTI: {below_acc*100:.1f}% (Hedef: 75%+)")
-            print(f"  🟢 1.5 ÜSTÜ: {above_acc*100:.1f}%")
-            print(f"  💰 Para kaybı riski: {risk*100:.1f}% (Hedef: <20%)")
+            print(f"\n{'='*70}")
+            print(f"📊 {self.stage_name} - Epoch {epoch+1} METRIKLER")
+            print(f"{'='*70}")
+            
+            # 1.5 Altı Doğruluğu
+            below_emoji = "✅" if below_acc >= 0.75 else "⚠️" if below_acc >= 0.50 else "❌"
+            print(f"\n🔴 1.5 ALTI DOĞRULUĞU: {below_acc*100:.1f}% {below_emoji}")
+            print(f"   └─ Ne anlama geliyor?")
+            print(f"      Model 1.5 altındaki değerleri ne kadar iyi tahmin ediyor?")
+            print(f"      Örnek: 100 adet 1.5 altı değerden {int(below_acc*100)} tanesini doğru buldu")
+            print(f"   └─ Hedef: %75+ (şu an: {'HEDEF AŞILDI! ✅' if below_acc >= 0.75 else f'%{(75-below_acc*100):.1f} daha gerekli'})")
+            
+            # 1.5 Üstü Doğruluğu
+            above_emoji = "✅" if above_acc >= 0.75 else "⚠️" if above_acc >= 0.50 else "❌"
+            print(f"\n🟢 1.5 ÜSTÜ DOĞRULUĞU: {above_acc*100:.1f}% {above_emoji}")
+            print(f"   └─ Ne anlama geliyor?")
+            print(f"      Model 1.5 üstündeki değerleri ne kadar iyi tahmin ediyor?")
+            print(f"      Örnek: 100 adet 1.5 üstü değerden {int(above_acc*100)} tanesini doğru buldu")
+            print(f"   └─ Hedef: %75+ (şu an: {'HEDEF AŞILDI! ✅' if above_acc >= 0.75 else f'%{(75-above_acc*100):.1f} daha gerekli'})")
+            
+            # Para Kaybı Riski
+            risk_emoji = "✅" if risk < 0.20 else "⚠️" if risk < 0.40 else "❌"
+            print(f"\n💰 PARA KAYBI RİSKİ: {risk*100:.1f}% {risk_emoji}")
+            print(f"   └─ Ne anlama geliyor?")
+            print(f"      Model 1.5 altı olduğunda yanlışlıkla '1.5 üstü' deme oranı")
+            print(f"      Bu durumda bahis yapar ve PARA KAYBEDERSİNİZ!")
+            print(f"      Örnek: 100 oyunun {int(risk*100)}'ında yanlış tahminle para kaybı")
+            print(f"   └─ Hedef: <%20 (şu an: {'GÜVENLİ! ✅' if risk < 0.20 else f'%{(risk*100-20):.1f} daha fazla risk var'})")
+            
+            # Model Durumu Özeti
+            print(f"\n🎯 MODEL DURUMU:")
+            if below_acc >= 0.75 and above_acc >= 0.75 and risk < 0.20:
+                print(f"   ✅ ✅ ✅ MÜKEMMEL! Model kullanıma hazır!")
+            elif below_acc >= 0.60 and risk < 0.30:
+                print(f"   ✅ İYİ - Biraz daha eğitimle hedeflere ulaşılabilir")
+            elif below_acc == 0.0 or below_acc == 1.0:
+                print(f"   ❌ KÖTÜ! Model bir tarafa KILITLENIYOR!")
+                print(f"      → Model dengesiz öğreniyor, class weight ayarlanmalı")
+            else:
+                print(f"   ⚠️ ORTA - Devam ediyor...")
+            
+            # Dengesizlik Uyarısı
+            if below_acc == 0.0 and above_acc > 0.95:
+                print(f"\n⚠️ UYARI: Model sadece '1.5 üstü' tahmin ediyor!")
+                print(f"   → Class weight çok DÜŞÜK veya model 'lazy learning' yapıyor")
+                print(f"   → Öneri: Class weight'i artırın (5x → 7x)")
+            elif below_acc > 0.95 and above_acc == 0.0:
+                print(f"\n⚠️ UYARI: Model sadece '1.5 altı' tahmin ediyor!")
+                print(f"   → Class weight çok YÜKSEK!")
+                print(f"   → Öneri: Class weight'i azaltın (örn: 25x → 5x)")
+            elif abs(below_acc - above_acc) > 0.40:
+                print(f"\n⚠️ UYARI: Model dengesiz! (Fark: %{abs(below_acc - above_acc)*100:.1f})")
+                print(f"   → Bir sınıfa aşırı öğreniyor, diğerini ihmal ediyor")
+            
+            print(f"{'='*70}\n")
             
             if below_acc > self.best_below_acc:
                 self.best_below_acc = below_acc
-                print(f"  ✨ YENİ REKOR! En iyi 1.5 altı: {below_acc*100:.1f}%")
+                print(f"  ✨ YENİ REKOR! En iyi 1.5 altı: {below_acc*100:.1f}%\n")
 
 # =============================================================================
 # AŞAMA 1: REGRESSION-ONLY (200 epoch)
 # =============================================================================
 print("\n" + "="*80)
-print("🔥 AŞAMA 1: REGRESSION-ONLY TRAINING")
+print("🔥 AŞAMA 1: FOUNDATION TRAINING")
 print("="*80)
-print("Hedef: Model değer tahmin etmeyi öğrensin")
-print("Epoch: 200 | Batch: 16 | LR: 0.0003")
+print("Hedef: Model hem değer tahmin etmeyi HEM DE 1.5 eşiğini birlikte öğrensin")
+print("Epoch: 100 | Batch: 64 | LR: 0.0001")
+print("Loss Weights: Regression 60%, Classification 10%, Threshold 30%")
+print("Monitor: val_threshold_accuracy | Patience: 10")
 print("="*80 + "\n")
 
 stage1_start = time.time()
@@ -317,17 +370,17 @@ stage1_start = time.time()
 model = build_progressive_model(X_f.shape[1])
 print(f"✅ Model: {model.count_params():,} parametre")
 
-# AŞAMA 1: Sadece regression
+# AŞAMA 1: Foundation Training - Threshold baştan aktif!
 model.compile(
-    optimizer=Adam(0.0003),
+    optimizer=Adam(0.0001),
     loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': 'binary_crossentropy'},
-    loss_weights={'regression': 1.0, 'classification': 0.0, 'threshold': 0.0},  # Sadece regression
+    loss_weights={'regression': 0.60, 'classification': 0.10, 'threshold': 0.30},  # Threshold baştan aktif!
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy']}
 )
 
 cb1 = [
-    callbacks.ModelCheckpoint('stage1_best.h5', monitor='val_regression_mae', save_best_only=True, mode='min', verbose=1),
-    callbacks.EarlyStopping(monitor='val_regression_mae', patience=50, mode='min', restore_best_weights=True, verbose=1),
+    callbacks.ModelCheckpoint('stage1_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=15, min_lr=1e-6, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 1")
 ]
@@ -335,8 +388,8 @@ cb1 = [
 hist1 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
-    epochs=200,
-    batch_size=16,
+    epochs=100,
+    batch_size=64,
     validation_split=0.2,
     callbacks=cb1,
     verbose=1
@@ -354,10 +407,11 @@ print(f"📊 AŞAMA 1 Sonuç: MAE = {mae1:.4f}")
 # AŞAMA 2: THRESHOLD FINE-TUNING (150 epoch)
 # =============================================================================
 print("\n" + "="*80)
-print("🔥 AŞAMA 2: THRESHOLD FINE-TUNING")
+print("🔥 AŞAMA 2: THRESHOLD FINE-TUNING (Yumuşak Strateji)")
 print("="*80)
-print("Hedef: 1.5 altı/üstü ayrımını keskinleştir")
-print("Epoch: 150 | Batch: 8 | LR: 0.0001 | Class Weight: 25x")
+print("Hedef: 1.5 altı/üstü ayrımını keskinleştir (dengeli class weights)")
+print("Epoch: 80 | Batch: 32 | LR: 0.00005 | Class Weight: 5x (Yumuşak!)")
+print("Monitor: val_threshold_accuracy | Patience: 10")
 print("="*80 + "\n")
 
 stage2_start = time.time()
@@ -365,19 +419,19 @@ stage2_start = time.time()
 # AŞAMA 1 modelini yükle
 model.load_weights('stage1_best.h5')
 
-# Class weights hesapla
+# Class weights hesapla (YUMUŞAK)
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
-w0 = (len(y_thr_tr) / (2 * c0)) * 25.0  # 25x
+w0 = (len(y_thr_tr) / (2 * c0)) * 5.0  # 25x → 5x (YUMUŞAK!)
 w1 = len(y_thr_tr) / (2 * c1)
 
-print(f"📊 CLASS WEIGHTS:")
-print(f"  1.5 altı: {w0:.2f}x")
+print(f"📊 CLASS WEIGHTS (Yumuşak Strateji):")
+print(f"  1.5 altı: {w0:.2f}x (Hedef: ~10x)")
 print(f"  1.5 üstü: {w1:.2f}x\n")
 
 # AŞAMA 2: Regression + Threshold
 model.compile(
-    optimizer=Adam(0.0001),
+    optimizer=Adam(0.00005),
     loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': ultra_focal_loss()},
     loss_weights={'regression': 0.40, 'classification': 0.0, 'threshold': 0.60},
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
@@ -385,7 +439,7 @@ model.compile(
 
 cb2 = [
     callbacks.ModelCheckpoint('stage2_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=40, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=12, min_lr=1e-7, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 2")
 ]
@@ -393,8 +447,9 @@ cb2 = [
 hist2 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
-    epochs=150,
-    batch_size=8,
+    class_weight={'threshold': {0: w0, 1: w1}},  # Class weights artık kullanılıyor!
+    epochs=80,
+    batch_size=32,
     validation_split=0.2,
     callbacks=cb2,
     verbose=1
@@ -407,10 +462,12 @@ print(f"\n✅ AŞAMA 2 Tamamlandı! Süre: {stage2_time/60:.1f} dakika")
 # AŞAMA 3: FULL MODEL FINE-TUNING (150 epoch)
 # =============================================================================
 print("\n" + "="*80)
-print("🔥 AŞAMA 3: FULL MODEL FINE-TUNING")
+print("🔥 AŞAMA 3: FULL MODEL FINE-TUNING (Dengeli Final)")
 print("="*80)
-print("Hedef: Tüm output'ları birlikte optimize et")
-print("Epoch: 150 | Batch: 4 | LR: 0.00005 | Class Weight: 30x")
+print("Hedef: Tüm output'ları birlikte optimize et (dengeli final push)")
+print("Epoch: 80 | Batch: 16 | LR: 0.00003 | Class Weight: 7x (Dengeli!)")
+print("Loss Weights: Regression 30%, Classification 15%, Threshold 55%")
+print("Monitor: val_threshold_accuracy | Patience: 10")
 print("="*80 + "\n")
 
 stage3_start = time.time()
@@ -418,25 +475,25 @@ stage3_start = time.time()
 # AŞAMA 2 modelini yükle
 model.load_weights('stage2_best.h5')
 
-# Class weights artır
-w0_final = (len(y_thr_tr) / (2 * c0)) * 30.0  # 30x
+# Class weights dengeli final push
+w0_final = (len(y_thr_tr) / (2 * c0)) * 7.0  # 30x → 7x (DENGELİ!)
 w1_final = len(y_thr_tr) / (2 * c1)
 
-print(f"📊 CLASS WEIGHTS (Final):")
-print(f"  1.5 altı: {w0_final:.2f}x")
+print(f"📊 CLASS WEIGHTS (Dengeli Final):")
+print(f"  1.5 altı: {w0_final:.2f}x (Hedef: ~15x)")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
 # AŞAMA 3: Tüm output'lar aktif
 model.compile(
-    optimizer=Adam(0.00005),
+    optimizer=Adam(0.00003),
     loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': ultra_focal_loss()},
-    loss_weights={'regression': 0.50, 'classification': 0.10, 'threshold': 0.40},
+    loss_weights={'regression': 0.30, 'classification': 0.15, 'threshold': 0.55},
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
 cb3 = [
     callbacks.ModelCheckpoint('stage3_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=50, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-8, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 3")
 ]
@@ -444,8 +501,9 @@ cb3 = [
 hist3 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
-    epochs=150,
-    batch_size=4,
+    class_weight={'threshold': {0: w0_final, 1: w1_final}},  # Class weights artık kullanılıyor!
+    epochs=80,
+    batch_size=16,
     validation_split=0.2,
     callbacks=cb3,
     verbose=1
