@@ -179,6 +179,31 @@ def ultra_focal_loss(gamma=4.0, alpha=0.85):
         return -K.mean(focal_weight * K.log(pt))
     return loss
 
+def create_weighted_binary_crossentropy(weight_0, weight_1):
+    """
+    Sınıf ağırlıklarını doğrudan içeren weighted binary crossentropy loss fonksiyonu
+    
+    Args:
+        weight_0: 1.5 altı (class 0) için ağırlık
+        weight_1: 1.5 üstü (class 1) için ağırlık
+    
+    Returns:
+        Ağırlıklı binary crossentropy loss fonksiyonu
+    """
+    def loss(y_true, y_pred):
+        # Binary crossentropy hesapla
+        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+        bce = -(y_true * K.log(y_pred) + (1 - y_true) * K.log(1 - y_pred))
+        
+        # Class weight'leri uygula
+        # y_true = 1 ise weight_1, y_true = 0 ise weight_0 kullan
+        weights = y_true * weight_1 + (1 - y_true) * weight_0
+        
+        # Ağırlıklı loss'u döndür
+        return K.mean(bce * weights)
+    
+    return loss
+
 # =============================================================================
 # OPTIMIZE EDİLMİŞ MODEL MİMARİSİ (8-10M parametre)
 # =============================================================================
@@ -435,7 +460,7 @@ model.compile(
 
 cb1 = [
     callbacks.ModelCheckpoint('stage1_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=30, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=15, min_lr=1e-6, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 1")
 ]
@@ -484,17 +509,17 @@ print(f"📊 CLASS WEIGHTS (Yumuşak Strateji):")
 print(f"  1.5 altı: {w0:.2f}x (Hedef: ~10x)")
 print(f"  1.5 üstü: {w1:.2f}x\n")
 
-# AŞAMA 2: Regression + Threshold
+# AŞAMA 2: Regression + Threshold (weighted binary crossentropy ile)
 model.compile(
     optimizer=Adam(0.00005),
-    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': ultra_focal_loss()},
+    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0, w1)},
     loss_weights={'regression': 0.40, 'classification': 0.0, 'threshold': 0.60},
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
 cb2 = [
     callbacks.ModelCheckpoint('stage2_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=25, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=12, min_lr=1e-7, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 2")
 ]
@@ -502,7 +527,6 @@ cb2 = [
 hist2 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
-    class_weight={'threshold': {0: w0, 1: w1}},  # Class weights artık kullanılıyor!
     epochs=80,
     batch_size=32,
     validation_split=0.2,
@@ -538,17 +562,17 @@ print(f"📊 CLASS WEIGHTS (Dengeli Final):")
 print(f"  1.5 altı: {w0_final:.2f}x (Hedef: ~15x)")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
-# AŞAMA 3: Tüm output'lar aktif
+# AŞAMA 3: Tüm output'lar aktif (weighted binary crossentropy ile)
 model.compile(
     optimizer=Adam(0.00003),
-    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': ultra_focal_loss()},
+    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0_final, w1_final)},
     loss_weights={'regression': 0.30, 'classification': 0.15, 'threshold': 0.55},
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
 cb3 = [
     callbacks.ModelCheckpoint('stage3_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=20, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-8, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 3")
 ]
@@ -556,7 +580,6 @@ cb3 = [
 hist3 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
-    class_weight={'threshold': {0: w0_final, 1: w1_final}},  # Class weights artık kullanılıyor!
     epochs=80,
     batch_size=16,
     validation_split=0.2,
