@@ -10,6 +10,7 @@ import joblib
 from typing import Dict, Tuple, List, Optional
 import os
 import sys
+import logging
 
 # Kategori tanımlarını import et
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,6 +19,11 @@ from category_definitions import (
     FeatureEngineering,
     CONFIDENCE_THRESHOLDS
 )
+from utils.custom_losses import CUSTOM_OBJECTS
+
+# Logging ayarla
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class JetXPredictor:
@@ -49,29 +55,33 @@ class JetXPredictor:
             # TensorFlow/Keras modeli için
             try:
                 from tensorflow import keras
-                self.model = keras.models.load_model(self.model_path)
-                print(f"✅ Model yüklendi: {self.model_path}")
-            except:
+                
+                # Custom objects kullanarak model yükle
+                self.model = keras.models.load_model(self.model_path, custom_objects=CUSTOM_OBJECTS)
+                logger.info(f"✅ Model yüklendi: {self.model_path}")
+            except ImportError:
                 # PyTorch veya sklearn modeli için
                 import joblib
                 self.model = joblib.load(self.model_path)
-                print(f"✅ Model yüklendi: {self.model_path}")
+                logger.info(f"✅ Model yüklendi: {self.model_path}")
             
             # Scaler'ı yükle
             if os.path.exists(self.scaler_path):
                 self.scaler = joblib.load(self.scaler_path)
-                print(f"✅ Scaler yüklendi: {self.scaler_path}")
+                logger.info(f"✅ Scaler yüklendi: {self.scaler_path}")
+            else:
+                logger.warning(f"⚠️ Scaler bulunamadı: {self.scaler_path}")
             
         except Exception as e:
-            print(f"⚠️ Model yükleme hatası: {e}")
-            print("Model henüz eğitilmemiş olabilir. Önce Google Colab'da eğitin.")
+            logger.error(f"⚠️ Model yükleme hatası: {e}")
+            logger.info("Model henüz eğitilmemiş olabilir. Önce Google Colab'da eğitin.")
     
     def extract_features_from_history(self, history: List[float]) -> Dict:
         """
         Geçmiş verilerden özellik çıkarır ve sequence'ler oluşturur
         
         Args:
-            history: Geçmiş değerler listesi
+            history: Geçmiş değerler listesi (en yeni en sonda)
             
         Returns:
             Dictionary containing features and sequences
@@ -86,10 +96,23 @@ class JetXPredictor:
         if self.scaler is not None:
             feature_values = self.scaler.transform(feature_values)
         
-        # Sequence'leri hazırla (3 farklı pencere)
-        seq_50 = np.array(history[-50:]).reshape(1, -1) if len(history) >= 50 else None
-        seq_200 = np.array(history[-200:]).reshape(1, -1) if len(history) >= 200 else None
-        seq_500 = np.array(history[-500:]).reshape(1, -1) if len(history) >= 500 else None
+        # Sequence'leri hazırla (3 farklı pencere) - DOĞRU SHAPE: (1, length, 1)
+        # Log10 transformation uygula (training ile tutarlı)
+        seq_50 = None
+        seq_200 = None
+        seq_500 = None
+        
+        if len(history) >= 50:
+            seq_50 = np.array(history[-50:]).reshape(1, 50, 1)
+            seq_50 = np.log10(seq_50 + 1e-8)  # Training'deki gibi log transform
+            
+        if len(history) >= 200:
+            seq_200 = np.array(history[-200:]).reshape(1, 200, 1)
+            seq_200 = np.log10(seq_200 + 1e-8)
+            
+        if len(history) >= 500:
+            seq_500 = np.array(history[-500:]).reshape(1, 500, 1)
+            seq_500 = np.log10(seq_500 + 1e-8)
         
         return {
             'features': feature_values,
@@ -147,20 +170,23 @@ class JetXPredictor:
                 model_inputs['seq_500']
             ]
             
-            # Tahmin yap (4 çıktı: regression, classification, confidence, pattern_risk)
+            # Tahmin yap (3 çıktı: regression, classification, threshold)
             predictions = self.model.predict(input_data, verbose=0)
             
-            # Çıktıları ayır
-            if len(predictions) == 4:
-                regression_pred, classification_pred, confidence_pred, pattern_risk_pred = predictions
-                predicted_value = float(regression_pred[0][0])
-                model_confidence = float(confidence_pred[0][0])
-                pattern_risk = float(pattern_risk_pred[0][0])
-            else:
-                # Eski model formatı (geriye dönük uyumluluk)
-                predicted_value = float(predictions[0][0])
-                model_confidence = 0.5
-                pattern_risk = 0.0
+            # Çıktıları ayır - MODEL 3 OUTPUT VERİYOR
+            regression_pred = predictions[0]  # (batch, 1)
+            classification_pred = predictions[1]  # (batch, 3)
+            threshold_pred = predictions[2]  # (batch, 1) - sigmoid output
+            
+            predicted_value = float(regression_pred[0][0])
+            threshold_prob = float(threshold_pred[0][0])  # 1.5x üstü olma olasılığı
+            
+            # Model confidence'ı threshold prediction'dan türet
+            # Eğer tahmin kesin ise (0'a veya 1'e yakın) confidence yüksek
+            model_confidence = max(threshold_prob, 1 - threshold_prob)
+            
+            # Pattern risk için basit bir hesaplama (opsiyonel)
+            pattern_risk = 0.0  # Şimdilik kullanılmıyor
             
             # Güven skorunu hesapla (model çıktısı + heuristic)
             confidence = (model_confidence + self._calculate_confidence(history, predicted_value)) / 2
@@ -182,6 +208,7 @@ class JetXPredictor:
                 'predicted_value': round(predicted_value, 2),
                 'confidence': round(confidence, 2),
                 'above_threshold': above_threshold,
+                'threshold_probability': round(threshold_prob, 2),  # Model'in 1.5x üstü tahmini
                 'category': category,
                 'detailed_category': detailed_category,
                 'recommendation': recommendation,
@@ -264,14 +291,10 @@ class JetXPredictor:
         if confidence < threshold:
             return 'BEKLE'
         
-        # DEĞIŞIKLIK: 1.5 altı tahminleri de gösteriyoruz artık
-        # Model eğer güvenli bir şekilde 1.5 altı tahmin ediyorsa kullanıcı bilmeli!
+        # 1.5 altı tahminler için uyarı
         if not above_threshold:
-            # 1.5 altı tahmin - kullanıcıyı UYAR ama göster
-            if confidence >= 0.75:  # Çok yüksek güvenle 1.5 altı tahmin ediyorsa
-                return 'BEKLE_ALTI'  # Yeni öneri tipi: kesinlikle beklenmeli
-            else:
-                return 'BEKLE_ALTI'
+            # 1.5 altı tahmin - kullanıcı kesinlikle OYNAMAMALI
+            return 'BEKLE'  # Risk çok yüksek
         
         # 1.5 üstü tahminler
         if confidence >= threshold and above_threshold:

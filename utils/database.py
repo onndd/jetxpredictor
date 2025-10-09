@@ -70,22 +70,29 @@ class DatabaseManager:
         Returns:
             Değerler listesi
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        if limit:
-            cursor.execute("SELECT value FROM jetx_results ORDER BY id DESC LIMIT ?", (limit,))
-        else:
-            cursor.execute("SELECT value FROM jetx_results ORDER BY id")
-        
-        results = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        
-        # Ters çevir (en eskiden en yeniye)
-        if limit:
-            results.reverse()
-        
-        return results
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if limit:
+                cursor.execute("SELECT value FROM jetx_results ORDER BY id DESC LIMIT ?", (limit,))
+            else:
+                cursor.execute("SELECT value FROM jetx_results ORDER BY id")
+            
+            results = [row[0] for row in cursor.fetchall()]
+            
+            # Ters çevir (en eskiden en yeniye)
+            if limit:
+                results.reverse()
+            
+            return results
+        except Exception as e:
+            print(f"❌ get_all_results hatası: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
     
     def get_recent_results(self, n: int = 100) -> List[float]:
         """
@@ -97,17 +104,24 @@ class DatabaseManager:
         Returns:
             Son N değer
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT value FROM jetx_results ORDER BY id DESC LIMIT ?", (n,))
-        results = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        
-        # Ters çevir (eskiden yeniye)
-        results.reverse()
-        
-        return results
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT value FROM jetx_results ORDER BY id DESC LIMIT ?", (n,))
+            results = [row[0] for row in cursor.fetchall()]
+            
+            # Ters çevir (eskiden yeniye)
+            results.reverse()
+            
+            return results
+        except Exception as e:
+            print(f"❌ get_recent_results hatası: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
     
     def add_result(self, value: float) -> int:
         """
@@ -119,16 +133,24 @@ class DatabaseManager:
         Returns:
             Eklenen kaydın ID'si
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("INSERT INTO jetx_results (value) VALUES (?)", (value,))
-        result_id = cursor.lastrowid
-        
-        conn.commit()
-        conn.close()
-        
-        return result_id
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("INSERT INTO jetx_results (value) VALUES (?)", (value,))
+            result_id = cursor.lastrowid
+            
+            conn.commit()
+            return result_id
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print(f"❌ add_result hatası: {e}")
+            return -1
+        finally:
+            if conn:
+                conn.close()
     
     def add_prediction(
         self,
@@ -213,34 +235,46 @@ class DatabaseManager:
         
         Args:
             limit: Maksimum kayıt sayısı
-            mode: Belirli bir mod filtreleme
+            mode: Belirli bir mod filtreleme (validation yapılır)
             only_evaluated: Sadece değerlendirilen tahminler
             
         Returns:
             DataFrame
         """
-        conn = self.get_connection()
+        # Mode validation
+        valid_modes = ['normal', 'rolling', 'aggressive']
+        if mode and mode not in valid_modes:
+            print(f"⚠️ Geçersiz mod: {mode}. Geçerli modlar: {valid_modes}")
+            mode = None
         
-        query = "SELECT * FROM predictions WHERE 1=1"
-        params = []
-        
-        if mode:
-            query += " AND mode = ?"
-            params.append(mode)
-        
-        if only_evaluated:
-            query += " AND actual_value IS NOT NULL"
-        
-        query += " ORDER BY id DESC"
-        
-        if limit:
-            query += " LIMIT ?"
-            params.append(limit)
-        
-        df = pd.read_sql_query(query, conn, params=params if params else None)
-        conn.close()
-        
-        return df
+        conn = None
+        try:
+            conn = self.get_connection()
+            
+            query = "SELECT * FROM predictions WHERE 1=1"
+            params = []
+            
+            if mode:
+                query += " AND mode = ?"
+                params.append(mode)
+            
+            if only_evaluated:
+                query += " AND actual_value IS NOT NULL"
+            
+            query += " ORDER BY id DESC"
+            
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+            
+            df = pd.read_sql_query(query, conn, params=params if params else None)
+            return df
+        except Exception as e:
+            print(f"❌ get_predictions hatası: {e}")
+            return pd.DataFrame()
+        finally:
+            if conn:
+                conn.close()
     
     def get_prediction_stats(self, mode: Optional[str] = None) -> Dict:
         """
@@ -252,35 +286,52 @@ class DatabaseManager:
         Returns:
             İstatistik sözlüğü
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
+        # Mode validation
+        valid_modes = ['normal', 'rolling', 'aggressive']
+        if mode and mode not in valid_modes:
+            print(f"⚠️ Geçersiz mod: {mode}")
+            mode = None
         
-        query = "SELECT COUNT(*), SUM(was_correct), AVG(confidence_score) FROM predictions WHERE actual_value IS NOT NULL"
-        params = []
-        
-        if mode:
-            query += " AND mode = ?"
-            params.append(mode)
-        
-        cursor.execute(query, params if params else None)
-        total, correct, avg_confidence = cursor.fetchone()
-        
-        conn.close()
-        
-        if total and total > 0:
-            return {
-                'total_predictions': total,
-                'correct_predictions': correct or 0,
-                'accuracy': (correct or 0) / total if total > 0 else 0,
-                'average_confidence': avg_confidence or 0
-            }
-        else:
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            query = "SELECT COUNT(*), SUM(was_correct), AVG(confidence_score) FROM predictions WHERE actual_value IS NOT NULL"
+            params = []
+            
+            if mode:
+                query += " AND mode = ?"
+                params.append(mode)
+            
+            cursor.execute(query, params if params else None)
+            total, correct, avg_confidence = cursor.fetchone()
+            
+            if total and total > 0:
+                return {
+                    'total_predictions': total,
+                    'correct_predictions': correct or 0,
+                    'accuracy': (correct or 0) / total if total > 0 else 0,
+                    'average_confidence': avg_confidence or 0
+                }
+            else:
+                return {
+                    'total_predictions': 0,
+                    'correct_predictions': 0,
+                    'accuracy': 0,
+                    'average_confidence': 0
+                }
+        except Exception as e:
+            print(f"❌ get_prediction_stats hatası: {e}")
             return {
                 'total_predictions': 0,
                 'correct_predictions': 0,
                 'accuracy': 0,
                 'average_confidence': 0
             }
+        finally:
+            if conn:
+                conn.close()
     
     def get_database_stats(self) -> Dict:
         """
@@ -289,31 +340,44 @@ class DatabaseManager:
         Returns:
             İstatistik sözlüğü
         """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Toplam sonuç sayısı
-        cursor.execute("SELECT COUNT(*) FROM jetx_results")
-        total_results = cursor.fetchone()[0]
-        
-        # 1.5x istatistikleri
-        cursor.execute("SELECT COUNT(*) FROM jetx_results WHERE value >= 1.5")
-        above_threshold = cursor.fetchone()[0]
-        
-        # Ortalama, min, max
-        cursor.execute("SELECT AVG(value), MIN(value), MAX(value) FROM jetx_results")
-        avg, min_val, max_val = cursor.fetchone()
-        
-        conn.close()
-        
-        return {
-            'total_results': total_results,
-            'above_threshold_count': above_threshold,
-            'above_threshold_ratio': above_threshold / total_results if total_results > 0 else 0,
-            'average_value': avg or 0,
-            'min_value': min_val or 0,
-            'max_value': max_val or 0
-        }
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Toplam sonuç sayısı
+            cursor.execute("SELECT COUNT(*) FROM jetx_results")
+            total_results = cursor.fetchone()[0]
+            
+            # 1.5x istatistikleri
+            cursor.execute("SELECT COUNT(*) FROM jetx_results WHERE value >= 1.5")
+            above_threshold = cursor.fetchone()[0]
+            
+            # Ortalama, min, max
+            cursor.execute("SELECT AVG(value), MIN(value), MAX(value) FROM jetx_results")
+            avg, min_val, max_val = cursor.fetchone()
+            
+            return {
+                'total_results': total_results,
+                'above_threshold_count': above_threshold,
+                'above_threshold_ratio': above_threshold / total_results if total_results > 0 else 0,
+                'average_value': avg or 0,
+                'min_value': min_val or 0,
+                'max_value': max_val or 0
+            }
+        except Exception as e:
+            print(f"❌ get_database_stats hatası: {e}")
+            return {
+                'total_results': 0,
+                'above_threshold_count': 0,
+                'above_threshold_ratio': 0,
+                'average_value': 0,
+                'min_value': 0,
+                'max_value': 0
+            }
+        finally:
+            if conn:
+                conn.close()
     
     def backup_database(self, backup_path: Optional[str] = None):
         """

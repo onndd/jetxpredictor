@@ -11,12 +11,18 @@ import pandas as pd
 import numpy as np
 import sys
 import os
+import logging
 
 # Ana dizini path'e ekle
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.database import DatabaseManager
+from utils.config_loader import config
 from category_definitions import CategoryDefinitions
+
+# Logging ayarla
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="Veri Analizi - JetX Predictor",
@@ -26,7 +32,9 @@ st.set_page_config(
 
 # Database manager
 if 'db_manager' not in st.session_state:
-    st.session_state.db_manager = DatabaseManager("data/jetx_data.db")
+    db_path = config.get('database.path', 'data/jetx_data.db')
+    st.session_state.db_manager = DatabaseManager(db_path)
+    logger.info(f"Analiz sayfası - Database manager başlatıldı: {db_path}")
 
 st.title("📊 Veri Analizi")
 st.markdown("Veritabanındaki tüm verilerin detaylı analizi")

@@ -60,7 +60,7 @@ ui:
 
 # GitHub Entegrasyonu
 github:
-  repository_url: "https://github.com/USERNAME/jetxpredictor"
+  repository_url: "https://github.com/onndd/jetxpredictor"
   models_release: true  # Modelleri GitHub Release olarak yükle
   
 # Google Colab - GitHub entegrasyonu

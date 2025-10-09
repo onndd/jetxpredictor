@@ -52,7 +52,7 @@ pip install -r requirements.txt
 2. `notebooks/jetx_model_training.ipynb` dosyasını Google Colab'da açın
 3. Colab'da GitHub repository'sini klonlayın:
    ```python
-   !git clone https://github.com/KULLANICI_ADINIZ/jetxpredictor.git
+   !git clone https://github.com/onndd/jetxpredictor.git
    %cd jetxpredictor
    ```
 4. Notebook'u çalıştırarak modeli eğitin

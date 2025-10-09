@@ -140,6 +140,10 @@ y_reg_tr, y_cls_tr, y_thr_tr = y_reg[tr_idx], y_cls[tr_idx], y_thr[tr_idx]
 X_f_te, X_50_te, X_200_te, X_500_te = X_f[te_idx], X_50[te_idx], X_200[te_idx], X_500[te_idx]
 y_reg_te, y_cls_te, y_thr_te = y_reg[te_idx], y_cls[te_idx], y_thr[te_idx]
 
+# Shape düzeltmesi: (N,) -> (N, 1) binary classification için
+y_thr_tr = y_thr_tr.reshape(-1, 1)
+y_thr_te = y_thr_te.reshape(-1, 1)
+
 print(f"Train: {len(X_f_tr)}, Test: {len(X_f_te)}")
 print(f"✅ Veri hazır")
 
@@ -276,8 +280,9 @@ def ultra_focal_loss(gamma=5.0, alpha=0.85):
     return loss
 
 # CLASS WEIGHTS - 10X (1.5 altı için!)
-c0 = (y_thr_tr == 0).sum()
-c1 = (y_thr_tr == 1).sum()
+# y_thr_tr shape (N, 1) olduğu için flatten etmeliyiz
+c0 = (y_thr_tr.flatten() == 0).sum()
+c1 = (y_thr_tr.flatten() == 1).sum()
 w0 = (len(y_thr_tr) / (2 * c0)) * 10.0  # 2.5x -> 10x !!!
 w1 = len(y_thr_tr) / (2 * c1)
 
@@ -336,7 +341,7 @@ class UltraMetricsCallback(callbacks.Callback):
         if epoch % 5 == 0:
             p = self.model.predict([X_f_tr[:1000], X_50_tr[:1000], X_200_tr[:1000], X_500_tr[:1000]], verbose=0)[2].flatten()
             pb = (p >= 0.5).astype(int)
-            tb = y_thr_tr[:1000].astype(int)
+            tb = y_thr_tr[:1000].flatten().astype(int)
             
             below_mask = tb == 0
             above_mask = tb == 1

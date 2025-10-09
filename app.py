@@ -12,12 +12,25 @@ import numpy as np
 from datetime import datetime
 import sys
 import os
+import logging
 
 # Utils modüllerini import et
 from utils.database import DatabaseManager
 from utils.predictor import JetXPredictor
 from utils.risk_manager import RiskManager
+from utils.config_loader import config
 from category_definitions import CategoryDefinitions
+
+# Logging ayarla
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(config.get('logging.file', 'data/app.log')),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Sayfa konfigürasyonu
 st.set_page_config(
@@ -59,13 +72,20 @@ st.markdown("""
 
 # Session state initialization
 if 'db_manager' not in st.session_state:
-    st.session_state.db_manager = DatabaseManager("data/jetx_data.db")
+    db_path = config.get('database.path', 'data/jetx_data.db')
+    st.session_state.db_manager = DatabaseManager(db_path)
+    logger.info(f"Database manager başlatıldı: {db_path}")
 
 if 'predictor' not in st.session_state:
-    st.session_state.predictor = JetXPredictor()
+    model_path = config.get('model.path', 'models/jetx_model.h5')
+    scaler_path = config.get('model.scaler_path', 'models/scaler.pkl')
+    st.session_state.predictor = JetXPredictor(model_path, scaler_path)
+    logger.info(f"Predictor başlatıldı: {model_path}")
 
 if 'risk_manager' not in st.session_state:
-    st.session_state.risk_manager = RiskManager()
+    default_mode = config.get('prediction.default_mode', 'normal')
+    st.session_state.risk_manager = RiskManager(mode=default_mode)
+    logger.info(f"Risk manager başlatıldı: {default_mode} mod")
 
 if 'last_prediction' not in st.session_state:
     st.session_state.last_prediction = None
@@ -301,25 +321,58 @@ with col2:
     st.write("")  # Spacing
     st.write("")  # Spacing
     if st.button("💾 Kaydet", use_container_width=True):
-        # Veritabanına ekle
-        st.session_state.db_manager.add_result(new_value)
-        st.success(f"✅ {new_value:.2f}x kaydedildi!")
+        # Input validation
+        is_valid = True
+        error_message = ""
         
-        # Eğer bekleyen tahmin varsa, değerlendir
-        if st.session_state.last_prediction and 'error' not in st.session_state.last_prediction:
-            evaluation = st.session_state.risk_manager.evaluate_prediction(
-                st.session_state.last_prediction,
-                new_value
-            )
-            
-            if evaluation['threshold_correct']:
-                st.success(f"🎉 Tahmin doğru! (1.5x eşik tahmini)")
-            else:
-                st.error(f"❌ Tahmin yanlış!")
-            
-            st.info(f"Ardışık: {evaluation['consecutive_wins']} doğru, {evaluation['consecutive_losses']} yanlış")
+        # Değer kontrolü
+        if new_value < 1.0:
+            is_valid = False
+            error_message = "❌ Değer 1.0x'den küçük olamaz!"
+        elif new_value > 10000.0:
+            is_valid = False
+            error_message = "❌ Değer 10000x'den büyük olamaz! Lütfen gerçekçi bir değer girin."
+        else:
+            # En fazla 2 ondalık basamak kontrolü - DÜZELTME
+            value_str = str(new_value)
+            if '.' in value_str:
+                decimal_part = value_str.split('.')[1]
+                if len(decimal_part) > 2:
+                    is_valid = False
+                    error_message = "❌ Değer en fazla 2 ondalık basamak içerebilir!"
         
-        st.rerun()
+        if is_valid:
+            try:
+                # Veritabanına ekle - Error handling eklendi
+                result_id = st.session_state.db_manager.add_result(new_value)
+                
+                if result_id > 0:
+                    st.success(f"✅ {new_value:.2f}x kaydedildi!")
+                    
+                    # Eğer bekleyen tahmin varsa, değerlendir
+                    if st.session_state.last_prediction and 'error' not in st.session_state.last_prediction:
+                        try:
+                            evaluation = st.session_state.risk_manager.evaluate_prediction(
+                                st.session_state.last_prediction,
+                                new_value
+                            )
+                            
+                            if evaluation['threshold_correct']:
+                                st.success(f"🎉 Tahmin doğru! (1.5x eşik tahmini)")
+                            else:
+                                st.error(f"❌ Tahmin yanlış!")
+                            
+                            st.info(f"Ardışık: {evaluation['consecutive_wins']} doğru, {evaluation['consecutive_losses']} yanlış")
+                        except Exception as e:
+                            st.warning(f"⚠️ Tahmin değerlendirme hatası: {e}")
+                    
+                    st.rerun()
+                else:
+                    st.error("❌ Veri kaydedilemedi! Lütfen tekrar deneyin.")
+            except Exception as e:
+                st.error(f"❌ Veritabanı hatası: {e}")
+        else:
+            st.error(error_message)
 
 st.divider()
 

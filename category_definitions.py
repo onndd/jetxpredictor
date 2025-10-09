@@ -414,11 +414,18 @@ class FeatureEngineering:
             recent_50 = values[-50:]
             
             # Skewness (çarpıklık) ve Kurtosis (basıklık)
-            from scipy import stats
             try:
+                from scipy import stats
                 features['skewness_50'] = float(stats.skew(recent_50))
                 features['kurtosis_50'] = float(stats.kurtosis(recent_50))
-            except:
+            except ImportError:
+                # scipy yoksa basit alternatif hesaplama
+                import warnings
+                warnings.warn("scipy bulunamadı, skewness/kurtosis hesaplanamıyor", ImportWarning)
+                features['skewness_50'] = 0.0
+                features['kurtosis_50'] = 0.0
+            except Exception as e:
+                # Diğer hatalar için de default değer
                 features['skewness_50'] = 0.0
                 features['kurtosis_50'] = 0.0
             
