@@ -397,8 +397,7 @@ hist2 = model.fit(
     batch_size=8,
     validation_split=0.2,
     callbacks=cb2,
-    verbose=1,
-    class_weight={'threshold': {0: w0, 1: w1}}
+    verbose=1
 )
 
 stage2_time = time.time() - stage2_start
@@ -449,8 +448,7 @@ hist3 = model.fit(
     batch_size=4,
     validation_split=0.2,
     callbacks=cb3,
-    verbose=1,
-    class_weight={'threshold': {0: w0_final, 1: w1_final}}
+    verbose=1
 )
 
 stage3_time = time.time() - stage3_start
