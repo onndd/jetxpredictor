@@ -9,6 +9,10 @@ import os
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import pandas as pd
+import logging
+
+# Logging ayarla
+logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
@@ -87,8 +91,11 @@ class DatabaseManager:
                 results.reverse()
             
             return results
+        except sqlite3.Error as e:
+            logger.error(f"Veritabanı hatası (get_all_results): {e}", exc_info=True)
+            return []
         except Exception as e:
-            print(f"❌ get_all_results hatası: {e}")
+            logger.exception(f"Beklenmeyen hata (get_all_results): {e}")
             return []
         finally:
             if conn:
@@ -116,8 +123,11 @@ class DatabaseManager:
             results.reverse()
             
             return results
+        except sqlite3.Error as e:
+            logger.error(f"Veritabanı hatası (get_recent_results): {e}", exc_info=True)
+            return []
         except Exception as e:
-            print(f"❌ get_recent_results hatası: {e}")
+            logger.exception(f"Beklenmeyen hata (get_recent_results): {e}")
             return []
         finally:
             if conn:
@@ -143,10 +153,15 @@ class DatabaseManager:
             
             conn.commit()
             return result_id
+        except sqlite3.Error as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Veritabanı hatası (add_result): {e}", exc_info=True)
+            return -1
         except Exception as e:
             if conn:
                 conn.rollback()
-            print(f"❌ add_result hatası: {e}")
+            logger.exception(f"Beklenmeyen hata (add_result): {e}")
             return -1
         finally:
             if conn:
@@ -267,10 +282,13 @@ class DatabaseManager:
                 query += " LIMIT ?"
                 params.append(limit)
             
-            df = pd.read_sql_query(query, conn, params=params if params else None)
+            df = pd.read_sql_query(query, conn, params=params or None)
             return df
+        except sqlite3.Error as e:
+            logger.error(f"Veritabanı hatası (get_predictions): {e}", exc_info=True)
+            return pd.DataFrame()
         except Exception as e:
-            print(f"❌ get_predictions hatası: {e}")
+            logger.exception(f"Beklenmeyen hata (get_predictions): {e}")
             return pd.DataFrame()
         finally:
             if conn:
@@ -321,8 +339,16 @@ class DatabaseManager:
                     'accuracy': 0,
                     'average_confidence': 0
                 }
+        except sqlite3.Error as e:
+            logger.error(f"Veritabanı hatası (get_prediction_stats): {e}", exc_info=True)
+            return {
+                'total_predictions': 0,
+                'correct_predictions': 0,
+                'accuracy': 0,
+                'average_confidence': 0
+            }
         except Exception as e:
-            print(f"❌ get_prediction_stats hatası: {e}")
+            logger.exception(f"Beklenmeyen hata (get_prediction_stats): {e}")
             return {
                 'total_predictions': 0,
                 'correct_predictions': 0,
@@ -365,8 +391,18 @@ class DatabaseManager:
                 'min_value': min_val or 0,
                 'max_value': max_val or 0
             }
+        except sqlite3.Error as e:
+            logger.error(f"Veritabanı hatası (get_database_stats): {e}", exc_info=True)
+            return {
+                'total_results': 0,
+                'above_threshold_count': 0,
+                'above_threshold_ratio': 0,
+                'average_value': 0,
+                'min_value': 0,
+                'max_value': 0
+            }
         except Exception as e:
-            print(f"❌ get_database_stats hatası: {e}")
+            logger.exception(f"Beklenmeyen hata (get_database_stats): {e}")
             return {
                 'total_results': 0,
                 'above_threshold_count': 0,
@@ -379,12 +415,15 @@ class DatabaseManager:
             if conn:
                 conn.close()
     
-    def backup_database(self, backup_path: Optional[str] = None):
+    def backup_database(self, backup_path: Optional[str] = None) -> str:
         """
         Veritabanını yedekler
         
         Args:
             backup_path: Yedek dosya yolu (None ise otomatik oluşturulur)
+            
+        Returns:
+            Yedek dosyasının yolu
         """
         if backup_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

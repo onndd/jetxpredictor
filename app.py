@@ -13,6 +13,7 @@ from datetime import datetime
 import sys
 import os
 import logging
+import re
 
 # Utils modüllerini import et
 from utils.database import DatabaseManager
@@ -333,13 +334,10 @@ with col2:
             is_valid = False
             error_message = "❌ Değer 10000x'den büyük olamaz! Lütfen gerçekçi bir değer girin."
         else:
-            # En fazla 2 ondalık basamak kontrolü - DÜZELTME
-            value_str = str(new_value)
-            if '.' in value_str:
-                decimal_part = value_str.split('.')[1]
-                if len(decimal_part) > 2:
-                    is_valid = False
-                    error_message = "❌ Değer en fazla 2 ondalık basamak içerebilir!"
+            # En fazla 2 ondalık basamak kontrolü - DÜZELTME (regex ile)
+            if not re.match(r'^\d+(\.\d{1,2})?$', str(new_value)):
+                is_valid = False
+                error_message = "❌ Değer en fazla 2 ondalık basamak içerebilir!"
         
         if is_valid:
             try:

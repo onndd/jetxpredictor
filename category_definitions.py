@@ -8,6 +8,11 @@ Kategori tanımları ve özellik çıkarma fonksiyonlarını içerir.
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Tuple
+import logging
+import warnings
+
+# Logging ayarla
+logger = logging.getLogger(__name__)
 
 
 class CategoryDefinitions:
@@ -420,12 +425,12 @@ class FeatureEngineering:
                 features['kurtosis_50'] = float(stats.kurtosis(recent_50))
             except ImportError:
                 # scipy yoksa basit alternatif hesaplama
-                import warnings
-                warnings.warn("scipy bulunamadı, skewness/kurtosis hesaplanamıyor", ImportWarning)
+                logger.warning("scipy bulunamadı, skewness/kurtosis varsayılan değerlere ayarlandı")
                 features['skewness_50'] = 0.0
                 features['kurtosis_50'] = 0.0
             except Exception as e:
-                # Diğer hatalar için de default değer
+                # Diğer hatalar için de default değer ve logging
+                logger.error(f"İstatistiksel özellik hesaplama hatası: {e}", exc_info=True)
                 features['skewness_50'] = 0.0
                 features['kurtosis_50'] = 0.0
             

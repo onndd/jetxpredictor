@@ -605,3 +605,169 @@ Eğer Epoch 20'de hala %0 ise:
 **Analiz Tarihi:** 2025-10-09 03:40
 **Sonuç:** ✅ Problem Teyit Edildi, Plan Onaylandı
 **Aciliyet:** 🔴 KRİTİK - Hemen Uygulanmalı
+
+---
+
+## 🔄 İKİNCİ DÜZELTME TURU (2025-10-09 - 17:30)
+
+### 📊 İLK DÜZELTME SONUÇLARI
+
+Epoch 1-41 arası eğitim analizi:
+
+| Metrik | Sonuç | Hedef | Durum |
+|--------|-------|-------|-------|
+| **Epoch 6 - 1.5 Altı** | %22.3 ✨ | %80+ | UMUT VERİCİ |
+| **Epoch 11+ - 1.5 Altı** | %0.0 ❌ | %80+ | GERİ DÖNDÜ |
+| **Val Threshold Acc** | 0.64 | 0.80+ | TAKILI KALDI |
+| **Class Weight** | 7.36x | - | DÜŞÜRÜLDÜ |
+| **Initial LR** | 0.0001 | - | DÜŞÜRÜLDÜ |
+
+### 🎯 OLUMLU BULGULAR
+
+1. **Epoch 6 Başarısı:** Model 1.5 altı tahminlerde **%0 → %22.3** iyileşme gösterdi
+2. **Düzeltmeler İşe Yaradı:** Para kaybı riski geçici olarak %100 → %77.7'ye düştü
+3. **Potansiyel Var:** Model öğrenmeye başladı ama devam edemedi
+
+### 🔴 OLUMSUZ BULGULAR
+
+1. **Geri Dönüş:** Epoch 11'den itibaren tekrar %0'a düştü
+2. **Yerel Minimum:** Hala 0.64 accuracy'de takılı
+3. **Düzeltmeler Yetersiz:** Cezalar hala çok yüksek
+
+### 💡 KÖK NEDEN ANALİZİ
+
+İlk düzeltme turu **yeterince agresif değil**:
+
+| Parametre | 1. Düzeltme | Sorun |
+|-----------|-------------|-------|
+| **Ceza (FP)** | 35x | Hala çok yüksek - model çekiniyor |
+| **Ceza (FN)** | 20x | Hala çok yüksek |
+| **Ceza (CZ)** | 30x | Hala çok yüksek |
+| **LR** | 0.0001 | Yerel minimumdan çıkamıyor |
+| **Class Weight** | 7.36x (5.0 multiplier) | Hala dengesiz |
+| **Focal Gamma** | 5.0 | Çok agresif |
+
+---
+
+## 🛠️ İKİNCİ DÜZELTME PLANI - DAHA AGRESİF
+
+### Düzeltme Parametreleri
+
+| Parametre | Mevcut | Yeni | Değişim | Amaç |
+|-----------|--------|------|---------|------|
+| **False Positive Ceza** | 35.0 | **15.0** | 57% azalma | Model 1.5 altı tahminden çekinmesin |
+| **False Negative Ceza** | 20.0 | **8.0** | 60% azalma | Dengeli öğrenme |
+| **Critical Zone Ceza** | 30.0 | **12.0** | 60% azalma | Kritik bölgede rahat hareket |
+| **Initial LR** | 0.0001 | **0.00005** | 50% azalma | Daha hassas öğrenme |
+| **Class Weight Multiplier** | 5.0 | **2.5** | 50% azalma | Dengeli sınıf ağırlığı |
+| **Focal Gamma** | 5.0 | **3.0** | 40% azalma | Daha yumuşak focal loss |
+
+### Detaylı Değişiklikler
+
+#### 1. [`utils/custom_losses.py`](utils/custom_losses.py)
+
+```python
+# Satır 28-32: False Positive
+false_positive = K.cast(
+    tf.logical_and(y_true < 1.5, y_pred >= 1.5),
+    'float32'
+) * 15.0  # 35.0 → 15.0 (57% azalma)
+
+# Satır 34-38: False Negative
+false_negative = K.cast(
+    tf.logical_and(y_true >= 1.5, y_pred < 1.5),
+    'float32'
+) * 8.0  # 20.0 → 8.0 (60% azalma)
+
+# Satır 40-44: Critical Zone
+critical_zone = K.cast(
+    tf.logical_and(y_true >= 1.4, y_true <= 1.6),
+    'float32'
+) * 12.0  # 30.0 → 12.0 (60% azalma)
+```
+
+#### 2. [`notebooks/jetx_model_training_ULTRA_AGGRESSIVE.py`](notebooks/jetx_model_training_ULTRA_AGGRESSIVE.py)
+
+**2.1. Focal Gamma (Satır 273)**
+
+```python
+def ultra_focal_loss(gamma=3.0, alpha=0.85):  # 5.0 → 3.0
+    """Focal loss - daha yumuşak ceza"""
+    # ...
+```
+
+**2.2. Class Weight Multiplier (Satır 286)**
+
+```python
+TARGET_MULTIPLIER = 2.5  # 5.0 → 2.5 (50% azalma)
+w0 = (len(y_thr_tr) / (2 * c0)) * TARGET_MULTIPLIER
+# Beklenen: ~7.36x → ~3.68x
+```
+
+**2.3. Initial LR (Satır 296)**
+
+```python
+initial_lr = 0.00005  # 0.0001 → 0.00005 (50% azalma)
+```
+
+**2.4. Print Mesajları Güncelle (Satır 328, 409)**
+
+```python
+print("\n✅ Model compiled:")
+print(f"- Threshold Killer Loss (15x ceza - yumuşatıldı)")
+print(f"- Ultra Focal Loss (gamma=3.0 - yumuşatıldı)")
+print(f"- Class weight: {w0:.1f}x (dengeli)")
+print(f"- Initial LR: {initial_lr} (daha da düşürüldü)")
+
+# Satır 409:
+print(f"Focal gamma: 3.0 (eski: 5.0, daha da yumuşatıldı)")
+```
+
+#### 3. [`notebooks/JetX_ULTRA_AGGRESSIVE_Colab.ipynb`](notebooks/JetX_ULTRA_AGGRESSIVE_Colab.ipynb)
+
+Notebook dokümantasyonu:
+
+```
+- ✅ Class weight: 2.5x (1.5 altı için - daha dengeli)
+- ✅ Threshold Killer Loss (15x ceza - daha yumuşak)
+- ✅ Focal gamma: 3.0 (yumuşatıldı)
+- ✅ Learning Rate: 0.00005 (daha hassas)
+- ✅ Model derinliği: 2-3x artırıldı
+```
+
+---
+
+### 🎯 BEKLENEN SONUÇLAR
+
+**Düzeltme Mantığı:**
+
+1. **Düşük Cezalar:** Model artık 1.5 altı tahmin yapmaktan korkmayacak
+2. **Düşük LR:** Yerel minimumdan hassas adımlarla çıkacak
+3. **Dengeli Class Weight:** Her iki sınıf da dengeli öğrenilecek
+4. **Yumuşak Focal Loss:** Aşırı punishment kaldırıldı
+
+**Beklenen Timeline:**
+
+| Epoch Aralığı | 1.5 Altı Doğruluk | Beklenti |
+|---------------|-------------------|----------|
+| **1-10** | %30-50 | Epoch 6'daki %22.3'ten daha iyi başlangıç |
+| **10-30** | %50-65 | Sürekli iyileşme (geri dönmemeli) |
+| **30-80** | %65-75 | Hedefin yakınında |
+| **80-200** | %75-85 | **Hedef aralığına girmeli** ✅ |
+
+### ⚠️ BAŞARI KRİTERLERİ
+
+**Epoch 20'de Kontrol:**
+- ✅ 1.5 Altı Doğruluk **>%40** → Plan işe yarıyor
+- ⚠️ 1.5 Altı Doğruluk **%20-40** → Daha fazla epoch bekle
+- ❌ 1.5 Altı Doğruluk **<%20** → Cezaları daha da düşür (15→8, 8→4, 12→6)
+
+**Epoch 50'de Kontrol:**
+- ✅ 1.5 Altı Doğruluk **>%60** → Başarı yolunda
+- ❌ 1.5 Altı Doğruluk **<%50** → Regression-only yaklaşıma geç
+
+---
+
+**Güncelleme Tarihi:** 2025-10-09 17:30
+**Düzeltme Turu:** 2 (Daha Agresif)
+**Durum:** ⏳ Uygulanmayı Bekliyor

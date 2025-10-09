@@ -534,7 +534,7 @@ info = {
         'epochs': 1000,
         'batch_size': 4,
         'patience': 100,
-        'initial_lr': float(initial_lr),  # Düzeltildi: 0.001 → gerçek değer (0.0001)
+        'initial_lr': float(initial_lr),  # 0.00005 (hassas öğrenme için düşük LR)
         'class_weight': f'{w0:.1f}x'
     }
 }
