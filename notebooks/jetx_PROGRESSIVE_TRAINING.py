@@ -347,7 +347,62 @@ class ProgressiveMetricsCallback(callbacks.Callback):
                 print(f"\n⚠️ UYARI: Model dengesiz! (Fark: %{abs(below_acc - above_acc)*100:.1f})")
                 print(f"   → Bir sınıfa aşırı öğreniyor, diğerini ihmal ediyor")
             
-            print(f"{'='*70}\n")
+            # Sanal Kasa Simülasyonu
+            print(f"\n💰 SANAL KASA SİMÜLASYONU (Test Seti):")
+            wallet = 1000.0  # Başlangıç kasası
+            bet_amount = 10.0  # Her bahis miktarı
+            win_amount = 15.0  # Kazanınca eklenen miktar
+            
+            total_bets = 0
+            total_wins = 0
+            total_losses = 0
+            
+            # Test verileri üzerinde simülasyon
+            for i in range(len(p_thr)):
+                model_pred = p_thr[i]  # Model tahmini (1.5 üstü mü?)
+                actual_value = y_reg_te[i]  # Gerçek değer
+                
+                # Model "1.5 üstü" diyorsa bahis yap
+                if model_pred == 1:
+                    wallet -= bet_amount  # Bahis yap
+                    total_bets += 1
+                    
+                    # Gerçek sonuca bak
+                    if actual_value >= 1.5:
+                        # Kazandık!
+                        wallet += win_amount
+                        total_wins += 1
+                    else:
+                        # Kaybettik
+                        total_losses += 1
+                # Model "1.5 altı" diyorsa pas geç
+            
+            # Sonuçları hesapla
+            profit_loss = wallet - 1000.0
+            roi = (profit_loss / 1000.0) * 100 if total_bets > 0 else 0
+            win_rate = (total_wins / total_bets * 100) if total_bets > 0 else 0
+            
+            # Emoji seç
+            if profit_loss > 100:
+                wallet_emoji = "🚀"
+            elif profit_loss > 0:
+                wallet_emoji = "✅"
+            elif profit_loss > -100:
+                wallet_emoji = "⚠️"
+            else:
+                wallet_emoji = "❌"
+            
+            # Rapor göster
+            print(f"   Başlangıç: 1,000.00 TL")
+            print(f"   Toplam Bahis: {total_bets} oyun × {bet_amount:.0f} TL = {total_bets * bet_amount:,.0f} TL")
+            print(f"   Kazanılan: {total_wins} oyun × {win_amount:.0f} TL = {total_wins * win_amount:,.0f} TL")
+            print(f"   Kaybedilen: {total_losses} oyun × {bet_amount:.0f} TL = {total_losses * bet_amount:,.0f} TL")
+            print(f"   Kazanma Oranı: {win_rate:.1f}% ({total_wins}/{total_bets})")
+            print(f"   {'─'*50}")
+            print(f"   Final Kasa: {wallet:,.2f} TL ({profit_loss:+,.2f} TL) {wallet_emoji}")
+            print(f"   ROI (Yatırım Getirisi): {roi:+.1f}%")
+            
+            print(f"\n{'='*70}\n")
             
             if below_acc > self.best_below_acc:
                 self.best_below_acc = below_acc
