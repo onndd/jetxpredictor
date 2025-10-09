@@ -450,18 +450,28 @@ stage1_start = time.time()
 model = build_progressive_model(X_f.shape[1])
 print(f"✅ Model: {model.count_params():,} parametre")
 
-# AŞAMA 1: Foundation Training - Threshold baştan aktif!
+# Class weights hesapla (YUMUŞAK BAŞLANGIÇ - 2x)
+c0_stage1 = (y_thr_tr.flatten() == 0).sum()
+c1_stage1 = (y_thr_tr.flatten() == 1).sum()
+w0_stage1 = (len(y_thr_tr) / (2 * c0_stage1)) * 2.0  # 2x başlangıç
+w1_stage1 = len(y_thr_tr) / (2 * c1_stage1)
+
+print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Yumuşak Başlangıç):")
+print(f"  1.5 altı: {w0_stage1:.2f}x")
+print(f"  1.5 üstü: {w1_stage1:.2f}x\n")
+
+# AŞAMA 1: Foundation Training - Threshold baştan weighted BCE ile aktif!
 model.compile(
     optimizer=Adam(0.0001),
-    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': 'binary_crossentropy'},
-    loss_weights={'regression': 0.60, 'classification': 0.10, 'threshold': 0.30},  # Threshold baştan aktif!
+    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0_stage1, w1_stage1)},
+    loss_weights={'regression': 0.50, 'classification': 0.10, 'threshold': 0.40},  # Dengeli başlangıç
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy']}
 )
 
 cb1 = [
     callbacks.ModelCheckpoint('stage1_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=30, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
-    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=15, min_lr=1e-6, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=40, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=20, min_lr=1e-6, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 1")
 ]
 
@@ -490,7 +500,7 @@ print("\n" + "="*80)
 print("🔥 AŞAMA 2: THRESHOLD FINE-TUNING (Yumuşak Strateji)")
 print("="*80)
 print("Hedef: 1.5 altı/üstü ayrımını keskinleştir (dengeli class weights)")
-print("Epoch: 80 | Batch: 32 | LR: 0.00005 | Class Weight: 5x (Yumuşak!)")
+print("Epoch: 80 | Batch: 32 | LR: 0.0001 | Class Weight: 3.5x (Orta!)")
 print("Monitor: val_threshold_accuracy | Patience: 10")
 print("="*80 + "\n")
 
@@ -499,28 +509,28 @@ stage2_start = time.time()
 # AŞAMA 1 modelini yükle
 model.load_weights('stage1_best.h5')
 
-# Class weights hesapla (YUMUŞAK)
+# Class weights hesapla (ORTA SEVİYE - 3.5x)
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
-w0 = (len(y_thr_tr) / (2 * c0)) * 5.0  # 25x → 5x (YUMUŞAK!)
+w0 = (len(y_thr_tr) / (2 * c0)) * 3.5  # 7.36x → 3.5x (ORTA)
 w1 = len(y_thr_tr) / (2 * c1)
 
-print(f"📊 CLASS WEIGHTS (Yumuşak Strateji):")
-print(f"  1.5 altı: {w0:.2f}x (Hedef: ~10x)")
+print(f"📊 CLASS WEIGHTS (Orta Seviye):")
+print(f"  1.5 altı: {w0:.2f}x")
 print(f"  1.5 üstü: {w1:.2f}x\n")
 
 # AŞAMA 2: Regression + Threshold (weighted binary crossentropy ile)
 model.compile(
-    optimizer=Adam(0.00005),
+    optimizer=Adam(0.0001),
     loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0, w1)},
-    loss_weights={'regression': 0.40, 'classification': 0.0, 'threshold': 0.60},
+    loss_weights={'regression': 0.40, 'classification': 0.10, 'threshold': 0.50},
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
 cb2 = [
     callbacks.ModelCheckpoint('stage2_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=25, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
-    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=12, min_lr=1e-7, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=40, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=20, min_lr=1e-7, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 2")
 ]
 
@@ -544,7 +554,7 @@ print("\n" + "="*80)
 print("🔥 AŞAMA 3: FULL MODEL FINE-TUNING (Dengeli Final)")
 print("="*80)
 print("Hedef: Tüm output'ları birlikte optimize et (dengeli final push)")
-print("Epoch: 80 | Batch: 16 | LR: 0.00003 | Class Weight: 7x (Dengeli!)")
+print("Epoch: 80 | Batch: 16 | LR: 0.00005 | Class Weight: 5x (Dengeli!)")
 print("Loss Weights: Regression 30%, Classification 15%, Threshold 55%")
 print("Monitor: val_threshold_accuracy | Patience: 10")
 print("="*80 + "\n")
@@ -555,25 +565,25 @@ stage3_start = time.time()
 model.load_weights('stage2_best.h5')
 
 # Class weights dengeli final push
-w0_final = (len(y_thr_tr) / (2 * c0)) * 7.0  # 30x → 7x (DENGELİ!)
+w0_final = (len(y_thr_tr) / (2 * c0)) * 5.0  # 10.3x → 5x (DENGELİ FINAL)
 w1_final = len(y_thr_tr) / (2 * c1)
 
 print(f"📊 CLASS WEIGHTS (Dengeli Final):")
-print(f"  1.5 altı: {w0_final:.2f}x (Hedef: ~15x)")
+print(f"  1.5 altı: {w0_final:.2f}x")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
 # AŞAMA 3: Tüm output'lar aktif (weighted binary crossentropy ile)
 model.compile(
-    optimizer=Adam(0.00003),
+    optimizer=Adam(0.00005),
     loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0_final, w1_final)},
-    loss_weights={'regression': 0.30, 'classification': 0.15, 'threshold': 0.55},
+    loss_weights={'regression': 0.35, 'classification': 0.15, 'threshold': 0.50},
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
 cb3 = [
     callbacks.ModelCheckpoint('stage3_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=20, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
-    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-8, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=40, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=20, min_lr=1e-8, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 3")
 ]
 
