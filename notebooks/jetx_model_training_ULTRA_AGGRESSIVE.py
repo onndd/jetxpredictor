@@ -246,23 +246,23 @@ def threshold_killer_loss(y_true, y_pred):
     """1.5 altı yanlış tahmine ÇOK BÜYÜK CEZA"""
     mae = K.abs(y_true - y_pred)
     
-    # 1.5 altıyken üstü tahmin = 35x ceza (PARA KAYBI!) - Yumuşatıldı: 100→35
+    # 1.5 altıyken üstü tahmin = 15x ceza (PARA KAYBI!) - 2. Tur: 35→15 (57% azalma)
     false_positive = K.cast(
         tf.logical_and(y_true < 1.5, y_pred >= 1.5),
         'float32'
-    ) * 35.0
+    ) * 15.0
     
-    # 1.5 üstüyken altı tahmin = 20x ceza - Yumuşatıldı: 50→20
+    # 1.5 üstüyken altı tahmin = 8x ceza - 2. Tur: 20→8 (60% azalma)
     false_negative = K.cast(
         tf.logical_and(y_true >= 1.5, y_pred < 1.5),
         'float32'
-    ) * 20.0
+    ) * 8.0
     
-    # Kritik bölge (1.4-1.6) = 30x ceza - Yumuşatıldı: 80→30
+    # Kritik bölge (1.4-1.6) = 12x ceza - 2. Tur: 30→12 (60% azalma)
     critical_zone = K.cast(
         tf.logical_and(y_true >= 1.4, y_true <= 1.6),
         'float32'
-    ) * 30.0
+    ) * 12.0
     
     weight = K.maximum(K.maximum(false_positive, false_negative), critical_zone)
     weight = K.maximum(weight, 1.0)
@@ -270,8 +270,8 @@ def threshold_killer_loss(y_true, y_pred):
     return K.mean(mae * weight)
 
 # ULTRA FOCAL LOSS - gamma=5.0 (çok agresif!)
-def ultra_focal_loss(gamma=5.0, alpha=0.85):
-    """Focal loss - yanlış tahminlere çok büyük ceza"""
+def ultra_focal_loss(gamma=3.0, alpha=0.85):
+    """Focal loss - 2. Tur: gamma 5.0→3.0 (daha yumuşak)"""
     def loss(y_true, y_pred):
         y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
         pt = y_true * y_pred + (1 - y_true) * (1 - y_pred)
@@ -283,7 +283,7 @@ def ultra_focal_loss(gamma=5.0, alpha=0.85):
 # y_thr_tr shape (N, 1) olduğu için flatten etmeliyiz
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
-TARGET_MULTIPLIER = 5.0  # Yumuşatıldı: 10.0 → 5.0
+TARGET_MULTIPLIER = 2.5  # 2. Tur: 5.0 → 2.5 (50% azalma)
 w0 = (len(y_thr_tr) / (2 * c0)) * TARGET_MULTIPLIER
 w1 = len(y_thr_tr) / (2 * c1)
 
@@ -293,7 +293,7 @@ print(f"1.5 üstü (1): {w1:.2f}x")
 print(f"\n⚡ 1.5 altı örnekler {w0:.1f}x daha önemli (dengeli hale getirildi!)")
 
 # LEARNING RATE SCHEDULE - Düşürüldü ve öne çekildi
-initial_lr = 0.0001  # Düşürüldü: 0.001 → 0.0001 (yerel minimumdan çıkmak için)
+initial_lr = 0.00005  # 2. Tur: 0.0001 → 0.00005 (50% azalma, daha hassas)
 def lr_schedule(epoch, lr):
     if epoch < 50:    # Öne çekildi: 200 → 50
         return initial_lr
@@ -324,11 +324,11 @@ model.compile(
     }
 )
 
-print("\n✅ Model compiled:")
-print(f"- Threshold Killer Loss (35x ceza - yumuşatıldı)")
-print(f"- Ultra Focal Loss (gamma=5.0)")
-print(f"- Class weight: {w0:.1f}x (dengeli)")
-print(f"- Initial LR: {initial_lr} (düşürüldü)")
+print("\n✅ Model compiled (2. Düzeltme Turu):")
+print(f"- Threshold Killer Loss (15x ceza - 2. tur yumuşatma)")
+print(f"- Ultra Focal Loss (gamma=3.0 - yumuşatıldı)")
+print(f"- Class weight: {w0:.1f}x (daha dengeli)")
+print(f"- Initial LR: {initial_lr} (daha da düşürüldü)")
 
 # =============================================================================
 # ULTRA CALLBACKS
@@ -407,7 +407,7 @@ print(f"Epochs: 1000 (eski: 300)")
 print(f"Batch size: 4 (eski: 16) - Çok yavaş ama çok iyi!")
 print(f"Patience: 100 (eski: 40)")
 print(f"Class weight: {w0:.1f}x (eski: 2.5x)")
-print(f"Focal gamma: 5.0 (eski: 2.0)")
+print(f"Focal gamma: 3.0 (eski: 5.0, 2. tur yumuşatıldı)")
 print(f"\n⏱️ BEKLENEN SÜRE: 3-5 saat (GPU ile)")
 print(f"💡 Model 5 dakikada bitiyorsa bir sorun var!")
 print("="*70 + "\n")

@@ -25,23 +25,23 @@ def threshold_killer_loss(y_true, y_pred):
     """
     mae = K.abs(y_true - y_pred)
     
-    # 1.5 altıyken üstü tahmin = 35x ceza (PARA KAYBI!) - Yumuşatıldı: 100→35
+    # 1.5 altıyken üstü tahmin = 15x ceza (PARA KAYBI!) - 2. Tur: 35→15 (57% azalma)
     false_positive = K.cast(
         tf.logical_and(y_true < 1.5, y_pred >= 1.5),
         'float32'
-    ) * 35.0
+    ) * 15.0
     
-    # 1.5 üstüyken altı tahmin = 20x ceza - Yumuşatıldı: 50→20
+    # 1.5 üstüyken altı tahmin = 8x ceza - 2. Tur: 20→8 (60% azalma)
     false_negative = K.cast(
         tf.logical_and(y_true >= 1.5, y_pred < 1.5),
         'float32'
-    ) * 20.0
+    ) * 8.0
     
-    # Kritik bölge (1.4-1.6) = 30x ceza - Yumuşatıldı: 80→30
+    # Kritik bölge (1.4-1.6) = 12x ceza - 2. Tur: 30→12 (60% azalma)
     critical_zone = K.cast(
         tf.logical_and(y_true >= 1.4, y_true <= 1.6),
         'float32'
-    ) * 30.0
+    ) * 12.0
     
     weight = K.maximum(K.maximum(false_positive, false_negative), critical_zone)
     weight = K.maximum(weight, 1.0)
