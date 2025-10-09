@@ -246,23 +246,23 @@ def threshold_killer_loss(y_true, y_pred):
     """1.5 altı yanlış tahmine ÇOK BÜYÜK CEZA"""
     mae = K.abs(y_true - y_pred)
     
-    # 1.5 altıyken üstü tahmin = 100x ceza (PARA KAYBI!)
+    # 1.5 altıyken üstü tahmin = 35x ceza (PARA KAYBI!) - Yumuşatıldı: 100→35
     false_positive = K.cast(
-        tf.logical_and(y_true < 1.5, y_pred >= 1.5), 
+        tf.logical_and(y_true < 1.5, y_pred >= 1.5),
         'float32'
-    ) * 100.0
+    ) * 35.0
     
-    # 1.5 üstüyken altı tahmin = 50x ceza
+    # 1.5 üstüyken altı tahmin = 20x ceza - Yumuşatıldı: 50→20
     false_negative = K.cast(
         tf.logical_and(y_true >= 1.5, y_pred < 1.5),
         'float32'
-    ) * 50.0
+    ) * 20.0
     
-    # Kritik bölge (1.4-1.6) = 80x ceza
+    # Kritik bölge (1.4-1.6) = 30x ceza - Yumuşatıldı: 80→30
     critical_zone = K.cast(
         tf.logical_and(y_true >= 1.4, y_true <= 1.6),
         'float32'
-    ) * 80.0
+    ) * 30.0
     
     weight = K.maximum(K.maximum(false_positive, false_negative), critical_zone)
     weight = K.maximum(weight, 1.0)
@@ -279,26 +279,27 @@ def ultra_focal_loss(gamma=5.0, alpha=0.85):
         return -K.mean(focal_weight * K.log(pt))
     return loss
 
-# CLASS WEIGHTS - 10X (1.5 altı için!)
+# CLASS WEIGHTS - 5X (1.5 altı için!) - Yumuşatıldı: 10x → 5x
 # y_thr_tr shape (N, 1) olduğu için flatten etmeliyiz
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
-w0 = (len(y_thr_tr) / (2 * c0)) * 10.0  # 2.5x -> 10x !!!
+TARGET_MULTIPLIER = 5.0  # Yumuşatıldı: 10.0 → 5.0
+w0 = (len(y_thr_tr) / (2 * c0)) * TARGET_MULTIPLIER
 w1 = len(y_thr_tr) / (2 * c1)
 
 print(f"\n🎯 CLASS WEIGHTS:")
-print(f"1.5 altı (0): {w0:.2f}x (eski: ~2.5x)")
+print(f"1.5 altı (0): {w0:.2f}x (eski: ~2.5x, önceki: ~14.7x)")
 print(f"1.5 üstü (1): {w1:.2f}x")
-print(f"\n⚡ 1.5 altı örnekler {w0:.1f}x daha önemli!")
+print(f"\n⚡ 1.5 altı örnekler {w0:.1f}x daha önemli (dengeli hale getirildi!)")
 
-# LEARNING RATE SCHEDULE
-initial_lr = 0.001
+# LEARNING RATE SCHEDULE - Düşürüldü ve öne çekildi
+initial_lr = 0.0001  # Düşürüldü: 0.001 → 0.0001 (yerel minimumdan çıkmak için)
 def lr_schedule(epoch, lr):
-    if epoch < 200:
+    if epoch < 50:    # Öne çekildi: 200 → 50
         return initial_lr
-    elif epoch < 500:
+    elif epoch < 150: # Öne çekildi: 500 → 150
         return initial_lr * 0.5
-    elif epoch < 800:
+    elif epoch < 300: # Öne çekildi: 800 → 300
         return initial_lr * 0.1
     else:
         return initial_lr * 0.05
@@ -324,10 +325,10 @@ model.compile(
 )
 
 print("\n✅ Model compiled:")
-print(f"- Threshold Killer Loss (100x ceza)")
+print(f"- Threshold Killer Loss (35x ceza - yumuşatıldı)")
 print(f"- Ultra Focal Loss (gamma=5.0)")
-print(f"- Class weight: {w0:.1f}x")
-print(f"- Initial LR: {initial_lr}")
+print(f"- Class weight: {w0:.1f}x (dengeli)")
+print(f"- Initial LR: {initial_lr} (düşürüldü)")
 
 # =============================================================================
 # ULTRA CALLBACKS
@@ -383,7 +384,7 @@ cb = [
     callbacks.ReduceLROnPlateau(
         monitor='val_loss',
         factor=0.5,
-        patience=20,
+        patience=10,  # Düşürüldü: 20 → 10 (daha hızlı tepki)
         min_lr=1e-8,
         verbose=1
     ),
@@ -392,7 +393,8 @@ cb = [
 
 print("✅ Ultra callbacks hazır:")
 print(f"- Patience: 100 epoch (eski: 40)")
-print(f"- LR schedule: 0.001 -> 0.00005")
+print(f"- LR schedule: 0.0001 -> 0.000005 (düşürüldü ve öne çekildi)")
+print(f"- ReduceLR patience: 10 (düşürüldü)")
 print(f"- Custom metrics tracking")
 
 # =============================================================================
