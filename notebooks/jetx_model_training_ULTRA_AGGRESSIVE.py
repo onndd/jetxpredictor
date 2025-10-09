@@ -246,23 +246,23 @@ def threshold_killer_loss(y_true, y_pred):
     """1.5 altı yanlış tahmine ÇOK BÜYÜK CEZA"""
     mae = K.abs(y_true - y_pred)
     
-    # 1.5 altıyken üstü tahmin = 15x ceza (PARA KAYBI!) - 2. Tur: 35→15 (57% azalma)
+    # 1.5 altıyken üstü tahmin = 12x ceza (PARA KAYBI!) - 3. Tur: 15→12 (Dengeli)
     false_positive = K.cast(
         tf.logical_and(y_true < 1.5, y_pred >= 1.5),
         'float32'
-    ) * 15.0
+    ) * 12.0
     
-    # 1.5 üstüyken altı tahmin = 8x ceza - 2. Tur: 20→8 (60% azalma)
+    # 1.5 üstüyken altı tahmin = 6x ceza - 3. Tur: 8→6 (Dengeli)
     false_negative = K.cast(
         tf.logical_and(y_true >= 1.5, y_pred < 1.5),
         'float32'
-    ) * 8.0
+    ) * 6.0
     
-    # Kritik bölge (1.4-1.6) = 12x ceza - 2. Tur: 30→12 (60% azalma)
+    # Kritik bölge (1.4-1.6) = 10x ceza - 3. Tur: 12→10 (Hassas Bölge)
     critical_zone = K.cast(
         tf.logical_and(y_true >= 1.4, y_true <= 1.6),
         'float32'
-    ) * 12.0
+    ) * 10.0
     
     weight = K.maximum(K.maximum(false_positive, false_negative), critical_zone)
     weight = K.maximum(weight, 1.0)
@@ -283,7 +283,7 @@ def ultra_focal_loss(gamma=3.0, alpha=0.85):
 # y_thr_tr shape (N, 1) olduğu için flatten etmeliyiz
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
-TARGET_MULTIPLIER = 2.5  # 2. Tur: 5.0 → 2.5 (50% azalma)
+TARGET_MULTIPLIER = 7.0  # 3. Tur: 2.5 → 7.0 (180% artış - azınlık sınıfına odaklanma)
 w0 = (len(y_thr_tr) / (2 * c0)) * TARGET_MULTIPLIER
 w1 = len(y_thr_tr) / (2 * c1)
 
@@ -324,11 +324,11 @@ model.compile(
     }
 )
 
-print("\n✅ Model compiled (2. Düzeltme Turu):")
-print(f"- Threshold Killer Loss (15x ceza - 2. tur yumuşatma)")
-print(f"- Ultra Focal Loss (gamma=3.0 - yumuşatıldı)")
-print(f"- Class weight: {w0:.1f}x (daha dengeli)")
-print(f"- Initial LR: {initial_lr} (daha da düşürüldü)")
+print("\n✅ Model compiled (3. Düzeltme Turu - Dengeli Yaklaşım):")
+print(f"- Threshold Killer Loss (12x ceza - dengeli)")
+print(f"- Ultra Focal Loss (gamma=3.0 - yumuşak)")
+print(f"- Class weight: {w0:.1f}x (azınlık sınıfına odaklanma)")
+print(f"- Initial LR: {initial_lr} (hassas öğrenme)")
 
 # =============================================================================
 # ULTRA CALLBACKS
@@ -407,7 +407,7 @@ print(f"Epochs: 1000 (eski: 300)")
 print(f"Batch size: 4 (eski: 16) - Çok yavaş ama çok iyi!")
 print(f"Patience: 100 (eski: 40)")
 print(f"Class weight: {w0:.1f}x (eski: 2.5x)")
-print(f"Focal gamma: 3.0 (eski: 5.0, 2. tur yumuşatıldı)")
+print(f"Focal gamma: 3.0 (yumuşak, dengeli)")
 print(f"\n⏱️ BEKLENEN SÜRE: 3-5 saat (GPU ile)")
 print(f"💡 Model 5 dakikada bitiyorsa bir sorun var!")
 print("="*70 + "\n")
