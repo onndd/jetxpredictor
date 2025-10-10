@@ -303,7 +303,82 @@ def build_progressive_model(n_features):
     return model
 
 # =============================================================================
-# METRICS CALLBACK
+# DYNAMIC WEIGHT CALLBACK - Otomatik Class Weight Ayarlama
+# =============================================================================
+class DynamicWeightCallback(callbacks.Callback):
+    """
+    Eğitim sırasında 1.5 altı doğruluğunu izler ve class weight'i otomatik ayarlar.
+    
+    Hedef: Model dengeli tahminler yapana kadar weight'i dinamik olarak artır/azalt
+    """
+    def __init__(self, stage_name, initial_weight=3.0, target_below_acc=0.70):
+        super().__init__()
+        self.stage_name = stage_name
+        self.current_weight = initial_weight
+        self.target_below_acc = target_below_acc
+        self.best_below_acc = 0
+        self.best_weight = initial_weight
+        self.weight_history = []
+        
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch % 5 == 0:  # Her 5 epoch'ta bir kontrol et
+            # Test seti üzerinde threshold metrics
+            p = self.model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)[2].flatten()
+            p_thr = (p >= 0.5).astype(int)
+            t_thr = (y_reg_te >= 1.5).astype(int)
+            
+            below_mask = t_thr == 0
+            above_mask = t_thr == 1
+            
+            below_acc = accuracy_score(t_thr[below_mask], p_thr[below_mask]) if below_mask.sum() > 0 else 0
+            above_acc = accuracy_score(t_thr[above_mask], p_thr[above_mask]) if above_mask.sum() > 0 else 0
+            
+            # Class weight ayarlaması (otomatik)
+            old_weight = self.current_weight
+            
+            if below_acc < 0.15:  # Çok düşük - ciddi artış gerekli
+                self.current_weight *= 1.8
+                adjustment = "🔴 Ciddi Artış (×1.8)"
+            elif below_acc < 0.40:  # Düşük - artış gerekli
+                self.current_weight *= 1.3
+                adjustment = "🟠 Orta Artış (×1.3)"
+            elif below_acc < 0.60:  # Hedefin altında - hafif artış
+                self.current_weight *= 1.1
+                adjustment = "🟡 Hafif Artış (×1.1)"
+            elif below_acc > 0.85 and above_acc < 0.50:  # Çok yüksek - azaltma gerekli
+                self.current_weight *= 0.7
+                adjustment = "🟢 Azaltma (×0.7)"
+            else:
+                adjustment = "✅ Değişiklik Yok (Dengeli)"
+            
+            # Weight'i sınırla (1.0 - 25.0 arası)
+            self.current_weight = max(1.0, min(25.0, self.current_weight))
+            
+            # En iyi sonucu kaydet
+            if below_acc > self.best_below_acc:
+                self.best_below_acc = below_acc
+                self.best_weight = self.current_weight
+            
+            # Geçmişi kaydet
+            self.weight_history.append({
+                'epoch': epoch,
+                'weight': self.current_weight,
+                'below_acc': below_acc,
+                'above_acc': above_acc
+            })
+            
+            # Rapor
+            print(f"\n{'='*70}")
+            print(f"📊 {self.stage_name} - Epoch {epoch+1} - DYNAMIC WEIGHT ADJUSTMENT")
+            print(f"{'='*70}")
+            print(f"🔴 1.5 ALTI: {below_acc*100:.1f}%")
+            print(f"🟢 1.5 ÜSTÜ: {above_acc*100:.1f}%")
+            print(f"⚖️  Weight Ayarlaması: {old_weight:.2f} → {self.current_weight:.2f} ({adjustment})")
+            print(f"🏆 En İyi 1.5 Altı: {self.best_below_acc*100:.1f}% (Weight: {self.best_weight:.2f})")
+            print(f"{'='*70}\n")
+
+# =============================================================================
+# METRICS CALLBACK (Raporlama için)
 # =============================================================================
 class ProgressiveMetricsCallback(callbacks.Callback):
     def __init__(self, stage_name):
@@ -476,10 +551,14 @@ model.compile(
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy']}
 )
 
+# Dynamic Weight Callback başlat (otomatik ayarlama için)
+dynamic_callback_1 = DynamicWeightCallback("AŞAMA 1", initial_weight=1.5, target_below_acc=0.70)
+
 cb1 = [
     callbacks.ModelCheckpoint('stage1_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=25, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=40, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=12, min_lr=1e-6, verbose=1),
+    dynamic_callback_1,
     ProgressiveMetricsCallback("AŞAMA 1")
 ]
 
@@ -533,10 +612,14 @@ model.compile(
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
+# Dynamic Weight Callback başlat (otomatik ayarlama için)
+dynamic_callback_2 = DynamicWeightCallback("AŞAMA 2", initial_weight=2.0, target_below_acc=0.70)
+
 cb2 = [
     callbacks.ModelCheckpoint('stage2_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=20, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=35, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-7, verbose=1),
+    dynamic_callback_2,
     ProgressiveMetricsCallback("AŞAMA 2")
 ]
 
@@ -586,10 +669,14 @@ model.compile(
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
+# Dynamic Weight Callback başlat (otomatik ayarlama için)
+dynamic_callback_3 = DynamicWeightCallback("AŞAMA 3", initial_weight=2.5, target_below_acc=0.70)
+
 cb3 = [
     callbacks.ModelCheckpoint('stage3_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=15, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=30, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-8, verbose=1),
+    dynamic_callback_3,
     ProgressiveMetricsCallback("AŞAMA 3")
 ]
 
@@ -727,26 +814,37 @@ print("  - stage3_best.h5 (checkpoint)")
 print(f"\n📊 Model Bilgisi:")
 print(json.dumps(info, indent=2))
 
-# Google Colab'da indir
+# Google Colab'da indir - İyileştirilmiş kontrol
 try:
-    from google.colab import files
-    print("\n📥 Dosyalar indiriliyor...")
-    files.download('jetx_progressive_final.h5')
-    print("✅ jetx_progressive_final.h5 indirildi")
-    files.download('scaler_progressive.pkl')
-    print("✅ scaler_progressive.pkl indirildi")
-    files.download('progressive_model_info.json')
-    print("✅ progressive_model_info.json indirildi")
-    print("\n✅ Tüm ana dosyalar başarıyla indirildi!")
-    print("📌 Bu dosyaları lokal projenizin models/ klasörüne kopyalayın:")
-    print("   • jetx_progressive_final.h5 → models/jetx_model.h5")
-    print("   • scaler_progressive.pkl → models/scaler.pkl")
+    import google.colab
+    IN_COLAB = True
 except ImportError:
-    print("\n⚠️ Google Colab ortamı bulunamadı - dosyalar sadece kaydedildi")
-    print("💡 Bu script Google Colab'da çalıştırılmalıdır.")
-except Exception as e:
-    print(f"\n❌ İndirme hatası: {e}")
-    print("📁 Dosyalar kaydedildi ancak indirilemedi.")
+    IN_COLAB = False
+
+if IN_COLAB:
+    try:
+        from google.colab import files
+        print("\n📥 Dosyalar indiriliyor...")
+        files.download('jetx_progressive_final.h5')
+        print("✅ jetx_progressive_final.h5 indirildi")
+        files.download('scaler_progressive.pkl')
+        print("✅ scaler_progressive.pkl indirildi")
+        files.download('progressive_model_info.json')
+        print("✅ progressive_model_info.json indirildi")
+        print("\n✅ Tüm ana dosyalar başarıyla indirildi!")
+        print("📌 Bu dosyaları lokal projenizin models/ klasörüne kopyalayın:")
+        print("   • jetx_progressive_final.h5 → models/jetx_model.h5")
+        print("   • scaler_progressive.pkl → models/scaler.pkl")
+    except Exception as e:
+        print(f"\n⚠️ İndirme hatası: {e}")
+        print("📁 Dosyalar models/ klasöründe kaydedildi.")
+else:
+    print("\n⚠️ Google Colab ortamı algılanamadı - dosyalar sadece kaydedildi")
+    print("📁 Dosyalar models/ klasöründe mevcut:")
+    print("   • jetx_progressive_final.h5")
+    print("   • scaler_progressive.pkl")
+    print("   • progressive_model_info.json")
+    print("\n💡 Not: Bu script Google Colab'da çalıştırıldığında dosyalar otomatik indirilir.")
 
 # Final rapor
 print("\n" + "="*80)
