@@ -14,6 +14,7 @@ import sys
 import os
 import logging
 import re
+import sqlite3
 
 # Utils modüllerini import et
 from utils.database import DatabaseManager
@@ -308,6 +309,38 @@ st.divider()
 # Veri girişi bölümü
 st.subheader("➕ Yeni Veri Ekle")
 
+def validate_input_value(value: float) -> tuple[bool, str]:
+    """
+    Input değerini validate eder
+    
+    Args:
+        value: Kontrol edilecek değer
+        
+    Returns:
+        (is_valid, error_message) tuple'ı
+    """
+    # Değer aralığı kontrolü
+    if value < 1.0:
+        return False, "❌ Değer 1.0x'den küçük olamaz!"
+    
+    if value > 10000.0:
+        return False, "❌ Değer 10000x'den büyük olamaz! Lütfen gerçekçi bir değer girin."
+    
+    # Ondalık basamak kontrolü (en fazla 2 basamak)
+    if not re.match(r'^\d+(\.\d{1,2})?$', str(value)):
+        return False, "❌ Değer en fazla 2 ondalık basamak içerebilir!"
+    
+    # Anomali kontrolü - aşırı yüksek değerler
+    if value > 1000.0:
+        logger.warning(f"Aşırı yüksek değer girildi: {value}x")
+        return False, f"⚠️ {value:.2f}x çok yüksek bir değer! Gerçekten bu değeri girmek istiyor musunuz? Lütfen kontrol edin."
+    
+    # NaN veya Infinity kontrolü
+    if not np.isfinite(value):
+        return False, "❌ Geçersiz sayı! Lütfen geçerli bir değer girin."
+    
+    return True, ""
+
 col1, col2 = st.columns([3, 1])
 with col1:
     new_value = st.number_input(
@@ -316,35 +349,23 @@ with col1:
         max_value=10000.0,
         value=1.5,
         step=0.01,
-        format="%.2f"
+        format="%.2f",
+        help="1.0x ile 1000x arası bir değer girin (en fazla 2 ondalık basamak)"
     )
 with col2:
     st.write("")  # Spacing
     st.write("")  # Spacing
     if st.button("💾 Kaydet", use_container_width=True):
         # Input validation
-        is_valid = True
-        error_message = ""
-        
-        # Değer kontrolü
-        if new_value < 1.0:
-            is_valid = False
-            error_message = "❌ Değer 1.0x'den küçük olamaz!"
-        elif new_value > 10000.0:
-            is_valid = False
-            error_message = "❌ Değer 10000x'den büyük olamaz! Lütfen gerçekçi bir değer girin."
-        else:
-            # En fazla 2 ondalık basamak kontrolü - DÜZELTME (regex ile)
-            if not re.match(r'^\d+(\.\d{1,2})?$', str(new_value)):
-                is_valid = False
-                error_message = "❌ Değer en fazla 2 ondalık basamak içerebilir!"
+        is_valid, error_message = validate_input_value(new_value)
         
         if is_valid:
             try:
-                # Veritabanına ekle - Error handling eklendi
+                # Veritabanına ekle - Güçlendirilmiş error handling
                 result_id = st.session_state.db_manager.add_result(new_value)
                 
                 if result_id > 0:
+                    logger.info(f"Yeni değer kaydedildi: {new_value:.2f}x (ID: {result_id})")
                     st.success(f"✅ {new_value:.2f}x kaydedildi!")
                     
                     # Eğer bekleyen tahmin varsa, değerlendir
@@ -357,18 +378,29 @@ with col2:
                             
                             if evaluation['threshold_correct']:
                                 st.success(f"🎉 Tahmin doğru! (1.5x eşik tahmini)")
+                                logger.info(f"Doğru tahmin: {evaluation['consecutive_wins']} ardışık")
                             else:
                                 st.error(f"❌ Tahmin yanlış!")
+                                logger.warning(f"Yanlış tahmin: {evaluation['consecutive_losses']} ardışık")
                             
                             st.info(f"Ardışık: {evaluation['consecutive_wins']} doğru, {evaluation['consecutive_losses']} yanlış")
                         except Exception as e:
-                            st.warning(f"⚠️ Tahmin değerlendirme hatası: {e}")
+                            logger.error(f"Tahmin değerlendirme hatası: {e}", exc_info=True)
+                            st.warning(f"⚠️ Tahmin değerlendirme hatası: {str(e)}")
                     
                     st.rerun()
                 else:
+                    logger.error(f"Veri kaydedilemedi: result_id={result_id}")
                     st.error("❌ Veri kaydedilemedi! Lütfen tekrar deneyin.")
+            except sqlite3.IntegrityError as e:
+                logger.error(f"Veritabanı bütünlük hatası: {e}", exc_info=True)
+                st.error(f"❌ Veritabanı bütünlük hatası: Aynı veri zaten mevcut olabilir.")
+            except sqlite3.OperationalError as e:
+                logger.error(f"Veritabanı işlem hatası: {e}", exc_info=True)
+                st.error(f"❌ Veritabanı kilitli veya erişilemiyor. Lütfen tekrar deneyin.")
             except Exception as e:
-                st.error(f"❌ Veritabanı hatası: {e}")
+                logger.error(f"Beklenmeyen veritabanı hatası: {e}", exc_info=True)
+                st.error(f"❌ Beklenmeyen hata: {str(e)}")
         else:
             st.error(error_message)
 

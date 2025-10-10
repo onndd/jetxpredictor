@@ -10,6 +10,7 @@ import pandas as pd
 from typing import List, Dict, Tuple
 import logging
 import warnings
+from functools import lru_cache
 
 # Logging ayarla
 logger = logging.getLogger(__name__)
@@ -672,16 +673,19 @@ class FeatureEngineering:
         return features
     
     @staticmethod
-    def extract_all_features(values: List[float]) -> Dict[str, float]:
+    @lru_cache(maxsize=128)
+    def _extract_features_cached(values_tuple: Tuple[float, ...]) -> Dict[str, float]:
         """
-        Tüm özellikleri çıkar - Geliştirilmiş versiyon
+        Cache'lenmiş özellik çıkarma (internal method)
         
         Args:
-            values: Geçmiş değerler listesi
+            values_tuple: Geçmiş değerler tuple'ı (hashable olması için)
             
         Returns:
             Tüm özellikler
         """
+        # Tuple'ı list'e çevir
+        values = list(values_tuple)
         all_features = {}
         
         # Temel özellikler (güncellenen pencere boyutlarıyla)
@@ -728,6 +732,79 @@ class FeatureEngineering:
             all_features['last_category'] = CategoryDefinitions.get_category_numeric(values[-1])
         
         return all_features
+    
+    @staticmethod
+    def extract_all_features(values: List[float]) -> Dict[str, float]:
+        """
+        Tüm özellikleri çıkar - Cache'li versiyon
+        
+        Args:
+            values: Geçmiş değerler listesi
+            
+        Returns:
+            Tüm özellikler (cache'ten veya yeni hesaplanan)
+        """
+        # List'i tuple'a çevir (hashable olması için lru_cache ile kullanılabilir)
+        # Son 1000 değeri cache'le (daha fazlası memory problemi yaratabilir)
+        if len(values) > 1000:
+            values_to_cache = values[-1000:]
+        else:
+            values_to_cache = values
+        
+        values_tuple = tuple(values_to_cache)
+        
+        try:
+            # Cache'lenmiş metodu çağır
+            return FeatureEngineering._extract_features_cached(values_tuple)
+        except Exception as e:
+            logger.warning(f"Cache'den özellik çıkarma hatası, direkt hesaplama yapılıyor: {e}")
+            # Cache hatası durumunda direkt hesapla
+            all_features = {}
+            
+            # Temel özellikler
+            all_features.update(FeatureEngineering.extract_basic_features(values))
+            
+            # Eşik özellikleri
+            all_features.update(FeatureEngineering.extract_threshold_features(values))
+            
+            # Mesafe özellikleri
+            all_features.update(FeatureEngineering.extract_distance_features(
+                values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]
+            ))
+            
+            # Ardışıklık özellikleri
+            all_features.update(FeatureEngineering.extract_streak_features(values))
+            
+            # Volatilite özellikleri
+            all_features.update(FeatureEngineering.extract_volatility_features(values))
+            
+            # Sequence pattern özellikleri
+            all_features.update(FeatureEngineering.extract_sequence_pattern_features(values))
+            
+            # İstatistiksel dağılım özellikleri
+            all_features.update(FeatureEngineering.extract_statistical_distribution_features(values))
+            
+            # Multi-timeframe momentum
+            all_features.update(FeatureEngineering.extract_multi_timeframe_momentum(values))
+            
+            # Recovery pattern
+            all_features.update(FeatureEngineering.extract_recovery_pattern_features(values))
+            
+            # Anomaly detection
+            all_features.update(FeatureEngineering.extract_anomaly_detection_features(values))
+            
+            # Soğuma dönemi pattern'leri
+            all_features.update(FeatureEngineering.extract_cooling_period_features(values))
+            
+            # 15 Kategori Seti Özellikleri
+            all_features.update(FeatureEngineering.extract_category_set_features(values))
+            
+            # Son değer
+            if len(values) > 0:
+                all_features['last_value'] = values[-1]
+                all_features['last_category'] = CategoryDefinitions.get_category_numeric(values[-1])
+            
+            return all_features
 
 
 def create_sequences(data: List[float], sequence_length: int = 50) -> Tuple[np.ndarray, np.ndarray]:

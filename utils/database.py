@@ -10,6 +10,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import pandas as pd
 import logging
+import time
 
 # Logging ayarla
 logger = logging.getLogger(__name__)
@@ -17,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     """SQLite veritabanı işlemlerini yöneten sınıf"""
+    
+    # Connection ayarları
+    CONNECTION_TIMEOUT = 30.0  # 30 saniye timeout
+    MAX_RETRIES = 3  # Maksimum deneme sayısı
+    RETRY_DELAY = 0.5  # Denemeler arası bekleme (saniye)
     
     def __init__(self, db_path: str = "data/jetx_data.db"):
         """
@@ -61,8 +67,20 @@ class DatabaseManager:
         conn.close()
     
     def get_connection(self) -> sqlite3.Connection:
-        """Veritabanı bağlantısı döndürür"""
-        return sqlite3.connect(self.db_path)
+        """
+        Veritabanı bağlantısı döndürür (timeout ile)
+        
+        Returns:
+            SQLite connection objesi
+        """
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=self.CONNECTION_TIMEOUT)
+            # WAL mode - daha iyi concurrency
+            conn.execute("PRAGMA journal_mode=WAL")
+            return conn
+        except sqlite3.Error as e:
+            logger.error(f"Veritabanı bağlantı hatası: {e}", exc_info=True)
+            raise
     
     def get_all_results(self, limit: Optional[int] = None) -> List[float]:
         """
@@ -135,37 +153,62 @@ class DatabaseManager:
     
     def add_result(self, value: float) -> int:
         """
-        Yeni bir JetX sonucu ekler
+        Yeni bir JetX sonucu ekler (retry mekanizması ile)
         
         Args:
             value: Çarpan değeri
             
         Returns:
-            Eklenen kaydın ID'si
+            Eklenen kaydın ID'si (hata durumunda -1)
         """
-        conn = None
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("INSERT INTO jetx_results (value) VALUES (?)", (value,))
-            result_id = cursor.lastrowid
-            
-            conn.commit()
-            return result_id
-        except sqlite3.Error as e:
-            if conn:
-                conn.rollback()
-            logger.error(f"Veritabanı hatası (add_result): {e}", exc_info=True)
-            return -1
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            logger.exception(f"Beklenmeyen hata (add_result): {e}")
-            return -1
-        finally:
-            if conn:
-                conn.close()
+        for attempt in range(self.MAX_RETRIES):
+            conn = None
+            try:
+                conn = self.get_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("INSERT INTO jetx_results (value) VALUES (?)", (value,))
+                result_id = cursor.lastrowid
+                
+                conn.commit()
+                logger.info(f"Veri başarıyla eklendi: ID={result_id}, value={value:.2f}x")
+                return result_id
+                
+            except sqlite3.IntegrityError as e:
+                if conn:
+                    conn.rollback()
+                logger.error(f"Veritabanı bütünlük hatası (add_result): {e}", exc_info=True)
+                return -1  # Integrity hatalarında retry yapma
+                
+            except sqlite3.OperationalError as e:
+                if conn:
+                    conn.rollback()
+                    
+                if attempt < self.MAX_RETRIES - 1:
+                    logger.warning(f"Veritabanı kilitli (deneme {attempt + 1}/{self.MAX_RETRIES}), yeniden deneniyor...")
+                    time.sleep(self.RETRY_DELAY * (attempt + 1))  # Exponential backoff
+                    continue
+                else:
+                    logger.error(f"Veritabanı işlem hatası (add_result, tüm denemeler tükendi): {e}", exc_info=True)
+                    return -1
+                    
+            except sqlite3.Error as e:
+                if conn:
+                    conn.rollback()
+                logger.error(f"Veritabanı hatası (add_result): {e}", exc_info=True)
+                return -1
+                
+            except Exception as e:
+                if conn:
+                    conn.rollback()
+                logger.exception(f"Beklenmeyen hata (add_result): {e}")
+                return -1
+                
+            finally:
+                if conn:
+                    conn.close()
+        
+        return -1
     
     def add_prediction(
         self,
