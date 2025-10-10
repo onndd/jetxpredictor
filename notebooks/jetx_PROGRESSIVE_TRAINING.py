@@ -460,12 +460,12 @@ stage1_start = time.time()
 model = build_progressive_model(X_f.shape[1])
 print(f"✅ Model: {model.count_params():,} parametre")
 
-# Class weights - GÜÇLÜ BAŞLANGIÇ (lazy learning'i önler)
-w0_stage1 = 3.0  # 1.5 altı için: 3.0x (güçlü başlangıç)
+# Class weights - DENGELI BAŞLANGIÇ (lazy learning'i önler)
+w0_stage1 = 1.5  # 1.5 altı için: 1.5x (dengeli başlangıç)
 w1_stage1 = 1.0  # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Güçlü Başlangıç):")
-print(f"  1.5 altı: {w0_stage1:.2f}x (güçlü - lazy learning'i önler)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Dengeli Başlangıç):")
+print(f"  1.5 altı: {w0_stage1:.2f}x (dengeli - lazy learning'i önler)")
 print(f"  1.5 üstü: {w1_stage1:.2f}x\n")
 
 # AŞAMA 1: Foundation Training - Threshold baştan weighted BCE ile aktif!
@@ -518,7 +518,7 @@ stage2_start = time.time()
 model.load_weights('stage1_best.h5')
 
 # Class weights - ORTA SEVİYE
-w0 = 5.0  # 1.5 altı için: 5.0x (orta seviye baskı)
+w0 = 2.0  # 1.5 altı için: 2.0x (orta seviye baskı)
 w1 = 1.0  # 1.5 üstü baseline
 
 print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Orta Seviye):")
@@ -570,12 +570,12 @@ stage3_start = time.time()
 # AŞAMA 2 modelini yükle
 model.load_weights('stage2_best.h5')
 
-# Class weights - GÜÇLÜ FINAL
-w0_final = 7.0  # 1.5 altı için: 7.0x (güçlü final push)
+# Class weights - DENGELI FINAL
+w0_final = 2.5  # 1.5 altı için: 2.5x (dengeli final push)
 w1_final = 1.0  # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Güçlü Final):")
-print(f"  1.5 altı: {w0_final:.2f}x (güçlü - dengeli final)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Dengeli Final):")
+print(f"  1.5 altı: {w0_final:.2f}x (dengeli - dengeli final)")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
 # AŞAMA 3: Tüm output'lar aktif (weighted binary crossentropy ile)
@@ -678,6 +678,9 @@ print(f"  Accuracy: {cls_acc*100:.2f}%")
 # KAYDET & İNDİR
 # =============================================================================
 print("\n💾 Model ve dosyalar kaydediliyor...")
+
+# models/ klasörünü oluştur
+os.makedirs('models', exist_ok=True)
 
 model.save('jetx_progressive_final.h5')
 joblib.dump(scaler, 'scaler_progressive.pkl')

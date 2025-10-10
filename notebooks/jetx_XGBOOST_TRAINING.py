@@ -197,10 +197,10 @@ print("="*80)
 
 cls_start = time.time()
 
-# Class weight hesaplama
+# Class weight hesaplama - DÜZELTİLDİ
 below_count = (y_cls_train == 0).sum()
 above_count = (y_cls_train == 1).sum()
-scale_pos_weight = below_count / above_count  # 1.5 altı / 1.5 üstü
+scale_pos_weight = above_count / below_count  # 1.5 üstü / 1.5 altı (doğru formül)
 
 print(f"📊 CLASS WEIGHT:")
 print(f"  1.5 altı: {below_count:,} örnek")
@@ -284,6 +284,9 @@ print(classification_report(y_cls_test, y_cls_pred, target_names=['1.5 Altı', '
 print("\n" + "="*80)
 print("💾 Modeller kaydediliyor...")
 print("="*80)
+
+# models/ klasörünü oluştur
+os.makedirs('models', exist_ok=True)
 
 # Modelleri kaydet
 regressor.save_model('models/xgboost_regressor.json')
