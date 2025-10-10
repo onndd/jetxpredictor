@@ -49,6 +49,8 @@ from tensorflow.keras.optimizers import Adam
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 import warnings
+import pickle
+from datetime import datetime
 warnings.filterwarnings('ignore')
 
 print(f"✅ TensorFlow: {tf.__version__}")
@@ -577,6 +579,65 @@ class ProgressiveMetricsCallback(callbacks.Callback):
                 print(f"  ✨ YENİ REKOR! En iyi 1.5 altı: {below_acc*100:.1f}%\n")
 
 # =============================================================================
+# CHECKPOINT YARDIMCI FONKSİYONLARI
+# =============================================================================
+def save_checkpoint(stage, epoch, model, optimizer, metrics_history, class_weights, filename=None):
+    """
+    Eğitim checkpoint'i kaydet
+    
+    Args:
+        stage: Hangi aşama (1, 2, 3)
+        epoch: Kaçıncı epoch
+        model: Model instance
+        optimizer: Optimizer instance
+        metrics_history: Metrics geçmişi
+        class_weights: Class weight değerleri
+        filename: Checkpoint dosya adı (opsiyonel)
+    """
+    if filename is None:
+        filename = f'checkpoint_stage{stage}_epoch{epoch}.pkl'
+    
+    checkpoint = {
+        'stage': stage,
+        'epoch': epoch,
+        'model_weights': model.get_weights(),
+        'optimizer_weights': optimizer.get_weights(),
+        'metrics_history': metrics_history,
+        'class_weights': class_weights,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    with open(filename, 'wb') as f:
+        pickle.dump(checkpoint, f)
+    
+    print(f"💾 Checkpoint kaydedildi: {filename}")
+    return filename
+
+def load_checkpoint(filename):
+    """
+    Checkpoint yükle
+    
+    Args:
+        filename: Checkpoint dosya adı
+        
+    Returns:
+        Checkpoint dictionary veya None
+    """
+    try:
+        with open(filename, 'rb') as f:
+            checkpoint = pickle.load(f)
+        print(f"✅ Checkpoint yüklendi: {filename}")
+        print(f"   Aşama: {checkpoint['stage']}, Epoch: {checkpoint['epoch']}")
+        print(f"   Zaman: {checkpoint['timestamp']}")
+        return checkpoint
+    except FileNotFoundError:
+        print(f"⚠️ Checkpoint bulunamadı: {filename}")
+        return None
+    except Exception as e:
+        print(f"❌ Checkpoint yükleme hatası: {e}")
+        return None
+
+# =============================================================================
 # AŞAMA 1: REGRESSION-ONLY (200 epoch)
 # =============================================================================
 print("\n" + "="*80)
@@ -588,10 +649,21 @@ print("Loss Weights: Regression 60%, Classification 10%, Threshold 30%")
 print("Monitor: val_threshold_accuracy | Patience: 10")
 print("="*80 + "\n")
 
+# Checkpoint kontrolü - AŞAMA 1 için resume
+stage1_checkpoint = load_checkpoint('checkpoint_stage1_latest.pkl')
+initial_epoch_stage1 = 0
+
 stage1_start = time.time()
 
 model = build_progressive_model(X_f.shape[1])
 print(f"✅ Model: {model.count_params():,} parametre")
+
+# Checkpoint varsa yükle
+if stage1_checkpoint and stage1_checkpoint['stage'] == 1:
+    print("🔄 AŞAMA 1 checkpoint'inden devam ediliyor...")
+    model.set_weights(stage1_checkpoint['model_weights'])
+    initial_epoch_stage1 = stage1_checkpoint['epoch']
+    print(f"   Epoch {initial_epoch_stage1} 'den devam edilecek")
 
 # Class weights - DENGELI BAŞLANGIÇ (lazy learning'i önler)
 w0_stage1 = 1.2  # 1.5 altı için: 1.2x (çok yumuşak başlangıç)
