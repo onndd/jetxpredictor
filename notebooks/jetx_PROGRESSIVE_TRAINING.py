@@ -502,15 +502,73 @@ class ProgressiveMetricsCallback(callbacks.Callback):
             else:
                 wallet_emoji = "❌"
             
-            # Rapor göster
-            print(f"   Başlangıç: 1,000.00 TL")
-            print(f"   Toplam Bahis: {total_bets} oyun × {bet_amount:.0f} TL = {total_bets * bet_amount:,.0f} TL")
-            print(f"   Kazanılan: {total_wins} oyun × {win_amount:.0f} TL = {total_wins * win_amount:,.0f} TL")
-            print(f"   Kaybedilen: {total_losses} oyun × {bet_amount:.0f} TL = {total_losses * bet_amount:,.0f} TL")
-            print(f"   Kazanma Oranı: {win_rate:.1f}% ({total_wins}/{total_bets})")
-            print(f"   {'─'*50}")
-            print(f"   Final Kasa: {wallet:,.2f} TL ({profit_loss:+,.2f} TL) {wallet_emoji}")
-            print(f"   ROI (Yatırım Getirisi): {roi:+.1f}%")
+            # Geliştirilmiş rapor formatı
+            net_wins = total_wins * (win_amount - bet_amount)  # Net kazanç
+            net_losses = total_losses * bet_amount  # Net kayıp
+            
+            print(f"   ════════════════════════════════════════════════════")
+            print(f"   ")
+            print(f"   📊 OYUN PARAMETRELERİ:")
+            print(f"      Başlangıç Sermayesi: {1000.0:,.2f} TL")
+            print(f"      Bahis Tutarı: {bet_amount:.2f} TL (sabit)")
+            print(f"      Kazanç Hedefi: 1.5x → {win_amount:.2f} TL geri alma")
+            print(f"      ")
+            print(f"      Her Kazançta: +{win_amount - bet_amount:.2f} TL ({win_amount:.0f} - {bet_amount:.0f} = {win_amount - bet_amount:.0f})")
+            print(f"      Her Kayıpta: -{bet_amount:.2f} TL (bahis kaybı)")
+            print(f"   ")
+            print(f"   🎯 TEST SETİ SONUÇLARI:")
+            print(f"      Toplam Oyun: {total_bets} el")
+            print(f"      ✅ Kazanan: {total_wins} oyun ({win_rate:.1f}%)")
+            print(f"      ❌ Kaybeden: {total_losses} oyun ({100-win_rate:.1f}%)")
+            print(f"   ")
+            print(f"   💸 DETAYLI HESAPLAMA:")
+            print(f"      ")
+            print(f"      Kazanılan Oyunlar ({total_wins} el):")
+            print(f"      └─ {total_wins} × {win_amount - bet_amount:.2f} TL = +{net_wins:,.2f} TL ✅")
+            print(f"      ")
+            print(f"      Kaybedilen Oyunlar ({total_losses} el):")
+            print(f"      └─ {total_losses} × {bet_amount:.2f} TL = -{net_losses:,.2f} TL ❌")
+            print(f"      ")
+            print(f"      {'─'*50}")
+            print(f"      Net Kar/Zarar: {net_wins:,.2f} - {net_losses:,.2f} = {profit_loss:+,.2f} TL")
+            print(f"      Final Sermaye: 1,000 {profit_loss:+,.0f} = {wallet:,.2f} TL (kalan)")
+            print(f"   ")
+            print(f"   📈 PERFORMANS ANALİZİ:")
+            print(f"      ")
+            print(f"      ROI: {roi:+.1f}% {wallet_emoji}")
+            print(f"      └─ Sermayenin {'%'+str(round((wallet/1000.0)*100, 1)) if wallet > 0 else '0'}'si kaldı")
+            print(f"      ")
+            print(f"      🎯 BAŞABAŞ İÇİN GEREKLİ:")
+            print(f"         2 kazanç = 1 kayıp dengelemeli (2×{win_amount - bet_amount:.0f} = 1×{bet_amount:.0f})")
+            print(f"         Gerekli Kazanma Oranı: %66.7 (3'te 2)")
+            print(f"      ")
+            print(f"      📊 MEVCUT DURUM:")
+            print(f"         Kazanma Oranı: {win_rate:.1f}% ({total_bets}'de {total_wins})")
+            print(f"         Hedeften Fark: {win_rate - 66.7:+.1f}% {'⚠️' if win_rate < 66.7 else '✅'}")
+            print(f"      ")
+            print(f"   💡 DEĞERLENDİRME:")
+            print(f"      ")
+            if profit_loss > 0:
+                print(f"      ✅ Model bu performansla kar ettiriyor!")
+            else:
+                print(f"      ❌ Model bu performansla zarar ettiriyor!")
+            print(f"      ")
+            print(f"      📊 Matematik:")
+            print(f"         • 2 kazanç = +{(win_amount - bet_amount) * 2:.0f} TL (2 × {win_amount - bet_amount:.0f})")
+            print(f"         • 1 kayıp = -{bet_amount:.0f} TL")
+            print(f"         • Bu yüzden en az %67 kazanma şart!")
+            print(f"      ")
+            if win_rate < 66.7:
+                print(f"      ⚠️ %{win_rate:.1f} kazanma oranı yetersiz:")
+                games_per_100 = 100
+                wins_per_100 = round(win_rate)
+                losses_per_100 = 100 - wins_per_100
+                net_per_100 = (wins_per_100 * (win_amount - bet_amount)) - (losses_per_100 * bet_amount)
+                print(f"         • Her 100 oyunda ~{wins_per_100} kazanç, ~{losses_per_100} kayıp")
+                print(f"         • Net: ({wins_per_100}×{win_amount - bet_amount:.0f}) - ({losses_per_100}×{bet_amount:.0f}) = {net_per_100:+.0f} TL")
+                print(f"         • 100 oyunda ~{abs(net_per_100):.0f} TL {'kayıp!' if net_per_100 < 0 else 'kar!'}")
+            print(f"   ")
+            print(f"   ════════════════════════════════════════════════════")
             
             print(f"\n{'='*70}\n")
             
@@ -536,11 +594,11 @@ model = build_progressive_model(X_f.shape[1])
 print(f"✅ Model: {model.count_params():,} parametre")
 
 # Class weights - DENGELI BAŞLANGIÇ (lazy learning'i önler)
-w0_stage1 = 1.5  # 1.5 altı için: 1.5x (dengeli başlangıç)
+w0_stage1 = 1.2  # 1.5 altı için: 1.2x (çok yumuşak başlangıç)
 w1_stage1 = 1.0  # 1.5 üstü baseline
 
 print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Dengeli Başlangıç):")
-print(f"  1.5 altı: {w0_stage1:.2f}x (dengeli - lazy learning'i önler)")
+print(f"  1.5 altı: {w0_stage1:.2f}x (çok yumuşak - lazy learning'i önler)")
 print(f"  1.5 üstü: {w1_stage1:.2f}x\n")
 
 # AŞAMA 1: Foundation Training - Threshold baştan weighted BCE ile aktif!
@@ -556,7 +614,7 @@ dynamic_callback_1 = DynamicWeightCallback("AŞAMA 1", initial_weight=1.5, targe
 
 cb1 = [
     callbacks.ModelCheckpoint('stage1_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=40, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=12, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=12, min_lr=1e-6, verbose=1),
     dynamic_callback_1,
     ProgressiveMetricsCallback("AŞAMA 1")
@@ -597,7 +655,7 @@ stage2_start = time.time()
 model.load_weights('stage1_best.h5')
 
 # Class weights - ORTA SEVİYE
-w0 = 2.0  # 1.5 altı için: 2.0x (orta seviye baskı)
+w0 = 1.5  # 1.5 altı için: 1.5x (orta seviye baskı)
 w1 = 1.0  # 1.5 üstü baseline
 
 print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Orta Seviye):")
@@ -613,11 +671,11 @@ model.compile(
 )
 
 # Dynamic Weight Callback başlat (otomatik ayarlama için)
-dynamic_callback_2 = DynamicWeightCallback("AŞAMA 2", initial_weight=2.0, target_below_acc=0.70)
+dynamic_callback_2 = DynamicWeightCallback("AŞAMA 2", initial_weight=1.5, target_below_acc=0.70)
 
 cb2 = [
     callbacks.ModelCheckpoint('stage2_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=35, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-7, verbose=1),
     dynamic_callback_2,
     ProgressiveMetricsCallback("AŞAMA 2")
@@ -654,11 +712,11 @@ stage3_start = time.time()
 model.load_weights('stage2_best.h5')
 
 # Class weights - DENGELI FINAL
-w0_final = 2.5  # 1.5 altı için: 2.5x (dengeli final push)
+w0_final = 2.0  # 1.5 altı için: 2.0x (dengeli final push)
 w1_final = 1.0  # 1.5 üstü baseline
 
 print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Dengeli Final):")
-print(f"  1.5 altı: {w0_final:.2f}x (dengeli - dengeli final)")
+print(f"  1.5 altı: {w0_final:.2f}x (dengeli final)")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
 # AŞAMA 3: Tüm output'lar aktif (weighted binary crossentropy ile)
@@ -670,11 +728,11 @@ model.compile(
 )
 
 # Dynamic Weight Callback başlat (otomatik ayarlama için)
-dynamic_callback_3 = DynamicWeightCallback("AŞAMA 3", initial_weight=2.5, target_below_acc=0.70)
+dynamic_callback_3 = DynamicWeightCallback("AŞAMA 3", initial_weight=2.0, target_below_acc=0.70)
 
 cb3 = [
     callbacks.ModelCheckpoint('stage3_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=30, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=8, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-8, verbose=1),
     dynamic_callback_3,
     ProgressiveMetricsCallback("AŞAMA 3")
