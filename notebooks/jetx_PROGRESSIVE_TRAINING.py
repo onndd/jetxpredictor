@@ -88,8 +88,8 @@ print(f"  Dengesizlik: 1:{above/below:.2f}")
 # FEATURE ENGINEERING
 # =============================================================================
 print("\n🔧 Feature extraction...")
-window_size = 500
-X_f, X_50, X_200, X_500 = [], [], [], []
+window_size = 1000  # 500 → 1000 (daha uzun vadeli pattern analizi)
+X_f, X_50, X_200, X_500, X_1000 = [], [], [], [], []
 y_reg, y_cls, y_thr = [], [], []
 
 for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
@@ -101,6 +101,7 @@ for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
     X_50.append(all_values[i-50:i])
     X_200.append(all_values[i-200:i])
     X_500.append(all_values[i-500:i])
+    X_1000.append(all_values[i-1000:i])  # YENİ: 1000'lik pencere
     
     y_reg.append(target)
     cat = CategoryDefinitions.get_category_numeric(target)
@@ -113,6 +114,7 @@ X_f = np.array(X_f)
 X_50 = np.array(X_50).reshape(-1, 50, 1)
 X_200 = np.array(X_200).reshape(-1, 200, 1)
 X_500 = np.array(X_500).reshape(-1, 500, 1)
+X_1000 = np.array(X_1000).reshape(-1, 1000, 1)  # YENİ: 1000'lik pencere
 y_reg = np.array(y_reg)
 y_cls = np.array(y_cls)
 y_thr = np.array(y_thr).reshape(-1, 1)
@@ -127,15 +129,16 @@ X_f = scaler.fit_transform(X_f)
 X_50 = np.log10(X_50 + 1e-8)
 X_200 = np.log10(X_200 + 1e-8)
 X_500 = np.log10(X_500 + 1e-8)
+X_1000 = np.log10(X_1000 + 1e-8)  # YENİ: 1000'lik pencere normalizasyonu
 
 # Train/Test split
 idx = np.arange(len(X_f))
 tr_idx, te_idx = train_test_split(idx, test_size=0.2, shuffle=False)
 
-X_f_tr, X_50_tr, X_200_tr, X_500_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx]
+X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx], X_1000[tr_idx]
 y_reg_tr, y_cls_tr, y_thr_tr = y_reg[tr_idx], y_cls[tr_idx], y_thr[tr_idx]
 
-X_f_te, X_50_te, X_200_te, X_500_te = X_f[te_idx], X_50[te_idx], X_200[te_idx], X_500[te_idx]
+X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te = X_f[te_idx], X_50[te_idx], X_200[te_idx], X_500[te_idx], X_1000[te_idx]
 y_reg_te, y_cls_te, y_thr_te = y_reg[te_idx], y_cls[te_idx], y_thr[te_idx]
 
 print(f"✅ Train: {len(X_f_tr):,}, Test: {len(X_f_te):,}")
@@ -210,12 +213,13 @@ def create_weighted_binary_crossentropy(weight_0, weight_1):
 def build_progressive_model(n_features):
     """
     Optimize edilmiş model - Dengeli derinlik
-    ~8-10M parametre
+    ~12-15M parametre (1000 penceresi ile artış)
     """
     inp_f = layers.Input((n_features,), name='features')
     inp_50 = layers.Input((50, 1), name='seq50')
     inp_200 = layers.Input((200, 1), name='seq200')
     inp_500 = layers.Input((500, 1), name='seq500')
+    inp_1000 = layers.Input((1000, 1), name='seq1000')  # YENİ: 1000'lik pencere girişi
     
     # N-BEATS (Optimize - 5-7 block)
     def nbeats_block(x, units, blocks, name):
@@ -243,7 +247,13 @@ def build_progressive_model(n_features):
     nb_l = layers.Dense(256, activation='relu')(nb_l)
     nb_l = layers.Dropout(0.2)(nb_l)
     
-    nb_all = layers.Concatenate()([nb_s, nb_m, nb_l])
+    # YENİ: Çok uzun sequence (1000) - daha derin analiz
+    nb_xl = layers.Flatten()(inp_1000)
+    nb_xl = nbeats_block(nb_xl, 384, 9, 'xl')  # 9 block, 384 units
+    nb_xl = layers.Dense(384, activation='relu')(nb_xl)
+    nb_xl = layers.Dropout(0.2)(nb_xl)
+    
+    nb_all = layers.Concatenate()([nb_s, nb_m, nb_l, nb_xl])  # nb_xl eklendi
     
     # TCN (Optimize - 7 layer)
     def tcn_block(x, filters, dilation, name):
@@ -289,7 +299,7 @@ def build_progressive_model(n_features):
     thr_branch = layers.Dropout(0.2)(thr_branch)
     out_thr = layers.Dense(1, activation='sigmoid', name='threshold')(thr_branch)
     
-    model = models.Model([inp_f, inp_50, inp_200, inp_500], [out_reg, out_cls, out_thr])
+    model = models.Model([inp_f, inp_50, inp_200, inp_500, inp_1000], [out_reg, out_cls, out_thr])
     return model
 
 # =============================================================================
@@ -304,7 +314,7 @@ class ProgressiveMetricsCallback(callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         if epoch % 5 == 0:
             # Test seti üzerinde threshold metrics
-            p = self.model.predict([X_f_te, X_50_te, X_200_te, X_500_te], verbose=0)[2].flatten()
+            p = self.model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)[2].flatten()
             p_thr = (p >= 0.5).astype(int)
             t_thr = (y_reg_te >= 1.5).astype(int)
             
@@ -450,12 +460,12 @@ stage1_start = time.time()
 model = build_progressive_model(X_f.shape[1])
 print(f"✅ Model: {model.count_params():,} parametre")
 
-# Class weights - DENGELI BAŞLANGIÇ (lazy learning önleme)
-w0_stage1 = 1.2  # 1.5 altı için: 1.2x (2.0 → 1.2, çok yumuşak)
+# Class weights - GÜÇLÜ BAŞLANGIÇ (lazy learning'i önler)
+w0_stage1 = 3.0  # 1.5 altı için: 3.0x (güçlü başlangıç)
 w1_stage1 = 1.0  # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Çok Yumuşak Başlangıç):")
-print(f"  1.5 altı: {w0_stage1:.2f}x (dengeli - lazy learning'i önler)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Güçlü Başlangıç):")
+print(f"  1.5 altı: {w0_stage1:.2f}x (güçlü - lazy learning'i önler)")
 print(f"  1.5 üstü: {w1_stage1:.2f}x\n")
 
 # AŞAMA 1: Foundation Training - Threshold baştan weighted BCE ile aktif!
@@ -468,13 +478,13 @@ model.compile(
 
 cb1 = [
     callbacks.ModelCheckpoint('stage1_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=12, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
-    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-6, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=25, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=12, min_lr=1e-6, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 1")
 ]
 
 hist1 = model.fit(
-    [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],  # X_1000_tr eklendi
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=100,
     batch_size=64,
@@ -487,7 +497,7 @@ stage1_time = time.time() - stage1_start
 print(f"\n✅ AŞAMA 1 Tamamlandı! Süre: {stage1_time/60:.1f} dakika")
 
 # AŞAMA 1 Değerlendirme
-pred1 = model.predict([X_f_te, X_50_te, X_200_te, X_500_te], verbose=0)
+pred1 = model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)
 mae1 = mean_absolute_error(y_reg_te, pred1[0])
 print(f"📊 AŞAMA 1 Sonuç: MAE = {mae1:.4f}")
 
@@ -507,12 +517,12 @@ stage2_start = time.time()
 # AŞAMA 1 modelini yükle
 model.load_weights('stage1_best.h5')
 
-# Class weights - YUMUŞAK ARTIŞ
-w0 = 1.5  # 1.5 altı için: 1.5x (3.5 → 1.5, hafif artış)
+# Class weights - ORTA SEVİYE
+w0 = 5.0  # 1.5 altı için: 5.0x (orta seviye baskı)
 w1 = 1.0  # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Hafif Artış):")
-print(f"  1.5 altı: {w0:.2f}x (yumuşak - model dengeyi korur)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Orta Seviye):")
+print(f"  1.5 altı: {w0:.2f}x (orta - dengeli öğrenme)")
 print(f"  1.5 üstü: {w1:.2f}x\n")
 
 # AŞAMA 2: Regression + Threshold (weighted binary crossentropy ile)
@@ -525,13 +535,13 @@ model.compile(
 
 cb2 = [
     callbacks.ModelCheckpoint('stage2_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
-    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-7, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=20, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-7, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 2")
 ]
 
 hist2 = model.fit(
-    [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],  # X_1000_tr eklendi
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=80,
     batch_size=32,
@@ -560,12 +570,12 @@ stage3_start = time.time()
 # AŞAMA 2 modelini yükle
 model.load_weights('stage2_best.h5')
 
-# Class weights - DENGELI FINAL
-w0_final = 2.0  # 1.5 altı için: 2.0x (5.0 → 2.0, dengeli)
+# Class weights - GÜÇLÜ FINAL
+w0_final = 7.0  # 1.5 altı için: 7.0x (güçlü final push)
 w1_final = 1.0  # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Dengeli Final):")
-print(f"  1.5 altı: {w0_final:.2f}x (dengeli - fazla agresif değil)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Güçlü Final):")
+print(f"  1.5 altı: {w0_final:.2f}x (güçlü - dengeli final)")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
 # AŞAMA 3: Tüm output'lar aktif (weighted binary crossentropy ile)
@@ -578,13 +588,13 @@ model.compile(
 
 cb3 = [
     callbacks.ModelCheckpoint('stage3_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
-    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=8, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
-    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=6, min_lr=1e-8, verbose=1),
+    callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=15, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
+    callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-8, verbose=1),
     ProgressiveMetricsCallback("AŞAMA 3")
 ]
 
 hist3 = model.fit(
-    [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],  # X_1000_tr eklendi
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=80,
     batch_size=16,
@@ -606,7 +616,7 @@ print("="*80)
 # En iyi modeli yükle
 model.load_weights('stage3_best.h5')
 
-pred = model.predict([X_f_te, X_50_te, X_200_te, X_500_te], verbose=0)
+pred = model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)
 p_reg = pred[0].flatten()
 p_cls = pred[1]
 p_thr = pred[2].flatten()
@@ -717,13 +727,23 @@ print(json.dumps(info, indent=2))
 # Google Colab'da indir
 try:
     from google.colab import files
+    print("\n📥 Dosyalar indiriliyor...")
     files.download('jetx_progressive_final.h5')
+    print("✅ jetx_progressive_final.h5 indirildi")
     files.download('scaler_progressive.pkl')
+    print("✅ scaler_progressive.pkl indirildi")
     files.download('progressive_model_info.json')
-    print("\n✅ Ana dosyalar indirildi!")
-    print("Not: Checkpoint dosyaları (stage1-3_best.h5) çok büyük olabilir.")
-except:
-    print("\n⚠️ Colab dışında - dosyalar sadece kaydedildi")
+    print("✅ progressive_model_info.json indirildi")
+    print("\n✅ Tüm ana dosyalar başarıyla indirildi!")
+    print("📌 Bu dosyaları lokal projenizin models/ klasörüne kopyalayın:")
+    print("   • jetx_progressive_final.h5 → models/jetx_model.h5")
+    print("   • scaler_progressive.pkl → models/scaler.pkl")
+except ImportError:
+    print("\n⚠️ Google Colab ortamı bulunamadı - dosyalar sadece kaydedildi")
+    print("💡 Bu script Google Colab'da çalıştırılmalıdır.")
+except Exception as e:
+    print(f"\n❌ İndirme hatası: {e}")
+    print("📁 Dosyalar kaydedildi ancak indirilemedi.")
 
 # Final rapor
 print("\n" + "="*80)
