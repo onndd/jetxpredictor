@@ -38,7 +38,8 @@ print()
 print("📦 Kütüphaneler yükleniyor...")
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", 
                       "xgboost", "scikit-learn", "pandas", "numpy", 
-                      "scipy", "joblib", "matplotlib", "seaborn", "tqdm"])
+                      "scipy", "joblib", "matplotlib", "seaborn", "tqdm",
+                      "PyWavelets", "nolds"])
 
 import numpy as np
 import pandas as pd
