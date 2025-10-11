@@ -605,6 +605,233 @@ class FeatureEngineering:
         return features
     
     @staticmethod
+    def extract_advanced_wavelet_features(values: List[float]) -> Dict[str, float]:
+        """
+        Wavelet Transform özellikleri (frequency domain analysis)
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Wavelet özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 100:
+            try:
+                import pywt
+                
+                recent_100 = values[-100:]
+                
+                # Discrete Wavelet Transform (DWT)
+                # db4: Daubechies wavelet family (iyi time-frequency localization)
+                coeffs = pywt.wavedec(recent_100, 'db4', level=3)
+                
+                # Her level için energy hesapla
+                for i, coeff in enumerate(coeffs):
+                    energy = np.sum(coeff ** 2)
+                    features[f'wavelet_energy_level_{i}'] = energy
+                    features[f'wavelet_mean_level_{i}'] = np.mean(np.abs(coeff))
+                    features[f'wavelet_std_level_{i}'] = np.std(coeff)
+                
+                # Total energy
+                total_energy = sum(np.sum(c ** 2) for c in coeffs)
+                features['wavelet_total_energy'] = total_energy
+                
+                # Energy ratios (low freq vs high freq)
+                if total_energy > 0:
+                    features['wavelet_low_freq_ratio'] = coeffs[0].sum() ** 2 / total_energy
+                
+            except ImportError:
+                logger.warning("pywt bulunamadı, wavelet features atlanıyor")
+            except Exception as e:
+                logger.error(f"Wavelet transform hatası: {e}")
+        
+        return features
+    
+    @staticmethod
+    def extract_advanced_dfa_features(values: List[float]) -> Dict[str, float]:
+        """
+        DFA (Detrended Fluctuation Analysis) özellikleri
+        Uzun vadeli correlation ve trend persistence analizi
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            DFA özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 200:
+            try:
+                import nolds
+                
+                recent_200 = values[-200:]
+                
+                # DFA alpha parametresi
+                # alpha < 0.5: Anti-persistent (mean reverting)
+                # alpha = 0.5: Random walk
+                # alpha > 0.5: Persistent (trending)
+                dfa_alpha = nolds.dfa(recent_200)
+                features['dfa_alpha'] = dfa_alpha
+                
+                # Interpretation
+                if dfa_alpha < 0.5:
+                    features['dfa_regime'] = 0  # Mean reverting
+                elif dfa_alpha > 0.5:
+                    features['dfa_regime'] = 1  # Trending
+                else:
+                    features['dfa_regime'] = 0.5  # Random
+                
+            except ImportError:
+                logger.warning("nolds bulunamadı, DFA features atlanıyor")
+            except Exception as e:
+                logger.error(f"DFA hesaplama hatası: {e}")
+        
+        return features
+    
+    @staticmethod
+    def extract_advanced_hurst_features(values: List[float]) -> Dict[str, float]:
+        """
+        Hurst Exponent özellikleri
+        Trend gücü ve persistence ölçümü
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Hurst özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 200:
+            try:
+                import nolds
+                
+                recent_200 = values[-200:]
+                
+                # Hurst exponent
+                # H < 0.5: Mean reverting (anti-persistent)
+                # H = 0.5: Random walk
+                # H > 0.5: Trending (persistent)
+                hurst = nolds.hurst_rs(recent_200)
+                features['hurst_exponent'] = hurst
+                
+                # Classification
+                if hurst < 0.45:
+                    features['hurst_classification'] = -1  # Strong mean reversion
+                elif hurst < 0.55:
+                    features['hurst_classification'] = 0  # Random
+                else:
+                    features['hurst_classification'] = 1  # Strong trend
+                
+                # Trend strength score
+                features['trend_strength_hurst'] = abs(hurst - 0.5) * 2  # 0-1 scale
+                
+            except ImportError:
+                logger.warning("nolds bulunamadı, Hurst features atlanıyor")
+            except Exception as e:
+                logger.error(f"Hurst exponent hesaplama hatası: {e}")
+        
+        return features
+    
+    @staticmethod
+    def extract_advanced_fourier_features(values: List[float]) -> Dict[str, float]:
+        """
+        Fourier Transform özellikleri (frequency domain)
+        Periyodik pattern ve cycle detection
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Fourier özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 100:
+            try:
+                recent_100 = values[-100:]
+                
+                # Fast Fourier Transform
+                fft = np.fft.fft(recent_100)
+                fft_abs = np.abs(fft[:50])  # İlk 50 frequency component
+                
+                # Dominant frequency
+                dominant_freq_idx = np.argmax(fft_abs[1:]) + 1  # Skip DC component
+                features['dominant_frequency_idx'] = dominant_freq_idx
+                features['dominant_frequency_magnitude'] = fft_abs[dominant_freq_idx]
+                
+                # Spectral energy
+                spectral_energy = np.sum(fft_abs ** 2)
+                features['spectral_energy'] = spectral_energy
+                
+                # Energy distribution
+                if spectral_energy > 0:
+                    low_freq_energy = np.sum(fft_abs[1:10] ** 2)
+                    mid_freq_energy = np.sum(fft_abs[10:25] ** 2)
+                    high_freq_energy = np.sum(fft_abs[25:] ** 2)
+                    
+                    features['low_freq_energy_ratio'] = low_freq_energy / spectral_energy
+                    features['mid_freq_energy_ratio'] = mid_freq_energy / spectral_energy
+                    features['high_freq_energy_ratio'] = high_freq_energy / spectral_energy
+                
+                # Spectral centroid (weighted mean frequency)
+                freqs = np.arange(len(fft_abs))
+                if spectral_energy > 0:
+                    features['spectral_centroid'] = np.sum(freqs * fft_abs) / np.sum(fft_abs)
+                
+            except Exception as e:
+                logger.error(f"Fourier transform hatası: {e}")
+        
+        return features
+    
+    @staticmethod
+    def extract_advanced_autocorrelation_features(values: List[float]) -> Dict[str, float]:
+        """
+        Autocorrelation özellikleri
+        Kendine benzerlik ve lag-based patterns
+        
+        Args:
+            values: Geçmiş değerler
+            
+        Returns:
+            Autocorrelation özellikleri
+        """
+        features = {}
+        
+        if len(values) >= 50:
+            try:
+                recent_50 = values[-50:]
+                
+                # Autocorrelation için farklı lag'ler
+                lags = [1, 2, 3, 5, 10, 20]
+                
+                for lag in lags:
+                    if len(recent_50) > lag:
+                        # Pearson correlation coefficient
+                        series1 = recent_50[:-lag]
+                        series2 = recent_50[lag:]
+                        
+                        if len(series1) > 1 and np.std(series1) > 0 and np.std(series2) > 0:
+                            acf = np.corrcoef(series1, series2)[0, 1]
+                            features[f'acf_lag_{lag}'] = acf
+                
+                # ACF için maximum lag value ve position
+                acf_values = [features.get(f'acf_lag_{lag}', 0) for lag in lags]
+                if acf_values:
+                    max_acf = max(acf_values)
+                    max_acf_lag = lags[acf_values.index(max_acf)]
+                    features['acf_max_value'] = max_acf
+                    features['acf_max_lag'] = max_acf_lag
+                
+            except Exception as e:
+                logger.error(f"Autocorrelation hesaplama hatası: {e}")
+        
+        return features
+    
+    @staticmethod
     def extract_category_set_features(values: List[float]) -> Dict[str, float]:
         """
         15 Kategori Seti Özellikleri - Çok boyutlu analiz için
@@ -726,6 +953,21 @@ class FeatureEngineering:
         # YENİ: 15 Kategori Seti Özellikleri (çok boyutlu analiz)
         all_features.update(FeatureEngineering.extract_category_set_features(values))
         
+        # ADVANCED: Wavelet Transform (frequency domain)
+        all_features.update(FeatureEngineering.extract_advanced_wavelet_features(values))
+        
+        # ADVANCED: DFA (Detrended Fluctuation Analysis)
+        all_features.update(FeatureEngineering.extract_advanced_dfa_features(values))
+        
+        # ADVANCED: Hurst Exponent
+        all_features.update(FeatureEngineering.extract_advanced_hurst_features(values))
+        
+        # ADVANCED: Fourier Transform (frequency domain)
+        all_features.update(FeatureEngineering.extract_advanced_fourier_features(values))
+        
+        # ADVANCED: Autocorrelation
+        all_features.update(FeatureEngineering.extract_advanced_autocorrelation_features(values))
+        
         # Son değer
         if len(values) > 0:
             all_features['last_value'] = values[-1]
@@ -798,6 +1040,21 @@ class FeatureEngineering:
             
             # 15 Kategori Seti Özellikleri
             all_features.update(FeatureEngineering.extract_category_set_features(values))
+            
+            # ADVANCED: Wavelet Transform
+            all_features.update(FeatureEngineering.extract_advanced_wavelet_features(values))
+            
+            # ADVANCED: DFA
+            all_features.update(FeatureEngineering.extract_advanced_dfa_features(values))
+            
+            # ADVANCED: Hurst Exponent
+            all_features.update(FeatureEngineering.extract_advanced_hurst_features(values))
+            
+            # ADVANCED: Fourier Transform
+            all_features.update(FeatureEngineering.extract_advanced_fourier_features(values))
+            
+            # ADVANCED: Autocorrelation
+            all_features.update(FeatureEngineering.extract_advanced_autocorrelation_features(values))
             
             # Son değer
             if len(values) > 0:

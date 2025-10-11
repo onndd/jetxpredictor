@@ -699,7 +699,19 @@ hist1 = model.fit(
     batch_size=64,
     validation_split=0.2,
     callbacks=cb1,
-    verbose=1
+    verbose=1,
+    initial_epoch=initial_epoch_stage1  # Resume desteği
+)
+
+# AŞAMA 1 Checkpoint kaydet
+save_checkpoint(
+    stage=1,
+    epoch=len(hist1.history['loss']),
+    model=model,
+    optimizer=model.optimizer,
+    metrics_history=hist1.history,
+    class_weights={'w0': w0_stage1, 'w1': w1_stage1},
+    filename='checkpoint_stage1_latest.pkl'
 )
 
 stage1_time = time.time() - stage1_start
@@ -723,8 +735,19 @@ print("="*80 + "\n")
 
 stage2_start = time.time()
 
+# Checkpoint kontrolü - AŞAMA 2 için resume
+stage2_checkpoint = load_checkpoint('checkpoint_stage2_latest.pkl')
+initial_epoch_stage2 = 0
+
 # AŞAMA 1 modelini yükle
-model.load_weights('stage1_best.h5')
+if stage2_checkpoint and stage2_checkpoint['stage'] == 2:
+    print("🔄 AŞAMA 2 checkpoint'inden devam ediliyor...")
+    model.set_weights(stage2_checkpoint['model_weights'])
+    model.optimizer.set_weights(stage2_checkpoint['optimizer_weights'])
+    initial_epoch_stage2 = stage2_checkpoint['epoch']
+    print(f"   Epoch {initial_epoch_stage2}'den devam edilecek")
+else:
+    model.load_weights('stage1_best.h5')
 
 # Class weights - ORTA SEVİYE
 w0 = 1.5  # 1.5 altı için: 1.5x (orta seviye baskı)
@@ -760,7 +783,19 @@ hist2 = model.fit(
     batch_size=32,
     validation_split=0.2,
     callbacks=cb2,
-    verbose=1
+    verbose=1,
+    initial_epoch=initial_epoch_stage2  # Resume desteği
+)
+
+# AŞAMA 2 Checkpoint kaydet
+save_checkpoint(
+    stage=2,
+    epoch=len(hist2.history['loss']),
+    model=model,
+    optimizer=model.optimizer,
+    metrics_history=hist2.history,
+    class_weights={'w0': w0, 'w1': w1},
+    filename='checkpoint_stage2_latest.pkl'
 )
 
 stage2_time = time.time() - stage2_start
@@ -780,8 +815,19 @@ print("="*80 + "\n")
 
 stage3_start = time.time()
 
+# Checkpoint kontrolü - AŞAMA 3 için resume
+stage3_checkpoint = load_checkpoint('checkpoint_stage3_latest.pkl')
+initial_epoch_stage3 = 0
+
 # AŞAMA 2 modelini yükle
-model.load_weights('stage2_best.h5')
+if stage3_checkpoint and stage3_checkpoint['stage'] == 3:
+    print("🔄 AŞAMA 3 checkpoint'inden devam ediliyor...")
+    model.set_weights(stage3_checkpoint['model_weights'])
+    model.optimizer.set_weights(stage3_checkpoint['optimizer_weights'])
+    initial_epoch_stage3 = stage3_checkpoint['epoch']
+    print(f"   Epoch {initial_epoch_stage3}'den devam edilecek")
+else:
+    model.load_weights('stage2_best.h5')
 
 # Class weights - DENGELI FINAL
 w0_final = 2.0  # 1.5 altı için: 2.0x (dengeli final push)
@@ -817,7 +863,19 @@ hist3 = model.fit(
     batch_size=16,
     validation_split=0.2,
     callbacks=cb3,
-    verbose=1
+    verbose=1,
+    initial_epoch=initial_epoch_stage3  # Resume desteği
+)
+
+# AŞAMA 3 Checkpoint kaydet
+save_checkpoint(
+    stage=3,
+    epoch=len(hist3.history['loss']),
+    model=model,
+    optimizer=model.optimizer,
+    metrics_history=hist3.history,
+    class_weights={'w0': w0_final, 'w1': w1_final},
+    filename='checkpoint_stage3_latest.pkl'
 )
 
 stage3_time = time.time() - stage3_start
