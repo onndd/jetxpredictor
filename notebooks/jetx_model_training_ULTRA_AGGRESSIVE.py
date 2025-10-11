@@ -63,6 +63,8 @@ os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
+from utils.advanced_bankroll import AdvancedBankrollManager
+from utils.custom_losses import balanced_threshold_killer_loss, balanced_focal_loss
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x")
 
 # =============================================================================
@@ -132,7 +134,8 @@ X_200 = np.log10(X_200 + 1e-8)
 X_500 = np.log10(X_500 + 1e-8)
 
 idx = np.arange(len(X_f))
-tr_idx, te_idx = train_test_split(idx, test_size=0.2, shuffle=False)
+y_cls_binary = (y_reg >= 1.5).astype(int)  # Stratify için binary class
+tr_idx, te_idx = train_test_split(idx, test_size=0.2, shuffle=True, stratify=y_cls_binary, random_state=42)
 
 X_f_tr, X_50_tr, X_200_tr, X_500_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx]
 y_reg_tr, y_cls_tr, y_thr_tr = y_reg[tr_idx], y_cls[tr_idx], y_thr[tr_idx]
@@ -330,18 +333,18 @@ def lr_schedule(epoch, lr):
     else:
         return initial_lr * 0.05
 
-# COMPILE - WEIGHTED BCE İLE LAZY LEARNING ÖNLENDİ
+# COMPILE - DENGELI LOSS FUNCTIONS (Lazy Learning Önlendi!)
 model.compile(
     optimizer=Adam(initial_lr),
     loss={
-        'regression': threshold_killer_loss,
+        'regression': balanced_threshold_killer_loss,  # YENİ: Dengeli, tutarlı cezalar
         'classification': 'categorical_crossentropy',
-        'threshold': create_weighted_binary_crossentropy(w0, w1)
+        'threshold': balanced_focal_loss()  # YENİ: Dengeli focal loss
     },
     loss_weights={
         'regression': 0.25,
         'classification': 0.15,
-        'threshold': 0.60  # 0.5 -> 0.6
+        'threshold': 0.60  # Threshold vurgusu
     },
     metrics={
         'regression': ['mae'],

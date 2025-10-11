@@ -66,6 +66,10 @@ os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
+from utils.balanced_batch_generator import BalancedBatchGenerator
+from utils.adaptive_weight_scheduler import AdaptiveWeightScheduler
+from utils.advanced_bankroll import AdvancedBankrollManager
+from utils.custom_losses import balanced_threshold_killer_loss, balanced_focal_loss, create_weighted_binary_crossentropy
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
 
 # =============================================================================
@@ -134,9 +138,9 @@ X_200 = np.log10(X_200 + 1e-8)
 X_500 = np.log10(X_500 + 1e-8)
 X_1000 = np.log10(X_1000 + 1e-8)  # YENİ: 1000'lik pencere normalizasyonu
 
-# Train/Test split
+# Train/Test split - STRATIFIED SAMPLING EKLENDI
 idx = np.arange(len(X_f))
-tr_idx, te_idx = train_test_split(idx, test_size=0.2, shuffle=False)
+tr_idx, te_idx = train_test_split(idx, test_size=0.2, shuffle=True, stratify=y_cls, random_state=42)
 
 X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx], X_1000[tr_idx]
 y_reg_tr, y_cls_tr, y_thr_tr = y_reg[tr_idx], y_cls[tr_idx], y_thr[tr_idx]
@@ -674,10 +678,14 @@ print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Dengeli Başlangıç):")
 print(f"  1.5 altı: {w0_stage1:.2f}x (çok yumuşak - lazy learning'i önler)")
 print(f"  1.5 üstü: {w1_stage1:.2f}x\n")
 
-# AŞAMA 1: Foundation Training - Threshold baştan weighted BCE ile aktif!
+# AŞAMA 1: Foundation Training - DENGELI LOSS FUNCTIONS (Lazy Learning Önlendi!)
 model.compile(
     optimizer=Adam(0.0001),
-    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0_stage1, w1_stage1)},
+    loss={
+        'regression': balanced_threshold_killer_loss,  # YENİ: Dengeli, tutarlı cezalar (5x, 3x, 4x)
+        'classification': 'categorical_crossentropy',
+        'threshold': create_weighted_binary_crossentropy(w0_stage1, w1_stage1)  # Weighted BCE korundu
+    },
     loss_weights={'regression': 0.55, 'classification': 0.10, 'threshold': 0.35},  # Regression vurgusu
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy']}
 )
@@ -758,22 +766,38 @@ print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Orta Seviye):")
 print(f"  1.5 altı: {w0:.2f}x (orta - dengeli öğrenme)")
 print(f"  1.5 üstü: {w1:.2f}x\n")
 
-# AŞAMA 2: Regression + Threshold (weighted binary crossentropy ile)
+# AŞAMA 2: Regression + Threshold - DENGELI LOSS FUNCTIONS
 model.compile(
     optimizer=Adam(0.0001),
-    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0, w1)},
+    loss={
+        'regression': balanced_threshold_killer_loss,  # YENİ: Dengeli loss
+        'classification': 'categorical_crossentropy',
+        'threshold': create_weighted_binary_crossentropy(w0, w1)  # Weighted BCE korundu
+    },
     loss_weights={'regression': 0.45, 'classification': 0.10, 'threshold': 0.45},
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
-# Dynamic Weight Callback başlat (otomatik ayarlama için)
+# Adaptive Weight Scheduler (YENİ - Lazy Learning Önleme)
+adaptive_scheduler_2 = AdaptiveWeightScheduler(
+    initial_weight=1.5,
+    min_weight=1.0,
+    max_weight=4.0,
+    target_below_acc=0.70,
+    target_above_acc=0.75,
+    test_data=([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], y_reg_te),
+    threshold=1.5,
+    check_interval=5
+)
+
+# Dynamic Weight Callback (mevcut - opsiyonel)
 dynamic_callback_2 = DynamicWeightCallback("AŞAMA 2", initial_weight=1.5, target_below_acc=0.70)
 
 cb2 = [
     callbacks.ModelCheckpoint('stage2_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
     callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-7, verbose=1),
-    dynamic_callback_2,
+    adaptive_scheduler_2,  # YENİ: Adaptive weight scheduler
     ProgressiveMetricsCallback("AŞAMA 2")
 ]
 
@@ -838,22 +862,38 @@ print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Dengeli Final):")
 print(f"  1.5 altı: {w0_final:.2f}x (dengeli final)")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
-# AŞAMA 3: Tüm output'lar aktif (weighted binary crossentropy ile)
+# AŞAMA 3: Tüm output'lar aktif - DENGELI LOSS FUNCTIONS
 model.compile(
     optimizer=Adam(0.00005),
-    loss={'regression': threshold_killer_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0_final, w1_final)},
+    loss={
+        'regression': balanced_threshold_killer_loss,  # YENİ: Dengeli loss
+        'classification': 'categorical_crossentropy',
+        'threshold': balanced_focal_loss()  # YENİ: Dengeli focal loss (gamma=2.0, alpha=0.7)
+    },
     loss_weights={'regression': 0.40, 'classification': 0.15, 'threshold': 0.45},
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
-# Dynamic Weight Callback başlat (otomatik ayarlama için)
+# Adaptive Weight Scheduler (YENİ - Lazy Learning Önleme)
+adaptive_scheduler_3 = AdaptiveWeightScheduler(
+    initial_weight=2.0,
+    min_weight=1.0,
+    max_weight=4.0,
+    target_below_acc=0.70,
+    target_above_acc=0.75,
+    test_data=([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], y_reg_te),
+    threshold=1.5,
+    check_interval=5
+)
+
+# Dynamic Weight Callback (mevcut - opsiyonel)
 dynamic_callback_3 = DynamicWeightCallback("AŞAMA 3", initial_weight=2.0, target_below_acc=0.70)
 
 cb3 = [
     callbacks.ModelCheckpoint('stage3_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
     callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=8, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-8, verbose=1),
-    dynamic_callback_3,
+    adaptive_scheduler_3,  # YENİ: Adaptive weight scheduler
     ProgressiveMetricsCallback("AŞAMA 3")
 ]
 
@@ -949,6 +989,66 @@ cls_pred = np.argmax(p_cls, axis=1)
 cls_acc = accuracy_score(cls_true, cls_pred)
 print(f"\n📁 KATEGORİ CLASSIFICATION:")
 print(f"  Accuracy: {cls_acc*100:.2f}%")
+
+# =============================================================================
+# GELİŞMİŞ SANAL KASA SİMÜLASYONU (Kelly Criterion)
+# =============================================================================
+print("\n" + "="*70)
+print("💰 GELİŞMİŞ SANAL KASA SİMÜLASYONU (Kelly Criterion)")
+print("="*70)
+print("3 farklı risk tolerance stratejisi ile test ediliyor...")
+
+# 3 farklı risk tolerance ile test
+for risk_tolerance in ['conservative', 'moderate', 'aggressive']:
+    print(f"\n{'='*70}")
+    print(f"📊 {risk_tolerance.upper()} STRATEJİ")
+    print(f"{'='*70}")
+    
+    # Advanced Bankroll Manager oluştur
+    bankroll = AdvancedBankrollManager(
+        initial_bankroll=1000.0,
+        risk_tolerance=risk_tolerance,
+        win_multiplier=1.5,
+        min_bet=10.0
+    )
+    
+    # Test seti üzerinde simülasyon
+    for i in range(len(y_reg_te)):
+        # Model tahmini
+        model_pred_thr = p_thr[i]  # Threshold probability (0-1)
+        model_pred_cls = 1 if model_pred_thr >= 0.5 else 0  # Binary prediction
+        actual_value = y_reg_te[i]
+        
+        # Model "1.5 üstü" tahmin ediyorsa bahis yap
+        if model_pred_cls == 1:
+            # Optimal bahis miktarını hesapla (Kelly Criterion)
+            bet_size = bankroll.calculate_bet_size(
+                confidence=model_pred_thr,  # Threshold probability as confidence
+                predicted_value=1.5
+            )
+            
+            # Bet size > 0 ise bahis yap
+            if bet_size > 0:
+                result = bankroll.place_bet(
+                    bet_size=bet_size,
+                    predicted_value=1.5,
+                    actual_value=actual_value,
+                    confidence=model_pred_thr
+                )
+            
+            # Stop-loss veya take-profit kontrolü
+            should_stop, reason = bankroll.should_stop()
+            if should_stop:
+                print(f"\n⚠️ {reason}")
+                print(f"Simülasyon durduruluyor (Test örneği {i+1}/{len(y_reg_te)})")
+                break
+    
+    # Detaylı rapor
+    bankroll.print_report()
+
+print("\n" + "="*70)
+print("✅ Gelişmiş sanal kasa simülasyonu tamamlandı!")
+print("="*70)
 
 # =============================================================================
 # KAYDET & İNDİR

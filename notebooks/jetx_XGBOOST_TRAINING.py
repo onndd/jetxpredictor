@@ -64,6 +64,7 @@ os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
+from utils.advanced_bankroll import AdvancedBankrollManager
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
 
 # =============================================================================
@@ -122,9 +123,9 @@ print("\n📊 Normalizasyon...")
 scaler = StandardScaler()
 X = scaler.fit_transform(X)
 
-# Train/Test split
+# Train/Test split - STRATIFIED SAMPLING EKLENDI
 X_train, X_test, y_reg_train, y_reg_test, y_cls_train, y_cls_test = train_test_split(
-    X, y_reg, y_cls, test_size=0.2, shuffle=False
+    X, y_reg, y_cls, test_size=0.2, shuffle=True, stratify=y_cls, random_state=42
 )
 
 print(f"✅ Train: {len(X_train):,}, Test: {len(X_test):,}")
@@ -198,17 +199,23 @@ print("="*80)
 
 cls_start = time.time()
 
-# Class weight hesaplama - DÜZELTİLDİ
+# sample_weight ile class dengeleme (HATA DÜZELTİLDİ!)
+# Eski hatalı kod: scale_pos_weight = above_count / below_count (YANLIŞ!)
+# Yeni çözüm: sample_weight kullanarak doğrudan 1.5 altı örneklere ağırlık ver
 below_count = (y_cls_train == 0).sum()
 above_count = (y_cls_train == 1).sum()
-scale_pos_weight = above_count / below_count  # 1.5 üstü / 1.5 altı (doğru formül)
 
-print(f"📊 CLASS WEIGHT:")
-print(f"  1.5 altı: {below_count:,} örnek")
-print(f"  1.5 üstü: {above_count:,} örnek")
-print(f"  scale_pos_weight: {scale_pos_weight:.2f}\n")
+# Her örnek için sample weight hesapla
+# 1.5 altı için 5.0x, 1.5 üstü için 1.0x
+WEIGHT_MULTIPLIER = 5.0  # 1.5 altı için ağırlık çarpanı
+sample_weights_train = np.where(y_cls_train == 0, WEIGHT_MULTIPLIER, 1.0)
 
-# XGBoost parametreleri
+print(f"📊 SAMPLE WEIGHT (HATA DÜZELTİLDİ!):")
+print(f"  1.5 altı: {below_count:,} örnek → Her biri {WEIGHT_MULTIPLIER}x ağırlık")
+print(f"  1.5 üstü: {above_count:,} örnek → Her biri 1.0x ağırlık")
+print(f"  ✅ scale_pos_weight HATASI düzeltildi → sample_weight kullanılıyor\n")
+
+# XGBoost parametreleri - scale_pos_weight KALDIRILDI
 classifier = xgb.XGBClassifier(
     n_estimators=500,
     max_depth=7,
@@ -217,7 +224,7 @@ classifier = xgb.XGBClassifier(
     colsample_bytree=0.8,
     min_child_weight=3,
     gamma=0.1,
-    scale_pos_weight=scale_pos_weight,  # Dengesizlik düzeltmesi
+    # scale_pos_weight KALDIRILDI - sample_weight kullanılacak
     random_state=42,
     tree_method='hist',
     objective='binary:logistic',
@@ -228,12 +235,13 @@ print("📊 Model Parametreleri:")
 print(f"  n_estimators: 500")
 print(f"  max_depth: 7")
 print(f"  learning_rate: 0.05")
-print(f"  scale_pos_weight: {scale_pos_weight:.2f}\n")
+print(f"  sample_weight kullanılıyor: {WEIGHT_MULTIPLIER}x (1.5 altı için)\n")
 
-# Eğitim
-print("🔥 Eğitim başlıyor...")
+# Eğitim - sample_weight ile
+print("🔥 Eğitim başlıyor (sample_weight ile)...")
 classifier.fit(
     X_train, y_cls_train,
+    sample_weight=sample_weights_train,  # SAMPLE WEIGHT EKLENDI
     eval_set=[(X_test, y_cls_test)],
     verbose=50
 )
@@ -274,10 +282,70 @@ if cm[0,0] + cm[0,1] > 0:
         print(" ✅ HEDEF AŞILDI!")
     else:
         print(f" (Hedef: <20%)")
-
-# Classification Report
-print(f"\n📊 DETAYLI RAPOR:")
-print(classification_report(y_cls_test, y_cls_pred, target_names=['1.5 Altı', '1.5 Üstü']))
+    
+    # Classification Report
+    print(f"\n📊 DETAYLI RAPOR:")
+    print(classification_report(y_cls_test, y_cls_pred, target_names=['1.5 Altı', '1.5 Üstü']))
+    
+    # =============================================================================
+    # GELİŞMİŞ SANAL KASA SİMÜLASYONU
+    # =============================================================================
+    print("\n" + "="*70)
+    print("💰 GELİŞMİŞ SANAL KASA SİMÜLASYONU (Kelly Criterion)")
+    print("="*70)
+    print("3 farklı risk tolerance stratejisi ile test ediliyor...")
+    
+    # 3 farklı risk tolerance ile test
+    for risk_tolerance in ['conservative', 'moderate', 'aggressive']:
+        print(f"\n{'='*70}")
+        print(f"📊 {risk_tolerance.upper()} STRATEJİ")
+        print(f"{'='*70}")
+        
+        # Advanced Bankroll Manager oluştur
+        bankroll = AdvancedBankrollManager(
+            initial_bankroll=1000.0,
+            risk_tolerance=risk_tolerance,
+            win_multiplier=1.5,
+            min_bet=10.0
+        )
+        
+        # Test seti üzerinde simülasyon
+        for i in range(len(y_reg_test)):
+            # Model tahmini
+            model_pred_cls = y_cls_pred[i]  # 0 veya 1
+            model_confidence = y_cls_proba[i]  # Confidence score
+            actual_value = y_reg_test[i]
+            
+            # Model "1.5 üstü" (1) tahmin ediyorsa bahis yap
+            if model_pred_cls == 1:
+                # Optimal bahis miktarını hesapla (Kelly Criterion)
+                bet_size = bankroll.calculate_bet_size(
+                    confidence=model_confidence,
+                    predicted_value=1.5
+                )
+                
+                # Bet size > 0 ise bahis yap
+                if bet_size > 0:
+                    result = bankroll.place_bet(
+                        bet_size=bet_size,
+                        predicted_value=1.5,
+                        actual_value=actual_value,
+                        confidence=model_confidence
+                    )
+                
+                # Stop-loss veya take-profit kontrolü
+                should_stop, reason = bankroll.should_stop()
+                if should_stop:
+                    print(f"\n⚠️ {reason}")
+                    print(f"Simülasyon durduruluyor (Test örneği {i+1}/{len(y_reg_test)})")
+                    break
+        
+        # Detaylı rapor
+        bankroll.print_report()
+    
+    print("\n" + "="*70)
+    print("✅ Gelişmiş sanal kasa simülasyonu tamamlandı!")
+    print("="*70)
 
 # =============================================================================
 # MODEL KAYDETME
