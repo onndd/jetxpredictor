@@ -347,26 +347,38 @@ print("  - models/xgboost_model_info.json")
 print(f"\n📊 Model Bilgisi:")
 print(json.dumps(info, indent=2))
 
-# Google Colab'da indir
+# Google Colab'da indir - İyileştirilmiş kontrol
 try:
-    from google.colab import files
-    print("\n📥 Dosyalar indiriliyor...")
-    files.download('models/xgboost_regressor.json')
-    print("✅ xgboost_regressor.json indirildi")
-    files.download('models/xgboost_classifier.json')
-    print("✅ xgboost_classifier.json indirildi")
-    files.download('models/xgboost_scaler.pkl')
-    print("✅ xgboost_scaler.pkl indirildi")
-    files.download('models/xgboost_model_info.json')
-    print("✅ xgboost_model_info.json indirildi")
-    print("\n✅ Tüm dosyalar başarıyla indirildi!")
-    print("📌 Bu dosyaları lokal projenizin models/ klasörüne kopyalayın")
+    import google.colab
+    IN_COLAB = True
 except ImportError:
-    print("\n⚠️ Google Colab ortamı bulunamadı - dosyalar sadece kaydedildi")
-    print("💡 Bu script Google Colab'da çalıştırılmalıdır.")
-except Exception as e:
-    print(f"\n❌ İndirme hatası: {e}")
-    print("📁 Dosyalar kaydedildi ancak indirilemedi.")
+    IN_COLAB = False
+
+if IN_COLAB:
+    try:
+        from google.colab import files
+        print("\n📥 Dosyalar indiriliyor...")
+        files.download('models/xgboost_regressor.json')
+        print("✅ xgboost_regressor.json indirildi")
+        files.download('models/xgboost_classifier.json')
+        print("✅ xgboost_classifier.json indirildi")
+        files.download('models/xgboost_scaler.pkl')
+        print("✅ xgboost_scaler.pkl indirildi")
+        files.download('models/xgboost_model_info.json')
+        print("✅ xgboost_model_info.json indirildi")
+        print("\n✅ Tüm dosyalar başarıyla indirildi!")
+        print("📌 Bu dosyaları lokal projenizin models/ klasörüne kopyalayın")
+    except Exception as e:
+        print(f"\n⚠️ İndirme hatası: {e}")
+        print("📁 Dosyalar models/ klasöründe kaydedildi.")
+else:
+    print("\n⚠️ Google Colab ortamı algılanamadı - dosyalar sadece kaydedildi")
+    print("📁 Dosyalar models/ klasöründe mevcut:")
+    print("   • xgboost_regressor.json")
+    print("   • xgboost_classifier.json")
+    print("   • xgboost_scaler.pkl")
+    print("   • xgboost_model_info.json")
+    print("\n💡 Not: Bu script Google Colab'da çalıştırıldığında dosyalar otomatik indirilir.")
 
 # Final rapor
 print("\n" + "="*80)

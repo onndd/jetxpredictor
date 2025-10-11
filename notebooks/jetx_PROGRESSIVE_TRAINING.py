@@ -590,7 +590,7 @@ def save_checkpoint(stage, epoch, model, optimizer, metrics_history, class_weigh
         stage: Hangi aşama (1, 2, 3)
         epoch: Kaçıncı epoch
         model: Model instance
-        optimizer: Optimizer instance
+        optimizer: Optimizer instance (kullanılmıyor - TensorFlow uyumluluk sorunu)
         metrics_history: Metrics geçmişi
         class_weights: Class weight değerleri
         filename: Checkpoint dosya adı (opsiyonel)
@@ -602,7 +602,7 @@ def save_checkpoint(stage, epoch, model, optimizer, metrics_history, class_weigh
         'stage': stage,
         'epoch': epoch,
         'model_weights': model.get_weights(),
-        'optimizer_weights': optimizer.get_weights(),
+        # optimizer_weights kaldırıldı - TensorFlow/Keras Adam optimizer'ı get_weights() desteklemiyor
         'metrics_history': metrics_history,
         'class_weights': class_weights,
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -744,7 +744,7 @@ initial_epoch_stage2 = 0
 if stage2_checkpoint and stage2_checkpoint['stage'] == 2:
     print("🔄 AŞAMA 2 checkpoint'inden devam ediliyor...")
     model.set_weights(stage2_checkpoint['model_weights'])
-    model.optimizer.set_weights(stage2_checkpoint['optimizer_weights'])
+    # optimizer weights kaldırıldı - TensorFlow uyumluluk sorunu
     initial_epoch_stage2 = stage2_checkpoint['epoch']
     print(f"   Epoch {initial_epoch_stage2}'den devam edilecek")
 else:
@@ -824,7 +824,7 @@ initial_epoch_stage3 = 0
 if stage3_checkpoint and stage3_checkpoint['stage'] == 3:
     print("🔄 AŞAMA 3 checkpoint'inden devam ediliyor...")
     model.set_weights(stage3_checkpoint['model_weights'])
-    model.optimizer.set_weights(stage3_checkpoint['optimizer_weights'])
+    # optimizer weights kaldırıldı - TensorFlow uyumluluk sorunu
     initial_epoch_stage3 = stage3_checkpoint['epoch']
     print(f"   Epoch {initial_epoch_stage3}'den devam edilecek")
 else:
