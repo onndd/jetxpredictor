@@ -11,7 +11,7 @@ scipy>=1.10.0  # Statistical analysis (skewness, kurtosis)
 # Machine Learning
 tensorflow>=2.14.0
 scikit-learn>=1.3.0
-xgboost>=2.0.0  # XGBoost modeli için (YENİ)
+xgboost>=2.0.0  # XGBoost modeli için
 joblib>=1.3.0  # Model kaydetme için
 
 # Görselleştirme
@@ -22,6 +22,11 @@ seaborn>=0.12.0
 # Yardımcı Kütüphaneler
 pyyaml>=6.0  # Config dosyası için
 python-dateutil>=2.8.0
+
+# YENİ: Advanced Features & Optimization
+optuna>=3.0.0  # Hyperparameter optimization
+PyWavelets>=1.4.1  # Wavelet transform (advanced features)
+nolds>=0.5.2  # DFA, Hurst exponent (advanced features)
 
 # Opsiyonel: Model export/import
 # onnx>=1.14.0

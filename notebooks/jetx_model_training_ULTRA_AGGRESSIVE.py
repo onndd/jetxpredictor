@@ -304,18 +304,19 @@ def create_weighted_binary_crossentropy(weight_0, weight_1):
     
     return loss
 
-# CLASS WEIGHTS - 7X (1.5 altı için!) - LAZY LEARNING'İ ÖNLEMEK İÇİN
+# CLASS WEIGHTS - 3.5X (DENGELI) - Loss penalties ile uyumlu
 # y_thr_tr shape (N, 1) olduğu için flatten etmeliyiz
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
-TARGET_MULTIPLIER = 7.0  # 3. Tur: 2.5 → 7.0 (180% artış - azınlık sınıfına odaklanma)
+TARGET_MULTIPLIER = 3.5  # DÜZELTİLDİ: 7.0 → 3.5 (loss penalties ile uyumlu, dengeli)
 w0 = (len(y_thr_tr) / (2 * c0)) * TARGET_MULTIPLIER
 w1 = len(y_thr_tr) / (2 * c1)
 
-print(f"\n🎯 CLASS WEIGHTS:")
-print(f"1.5 altı (0): {w0:.2f}x (eski: ~2.5x, önceki: ~14.7x)")
+print(f"\n🎯 CLASS WEIGHTS (DÜZELTME):")
+print(f"1.5 altı (0): {w0:.2f}x (DÜZELTİLDİ: 7.0x → 3.5x)")
 print(f"1.5 üstü (1): {w1:.2f}x")
-print(f"\n⚡ 1.5 altı örnekler {w0:.1f}x daha önemli (dengeli hale getirildi!)")
+print(f"\n✅ Loss penalties (2.0x, 1.5x, 2.5x) ile UYUMLU!")
+print(f"⚡ Dengeli öğrenme: Class weight + penalties birlikte çalışıyor")
 
 # LEARNING RATE SCHEDULE - Düşürüldü ve öne çekildi
 initial_lr = 0.00005  # 2. Tur: 0.0001 → 0.00005 (50% azalma, daha hassas)
