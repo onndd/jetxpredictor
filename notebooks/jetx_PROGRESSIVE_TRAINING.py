@@ -24,10 +24,22 @@ import os
 import time
 from datetime import datetime
 
+# ============================================================================
+# XLA OPTİMİZASYONU DEVRE DIŞI (GPU Derleyici Hatası Önleme)
+# ============================================================================
+# Transformer modeli GPU'da derlenirken register overflow hatası veriyor.
+# XLA'yı devre dışı bırakarak bu sorunu çözüyoruz.
+# Not: Eğitim %10-15 daha yavaş olabilir ama model çalışacak.
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # TensorFlow uyarılarını azalt
+
 print("="*80)
 print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print()
+print("⚙️  XLA optimizasyonu devre dışı (GPU uyumluluk için)")
+print("   → Eğitim biraz daha yavaş olabilir ama model kararlı çalışacak")
 print()
 
 # Kütüphaneleri yükle

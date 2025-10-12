@@ -151,6 +151,7 @@ regressor = CatBoostRegressor(
     depth=10,                  # 8 → 10 (daha derin ağaçlar)
     learning_rate=0.03,        # 0.05 → 0.03 (daha stabil)
     l2_leaf_reg=5,             # YENİ: Overfitting önleme
+    bootstrap_type='Bernoulli',  # YENİ: subsample için gerekli
     subsample=0.8,             # YENİ: Stochastic gradient
     loss_function='MAE',
     eval_metric='MAE',
@@ -165,6 +166,7 @@ print(f"  iterations: 1500 (500 → 1500)")
 print(f"  depth: 10 (8 → 10)")
 print(f"  learning_rate: 0.03 (0.05 → 0.03)")
 print(f"  l2_leaf_reg: 5 (YENİ)")
+print(f"  bootstrap_type: Bernoulli (YENİ - subsample için)")
 print(f"  subsample: 0.8 (YENİ)")
 print(f"  loss_function: MAE")
 print(f"  task_type: GPU (varsa)")
@@ -227,6 +229,7 @@ classifier = CatBoostClassifier(
     depth=9,                   # 7 → 9 (daha derin ağaçlar)
     learning_rate=0.03,        # 0.05 → 0.03 (daha stabil)
     l2_leaf_reg=5,             # YENİ: Overfitting önleme
+    bootstrap_type='Bernoulli',  # YENİ: subsample için gerekli
     subsample=0.8,             # YENİ: Stochastic gradient
     loss_function='Logloss',
     eval_metric='Accuracy',
@@ -242,6 +245,7 @@ print(f"  iterations: 1500 (500 → 1500)")
 print(f"  depth: 9 (7 → 9)")
 print(f"  learning_rate: 0.03 (0.05 → 0.03)")
 print(f"  l2_leaf_reg: 5 (YENİ)")
+print(f"  bootstrap_type: Bernoulli (YENİ - subsample için)")
 print(f"  subsample: 0.8 (YENİ)")
 print(f"  loss_function: Logloss")
 print(f"  auto_class_weights: Balanced (otomatik denge)")
