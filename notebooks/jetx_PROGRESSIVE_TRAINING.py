@@ -71,6 +71,174 @@ from utils.adaptive_weight_scheduler import AdaptiveWeightScheduler
 from utils.advanced_bankroll import AdvancedBankrollManager
 from utils.custom_losses import balanced_threshold_killer_loss, balanced_focal_loss, create_weighted_binary_crossentropy
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
+# =============================================================================
+# TRANSFORMER LAYERS (YENİ - FAZ 2)
+# =============================================================================
+class PositionalEncoding(layers.Layer):
+    """
+    Positional Encoding for Transformer
+    Time series için zamansal bilgi ekler
+    """
+    def __init__(self, max_seq_len=1000, d_model=256, **kwargs):
+        super().__init__(**kwargs)
+        self.max_seq_len = max_seq_len
+        self.d_model = d_model
+        
+        # Positional encoding matrix oluştur
+        position = tf.range(max_seq_len, dtype=tf.float32)[:, tf.newaxis]
+        div_term = tf.exp(tf.range(0, d_model, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / d_model))
+        
+        pe = tf.zeros((max_seq_len, d_model))
+        pe_sin = tf.sin(position * div_term)
+        pe_cos = tf.cos(position * div_term)
+        
+        # Sin ve cos değerlerini birleştir
+        pe_array = tf.Variable(pe, trainable=False)
+        pe_array[:, 0::2].assign(pe_sin)
+        pe_array[:, 1::2].assign(pe_cos)
+        self.pe = pe_array
+    
+    def call(self, x):
+        seq_len = tf.shape(x)[1]
+        return x + self.pe[:seq_len, :]
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'max_seq_len': self.max_seq_len,
+            'd_model': self.d_model
+        })
+        return config
+
+
+class LightweightTransformerEncoder(layers.Layer):
+    """
+    Lightweight Transformer Encoder for Time Series
+    
+    Args:
+        d_model: Model dimension (256)
+        num_layers: Number of transformer layers (4)
+        num_heads: Number of attention heads (8)
+        dff: Feedforward dimension (1024)
+        dropout: Dropout rate (0.2)
+    """
+    def __init__(
+        self, 
+        d_model=256, 
+        num_layers=4, 
+        num_heads=8, 
+        dff=1024, 
+        dropout=0.2,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.d_model = d_model
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.dff = dff
+        self.dropout_rate = dropout
+        
+        # Input projection (sequence_len, 1) → (sequence_len, d_model)
+        self.input_projection = layers.Dense(d_model)
+        
+        # Positional encoding
+        self.pos_encoding = PositionalEncoding(max_seq_len=1000, d_model=d_model)
+        
+        # Transformer encoder layers
+        self.encoder_layers = []
+        for _ in range(num_layers):
+            # Multi-head attention
+            mha = layers.MultiHeadAttention(
+                num_heads=num_heads,
+                key_dim=d_model // num_heads,
+                dropout=dropout
+            )
+            
+            # Feedforward network
+            ffn = tf.keras.Sequential([
+                layers.Dense(dff, activation='relu'),
+                layers.Dropout(dropout),
+                layers.Dense(d_model)
+            ])
+            
+            # Layer normalization
+            layernorm1 = layers.LayerNormalization(epsilon=1e-6)
+            layernorm2 = layers.LayerNormalization(epsilon=1e-6)
+            
+            # Dropout
+            dropout1 = layers.Dropout(dropout)
+            dropout2 = layers.Dropout(dropout)
+            
+            self.encoder_layers.append({
+                'mha': mha,
+                'ffn': ffn,
+                'layernorm1': layernorm1,
+                'layernorm2': layernorm2,
+                'dropout1': dropout1,
+                'dropout2': dropout2
+            })
+        
+        # Global average pooling
+        self.global_pool = layers.GlobalAveragePooling1D()
+        
+        # Output projection
+        self.output_projection = layers.Dense(d_model)
+        self.dropout_final = layers.Dropout(dropout)
+    
+    def call(self, inputs, training=None):
+        """
+        Forward pass
+        
+        Args:
+            inputs: (batch_size, seq_len, 1) - Time series input
+            training: Training mode flag
+            
+        Returns:
+            (batch_size, d_model) - Encoded representation
+        """
+        # Input projection
+        x = self.input_projection(inputs)  # (batch, seq_len, d_model)
+        
+        # Positional encoding
+        x = self.pos_encoding(x)
+        
+        # Transformer encoder layers
+        for layer in self.encoder_layers:
+            # Multi-head attention
+            attn_output = layer['mha'](
+                query=x,
+                key=x,
+                value=x,
+                training=training
+            )
+            attn_output = layer['dropout1'](attn_output, training=training)
+            x = layer['layernorm1'](x + attn_output)  # Residual connection
+            
+            # Feedforward network
+            ffn_output = layer['ffn'](x)
+            ffn_output = layer['dropout2'](ffn_output, training=training)
+            x = layer['layernorm2'](x + ffn_output)  # Residual connection
+        
+        # Global pooling
+        x = self.global_pool(x)  # (batch, d_model)
+        
+        # Output projection
+        x = self.output_projection(x)
+        x = self.dropout_final(x, training=training)
+        
+        return x
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'd_model': self.d_model,
+            'num_layers': self.num_layers,
+            'num_heads': self.num_heads,
+            'dff': self.dff,
+            'dropout': self.dropout_rate
+        })
+        return config
+
 
 # =============================================================================
 # VERİ YÜKLEME
@@ -283,8 +451,19 @@ def build_progressive_model(n_features):
     tcn = layers.Dense(512, activation='relu')(tcn)
     tcn = layers.Dropout(0.25)(tcn)
     
-    # Fusion (Optimize)
-    fus = layers.Concatenate()([inp_f, nb_all, tcn])
+    # YENİ: Transformer branch (FAZ 2)
+    # 1000'lik sequence için Transformer encoder kullan
+    transformer = LightweightTransformerEncoder(
+        d_model=256,
+        num_layers=4,
+        num_heads=8,
+        dff=1024,
+        dropout=0.2
+    )(inp_1000)
+    # Transformer output: (batch, 256)
+    
+    # Fusion (Optimize) - YENİ: Transformer eklendi
+    fus = layers.Concatenate()([inp_f, nb_all, tcn, transformer])
     fus = layers.Dense(512, activation='relu', kernel_regularizer='l2')(fus)
     fus = layers.BatchNormalization()(fus)
     fus = layers.Dropout(0.3)(fus)
@@ -991,85 +1170,209 @@ print(f"\n📁 KATEGORİ CLASSIFICATION:")
 print(f"  Accuracy: {cls_acc*100:.2f}%")
 
 # =============================================================================
-# GELİŞMİŞ SANAL KASA SİMÜLASYONU (Kelly Criterion)
+# ÇİFT SANAL KASA SİMÜLASYONU (YENİ - FAZ 2)
 # =============================================================================
-print("\n" + "="*70)
-print("💰 GELİŞMİŞ SANAL KASA SİMÜLASYONU (Kelly Criterion)")
-print("="*70)
-print("3 farklı risk tolerance stratejisi ile test ediliyor...")
+print("\n" + "="*80)
+print("💰 ÇİFT SANAL KASA SİMÜLASYONU")
+print("="*80)
 
-# 3 farklı risk tolerance ile test
-for risk_tolerance in ['conservative', 'moderate', 'aggressive']:
-    print(f"\n{'='*70}")
-    print(f"📊 {risk_tolerance.upper()} STRATEJİ")
-    print(f"{'='*70}")
+# Dinamik kasa miktarı hesapla
+test_count = len(y_reg_te)
+initial_bankroll = test_count * 10  # Her test verisi için 10 TL
+bet_amount = 10.0
+
+print(f"📊 Test Veri Sayısı: {test_count:,}")
+print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL (dinamik)")
+print(f"💵 Bahis Tutarı: {bet_amount:.2f} TL (sabit)")
+print()
+
+# =============================================================================
+# KASA 1: 1.5x EŞİK SİSTEMİ (Mevcut)
+# =============================================================================
+print("="*80)
+print("💰 KASA 1: 1.5x EŞİK SİSTEMİ")
+print("="*80)
+print("Strateji: Model 1.5x üstü tahmin ederse → 1.5x'te çıkış")
+print()
+
+kasa1_wallet = initial_bankroll
+kasa1_total_bets = 0
+kasa1_total_wins = 0
+kasa1_total_losses = 0
+
+# Model tahminlerini al (threshold output'tan)
+y_cls_proba = p_thr  # Threshold probabilities
+threshold_predictions = (y_cls_proba >= 0.5).astype(int)  # 1.5 üstü tahmin
+
+for i in range(len(y_reg_te)):
+    model_pred_cls = threshold_predictions[i]  # 0 veya 1
+    actual_value = y_reg_te[i]
     
-    # Advanced Bankroll Manager oluştur
-    bankroll = AdvancedBankrollManager(
-        initial_bankroll=1000.0,
-        risk_tolerance=risk_tolerance,
-        win_multiplier=1.5,
-        min_bet=10.0
-    )
-    
-    # Test seti üzerinde simülasyon
-    for i in range(len(y_reg_te)):
-        # Model tahmini
-        model_pred_thr = p_thr[i]  # Threshold probability (0-1)
-        model_pred_cls = 1 if model_pred_thr >= 0.5 else 0  # Binary prediction
-        actual_value = y_reg_te[i]
+    # Model "1.5 üstü" tahmin ediyorsa bahis yap
+    if model_pred_cls == 1:
+        kasa1_wallet -= bet_amount  # Bahis yap
+        kasa1_total_bets += 1
         
-        # Model "1.5 üstü" tahmin ediyorsa bahis yap
-        if model_pred_cls == 1:
-            # Optimal bahis miktarını hesapla (Kelly Criterion)
-            bet_size = bankroll.calculate_bet_size(
-                confidence=model_pred_thr,  # Threshold probability as confidence
-                predicted_value=1.5
-            )
-            
-            # Bet size > 0 ise bahis yap
-            if bet_size > 0:
-                result = bankroll.place_bet(
-                    bet_size=bet_size,
-                    predicted_value=1.5,
-                    actual_value=actual_value,
-                    confidence=model_pred_thr
-                )
-            
-            # Stop-loss veya take-profit kontrolü
-            should_stop, reason = bankroll.should_stop()
-            if should_stop:
-                print(f"\n⚠️ {reason}")
-                print(f"Simülasyon durduruluyor (Test örneği {i+1}/{len(y_reg_te)})")
-                break
+        # 1.5x'te çıkış yap
+        exit_point = 1.5
+        
+        # Gerçek değer çıkış noktasından büyük veya eşitse kazandık
+        if actual_value >= exit_point:
+            # Kazandık! 1.5x × 10 TL = 15 TL geri al
+            kasa1_wallet += exit_point * bet_amount
+            kasa1_total_wins += 1
+        else:
+            # Kaybettik (bahis zaten kesildi)
+            kasa1_total_losses += 1
+
+# Kasa 1 sonuçları
+kasa1_profit_loss = kasa1_wallet - initial_bankroll
+kasa1_roi = (kasa1_profit_loss / initial_bankroll) * 100
+kasa1_win_rate = (kasa1_total_wins / kasa1_total_bets * 100) if kasa1_total_bets > 0 else 0
+kasa1_accuracy = kasa1_win_rate
+
+print(f"\n📊 KASA 1 SONUÇLARI:")
+print(f"{'='*70}")
+print(f"Toplam Oyun: {kasa1_total_bets:,} el")
+print(f"✅ Kazanan: {kasa1_total_wins:,} oyun ({kasa1_win_rate:.1f}%)")
+print(f"❌ Kaybeden: {kasa1_total_losses:,} oyun ({100-kasa1_win_rate:.1f}%)")
+print(f"")
+print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL")
+print(f"💰 Final Kasa: {kasa1_wallet:,.2f} TL")
+print(f"📈 Net Kar/Zarar: {kasa1_profit_loss:+,.2f} TL")
+print(f"📊 ROI: {kasa1_roi:+.2f}%")
+print(f"🎯 Doğruluk (Kazanma Oranı): {kasa1_accuracy:.1f}%")
+print(f"{'='*70}\n")
+
+# =============================================================================
+# KASA 2: %80 ÇIKIŞ SİSTEMİ (Yeni)
+# =============================================================================
+print("="*80)
+print("💰 KASA 2: %80 ÇIKIŞ SİSTEMİ (Yüksek Tahminler)")
+print("="*80)
+print("Strateji: Model 2.0x+ tahmin ederse → Tahmin × 0.80'de çıkış")
+print()
+
+kasa2_wallet = initial_bankroll
+kasa2_total_bets = 0
+kasa2_total_wins = 0
+kasa2_total_losses = 0
+kasa2_exit_points = []  # Çıkış noktalarını kaydet
+
+# Model tahminlerini al (regression output'tan)
+y_reg_pred = p_reg
+
+for i in range(len(y_reg_te)):
+    model_pred_value = y_reg_pred[i]  # Tahmin edilen değer
+    actual_value = y_reg_te[i]
     
-    # Detaylı rapor
-    bankroll.print_report()
+    # SADECE 2.0x ve üzeri tahminlerde oyna
+    if model_pred_value >= 2.0:
+        kasa2_wallet -= bet_amount  # Bahis yap
+        kasa2_total_bets += 1
+        
+        # Çıkış noktası: Tahmin × 0.80
+        exit_point = model_pred_value * 0.80
+        kasa2_exit_points.append(exit_point)
+        
+        # Gerçek değer çıkış noktasından büyük veya eşitse kazandık
+        if actual_value >= exit_point:
+            # Kazandık! exit_point × 10 TL geri al
+            kasa2_wallet += exit_point * bet_amount
+            kasa2_total_wins += 1
+        else:
+            # Kaybettik (bahis zaten kesildi)
+            kasa2_total_losses += 1
 
-print("\n" + "="*70)
-print("✅ Gelişmiş sanal kasa simülasyonu tamamlandı!")
-print("="*70)
+# Kasa 2 sonuçları
+kasa2_profit_loss = kasa2_wallet - initial_bankroll
+kasa2_roi = (kasa2_profit_loss / initial_bankroll) * 100
+kasa2_win_rate = (kasa2_total_wins / kasa2_total_bets * 100) if kasa2_total_bets > 0 else 0
+kasa2_accuracy = kasa2_win_rate
+kasa2_avg_exit = np.mean(kasa2_exit_points) if kasa2_exit_points else 0
+
+print(f"\n📊 KASA 2 SONUÇLARI:")
+print(f"{'='*70}")
+print(f"Toplam Oyun: {kasa2_total_bets:,} el")
+print(f"✅ Kazanan: {kasa2_total_wins:,} oyun ({kasa2_win_rate:.1f}%)")
+print(f"❌ Kaybeden: {kasa2_total_losses:,} oyun ({100-kasa2_win_rate:.1f}%)")
+print(f"")
+print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL")
+print(f"💰 Final Kasa: {kasa2_wallet:,.2f} TL")
+print(f"📈 Net Kar/Zarar: {kasa2_profit_loss:+,.2f} TL")
+print(f"📊 ROI: {kasa2_roi:+.2f}%")
+print(f"🎯 Doğruluk (Kazanma Oranı): {kasa2_accuracy:.1f}%")
+print(f"📊 Ortalama Çıkış Noktası: {kasa2_avg_exit:.2f}x")
+print(f"{'='*70}\n")
 
 # =============================================================================
-# KAYDET & İNDİR
+# KARŞILAŞTIRMA
 # =============================================================================
-print("\n💾 Model ve dosyalar kaydediliyor...")
+print("="*80)
+print("📊 KASA KARŞILAŞTIRMASI")
+print("="*80)
+print(f"{'Metrik':<30} {'Kasa 1 (1.5x)':<20} {'Kasa 2 (%80)':<20}")
+print(f"{'-'*70}")
+print(f"{'Toplam Oyun':<30} {kasa1_total_bets:<20,} {kasa2_total_bets:<20,}")
+print(f"{'Kazanan Oyun':<30} {kasa1_total_wins:<20,} {kasa2_total_wins:<20,}")
+print(f"{'Kazanma Oranı':<30} {kasa1_win_rate:<20.1f}% {kasa2_win_rate:<20.1f}%")
+print(f"{'Net Kar/Zarar':<30} {kasa1_profit_loss:<20,.2f} TL {kasa2_profit_loss:<20,.2f} TL")
+print(f"{'ROI':<30} {kasa1_roi:<20.2f}% {kasa2_roi:<20.2f}%")
+print(f"{'-'*70}")
+
+# Hangi kasa daha karlı?
+if kasa1_profit_loss > kasa2_profit_loss:
+    print(f"🏆 KASA 1 daha karlı (+{kasa1_profit_loss - kasa2_profit_loss:,.2f} TL fark)")
+elif kasa2_profit_loss > kasa1_profit_loss:
+    print(f"🏆 KASA 2 daha karlı (+{kasa2_profit_loss - kasa1_profit_loss:,.2f} TL fark)")
+else:
+    print(f"⚖️ Her iki kasa eşit karlılıkta")
+
+print(f"{'='*80}\n")
+
+# =============================================================================
+# MODEL KAYDETME + ZIP PAKETI (YENİ - FAZ 2)
+# =============================================================================
+print("\n" + "="*80)
+print("💾 MODELLER KAYDEDİLİYOR")
+print("="*80)
+
+import json
+import shutil
 
 # models/ klasörünü oluştur
 os.makedirs('models', exist_ok=True)
 
-model.save('jetx_progressive_final.h5')
-joblib.dump(scaler, 'scaler_progressive.pkl')
+# 1. Progressive NN modeli (Transformer ile)
+model.save('models/jetx_progressive_transformer.h5')
+print("✅ Progressive NN (Transformer) kaydedildi: jetx_progressive_transformer.h5")
 
-import json
+# 2. Scaler
+joblib.dump(scaler, 'models/scaler_progressive_transformer.pkl')
+print("✅ Scaler kaydedildi: scaler_progressive_transformer.pkl")
+
+# 3. Model bilgileri (JSON) - YENİ: Transformer ve Çift Kasa bilgileri eklendi
 total_time = stage1_time + stage2_time + stage3_time
 info = {
-    'model': 'PROGRESSIVE_TRAINING_3_STAGE',
-    'version': '1.0_PROGRESSIVE',
+    'model': 'Progressive_NN_Transformer',
+    'version': '2.0',
+    'date': '2025-10-12',
+    'architecture': {
+        'progressive_nn': {
+            'n_beats': True,
+            'tcn': True,
+            'transformer': {
+                'd_model': 256,
+                'num_layers': 4,
+                'num_heads': 8,
+                'dff': 1024
+            }
+        }
+    },
     'params': int(model.count_params()),
     'training_time_minutes': round(total_time/60, 1),
     'stage_times': {
-        'stage1_regression': round(stage1_time/60, 1),
+        'stage1_foundation': round(stage1_time/60, 1),
         'stage2_threshold': round(stage2_time/60, 1),
         'stage3_full': round(stage3_time/60, 1)
     },
@@ -1086,24 +1389,56 @@ info = {
         'mae': float(mae_final),
         'rmse': float(rmse_final),
         'money_loss_risk': float(fpr) if cm[0,0] + cm[0,1] > 0 else 0.0
+    },
+    'dual_bankroll_performance': {
+        'kasa_1_15x': {
+            'roi': float(kasa1_roi),
+            'accuracy': float(kasa1_accuracy),
+            'total_bets': int(kasa1_total_bets),
+            'profit_loss': float(kasa1_profit_loss)
+        },
+        'kasa_2_80percent': {
+            'roi': float(kasa2_roi),
+            'accuracy': float(kasa2_accuracy),
+            'total_bets': int(kasa2_total_bets),
+            'profit_loss': float(kasa2_profit_loss),
+            'avg_exit_point': float(kasa2_avg_exit)
+        }
     }
 }
 
-with open('progressive_model_info.json', 'w') as f:
+with open('models/model_info.json', 'w') as f:
     json.dump(info, f, indent=2)
+print("✅ Model bilgileri kaydedildi: model_info.json")
 
-print("✅ Dosyalar kaydedildi:")
-print("  - jetx_progressive_final.h5")
-print("  - scaler_progressive.pkl")
-print("  - progressive_model_info.json")
-print("  - stage1_best.h5 (checkpoint)")
-print("  - stage2_best.h5 (checkpoint)")
-print("  - stage3_best.h5 (checkpoint)")
+print("\n📁 Kaydedilen dosyalar:")
+print("  • jetx_progressive_transformer.h5 (Progressive NN + Transformer)")
+print("  • scaler_progressive_transformer.pkl (Scaler)")
+print("  • model_info.json (Model bilgileri)")
+print("  • stage1_best.h5 (Checkpoint)")
+print("  • stage2_best.h5 (Checkpoint)")
+print("  • stage3_best.h5 (Checkpoint)")
+print("="*80)
 
-print(f"\n📊 Model Bilgisi:")
-print(json.dumps(info, indent=2))
+# =============================================================================
+# MODELLERİ ZIP'LE VE İNDİR (YENİ - FAZ 2)
+# =============================================================================
+print("\n" + "="*80)
+print("📦 MODELLER ZIP'LENIYOR")
+print("="*80)
 
-# Google Colab'da indir - İyileştirilmiş kontrol
+# ZIP dosyası oluştur
+zip_filename = 'jetx_models_progressive_v2.0.zip'
+shutil.make_archive(
+    'jetx_models_progressive_v2.0',
+    'zip',
+    'models'
+)
+
+print(f"✅ ZIP dosyası oluşturuldu: {zip_filename}")
+print(f"📦 Boyut: {os.path.getsize(f'{zip_filename}') / (1024*1024):.2f} MB")
+
+# Google Colab'da indirme
 try:
     import google.colab
     IN_COLAB = True
@@ -1113,27 +1448,24 @@ except ImportError:
 if IN_COLAB:
     try:
         from google.colab import files
-        print("\n📥 Dosyalar indiriliyor...")
-        files.download('jetx_progressive_final.h5')
-        print("✅ jetx_progressive_final.h5 indirildi")
-        files.download('scaler_progressive.pkl')
-        print("✅ scaler_progressive.pkl indirildi")
-        files.download('progressive_model_info.json')
-        print("✅ progressive_model_info.json indirildi")
-        print("\n✅ Tüm ana dosyalar başarıyla indirildi!")
-        print("📌 Bu dosyaları lokal projenizin models/ klasörüne kopyalayın:")
-        print("   • jetx_progressive_final.h5 → models/jetx_model.h5")
-        print("   • scaler_progressive.pkl → models/scaler.pkl")
+        files.download(f'{zip_filename}')
+        print(f"✅ {zip_filename} indiriliyor...")
+        print("\n📌 İNDİRDİĞİNİZ DOSYAYI AÇIP models/ KLASÖRÜNE KOPYALAYIN:")
+        print("  1. ZIP'i açın")
+        print("  2. Tüm dosyaları lokal projenizin models/ klasörüne kopyalayın")
+        print("  3. Streamlit uygulamasını yeniden başlatın")
     except Exception as e:
-        print(f"\n⚠️ İndirme hatası: {e}")
-        print("📁 Dosyalar models/ klasöründe kaydedildi.")
+        print(f"⚠️ İndirme hatası: {e}")
+        print(f"⚠️ Manuel indirme gerekli: {zip_filename}")
 else:
     print("\n⚠️ Google Colab ortamı algılanamadı - dosyalar sadece kaydedildi")
-    print("📁 Dosyalar models/ klasöründe mevcut:")
-    print("   • jetx_progressive_final.h5")
-    print("   • scaler_progressive.pkl")
-    print("   • progressive_model_info.json")
+    print(f"📁 ZIP dosyası mevcut: {zip_filename}")
     print("\n💡 Not: Bu script Google Colab'da çalıştırıldığında dosyalar otomatik indirilir.")
+
+print("="*80)
+
+print(f"\n📊 Model Bilgisi:")
+print(json.dumps(info, indent=2))
 
 # Final rapor
 print("\n" + "="*80)

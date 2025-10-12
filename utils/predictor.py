@@ -3,7 +3,7 @@ JetX Predictor - Tahmin Motoru
 
 Bu modül eğitilmiş modeli yükler ve tahmin yapar.
 Hem kategorik hem de değer tahmini yapar.
-XGBoost ve Neural Network modellerini destekler.
+CatBoost ve Neural Network modellerini destekler.
 """
 
 import numpy as np
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class JetXPredictor:
-    """JetX tahmin sınıfı - Neural Network ve XGBoost destekli"""
+    """JetX tahmin sınıfı - Neural Network ve CatBoost destekli"""
     
     def __init__(
         self,
@@ -40,7 +40,7 @@ class JetXPredictor:
         Args:
             model_path: Eğitilmiş model dosyası yolu
             scaler_path: Scaler dosyası yolu
-            model_type: Model tipi ('neural_network' veya 'xgboost')
+            model_type: Model tipi ('neural_network' veya 'catboost')
         """
         self.model_type = model_type
         self.model_path = model_path
@@ -49,15 +49,15 @@ class JetXPredictor:
         self.scaler = None
         self.feature_names = None
         
-        # XGBoost için ek modeller
+        # CatBoost için ek modeller
         self.regressor = None
         self.classifier = None
         
-        # XGBoost kullanılıyorsa dosya yollarını güncelle
-        if model_type == 'xgboost':
-            self.model_path = "models/xgboost_regressor.json"
-            self.classifier_path = "models/xgboost_classifier.json"
-            self.scaler_path = "models/xgboost_scaler.pkl"
+        # CatBoost kullanılıyorsa dosya yollarını güncelle
+        if model_type == 'catboost':
+            self.model_path = "models/catboost_regressor.cbm"
+            self.classifier_path = "models/catboost_classifier.cbm"
+            self.scaler_path = "models/catboost_scaler.pkl"
         
         # Model varsa yükle
         if os.path.exists(model_path if model_type == 'neural_network' else self.model_path):
@@ -80,17 +80,17 @@ class JetXPredictor:
                     self.model = joblib.load(self.model_path)
                     logger.info(f"✅ Model yüklendi: {self.model_path}")
                     
-            elif self.model_type == 'xgboost':
-                # XGBoost modelleri için
-                import xgboost as xgb
+            elif self.model_type == 'catboost':
+                # CatBoost modelleri için
+                from catboost import CatBoostRegressor, CatBoostClassifier
                 
-                self.regressor = xgb.XGBRegressor()
+                self.regressor = CatBoostRegressor()
                 self.regressor.load_model(self.model_path)
-                logger.info(f"✅ XGBoost Regressor yüklendi: {self.model_path}")
+                logger.info(f"✅ CatBoost Regressor yüklendi: {self.model_path}")
                 
-                self.classifier = xgb.XGBClassifier()
+                self.classifier = CatBoostClassifier()
                 self.classifier.load_model(self.classifier_path)
-                logger.info(f"✅ XGBoost Classifier yüklendi: {self.classifier_path}")
+                logger.info(f"✅ CatBoost Classifier yüklendi: {self.classifier_path}")
             
             # Scaler'ı yükle
             if os.path.exists(self.scaler_path):
@@ -179,9 +179,9 @@ class JetXPredictor:
                 'category': None,
                 'recommendation': 'BEKLE'
             }
-        elif self.model_type == 'xgboost' and (self.regressor is None or self.classifier is None):
+        elif self.model_type == 'catboost' and (self.regressor is None or self.classifier is None):
             return {
-                'error': 'XGBoost modelleri yüklenmedi. Önce modelleri Google Colab\'da eğitin.',
+                'error': 'CatBoost modelleri yüklenmedi. Önce modelleri Google Colab\'da eğitin.',
                 'predicted_value': None,
                 'confidence': 0.0,
                 'above_threshold': None,
@@ -205,8 +205,8 @@ class JetXPredictor:
             # Model tipine göre tahmin yap
             if self.model_type == 'neural_network':
                 return self._predict_neural_network(history, mode)
-            elif self.model_type == 'xgboost':
-                return self._predict_xgboost(history, mode)
+            elif self.model_type == 'catboost':
+                return self._predict_catboost(history, mode)
             else:
                 return {
                     'error': f'Bilinmeyen model tipi: {self.model_type}',
@@ -290,12 +290,12 @@ class JetXPredictor:
             'model_type': 'neural_network'
         }
     
-    def _predict_xgboost(
+    def _predict_catboost(
         self,
         history: List[float],
         mode: str
     ) -> Dict:
-        """XGBoost ile tahmin yapar"""
+        """CatBoost ile tahmin yapar"""
         # Özellikleri çıkar
         model_inputs = self.extract_features_from_history(history)
         feature_values = model_inputs['features']
@@ -335,7 +335,7 @@ class JetXPredictor:
             'pattern_risk': 0.0,
             'warnings': warnings,
             'mode': mode,
-            'model_type': 'xgboost'
+            'model_type': 'catboost'
         }
     
     def _calculate_confidence(

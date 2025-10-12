@@ -1,7 +1,7 @@
 """
 JetX Predictor - Intelligent Ensemble Manager
 
-Stacking Ensemble sistemi - 3 base modeli (Progressive, Ultra, XGBoost) 
+Stacking Ensemble sistemi - 3 base modeli (Progressive, Ultra, CatBoost)
 birleştirerek daha iyi tahminler yapar.
 
 Meta-model ile hangi modele ne zaman güvenileceğini öğrenir.
@@ -23,13 +23,13 @@ except ImportError:
     TENSORFLOW_AVAILABLE = False
     logging.warning("TensorFlow bulunamadı. Neural Network modelleri yüklenemeyecek.")
 
-# XGBoost için
+# CatBoost için
 try:
-    import xgboost as xgb
-    XGBOOST_AVAILABLE = True
+    from catboost import CatBoostRegressor, CatBoostClassifier
+    CATBOOST_AVAILABLE = True
 except ImportError:
-    XGBOOST_AVAILABLE = False
-    logging.warning("XGBoost bulunamadı. XGBoost modelleri yüklenemeyecek.")
+    CATBOOST_AVAILABLE = False
+    logging.warning("CatBoost bulunamadı. CatBoost modelleri yüklenemeyecek.")
 
 # Custom losses
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -48,10 +48,10 @@ class StackingEnsemble:
     3 Base Model:
     1. Progressive (Dengeli, 3 aşamalı)
     2. Ultra Aggressive (Agresif, yüksek doğruluk hedefi)
-    3. XGBoost (Hızlı, feature-based)
+    3. CatBoost (Hızlı, feature-based)
     
     Meta-Model:
-    - XGBoost classifier
+    - CatBoost classifier
     - Base modellerin tahminlerinden öğrenir
     - Hangi modele ne zaman güveneceğini bilir
     """
@@ -62,9 +62,9 @@ class StackingEnsemble:
         progressive_scaler_path: str = "models/scaler_progressive.pkl",
         ultra_model_path: str = "models/jetx_ultra_model.h5",
         ultra_scaler_path: str = "models/scaler_ultra.pkl",
-        xgboost_regressor_path: str = "models/xgboost_regressor.json",
-        xgboost_classifier_path: str = "models/xgboost_classifier.json",
-        xgboost_scaler_path: str = "models/xgboost_scaler.pkl",
+        catboost_regressor_path: str = "models/catboost_regressor.cbm",
+        catboost_classifier_path: str = "models/catboost_classifier.cbm",
+        catboost_scaler_path: str = "models/catboost_scaler.pkl",
         meta_model_path: str = "models/meta_model.json"
     ):
         """
@@ -73,9 +73,9 @@ class StackingEnsemble:
             progressive_scaler_path: Progressive scaler dosya yolu
             ultra_model_path: Ultra Aggressive model dosya yolu
             ultra_scaler_path: Ultra Aggressive scaler dosya yolu
-            xgboost_regressor_path: XGBoost regressor dosya yolu
-            xgboost_classifier_path: XGBoost classifier dosya yolu
-            xgboost_scaler_path: XGBoost scaler dosya yolu
+            catboost_regressor_path: CatBoost regressor dosya yolu
+            catboost_classifier_path: CatBoost classifier dosya yolu
+            catboost_scaler_path: CatBoost scaler dosya yolu
             meta_model_path: Meta-model dosya yolu
         """
         self.models = {}
@@ -92,10 +92,10 @@ class StackingEnsemble:
                 'model': ultra_model_path,
                 'scaler': ultra_scaler_path
             },
-            'xgboost': {
-                'regressor': xgboost_regressor_path,
-                'classifier': xgboost_classifier_path,
-                'scaler': xgboost_scaler_path
+            'catboost': {
+                'regressor': catboost_regressor_path,
+                'classifier': catboost_classifier_path,
+                'scaler': catboost_scaler_path
             }
         }
         self.meta_model_path = meta_model_path
@@ -139,30 +139,30 @@ class StackingEnsemble:
             logger.warning("⚠️ Ultra Aggressive model dosyası bulunamadı")
             self.models['ultra'] = None
         
-        # XGBoost Models
-        if XGBOOST_AVAILABLE and os.path.exists(self.model_paths['xgboost']['regressor']):
+        # CatBoost Models
+        if CATBOOST_AVAILABLE and os.path.exists(self.model_paths['catboost']['regressor']):
             try:
-                self.models['xgboost_reg'] = xgb.XGBRegressor()
-                self.models['xgboost_reg'].load_model(self.model_paths['xgboost']['regressor'])
+                self.models['catboost_reg'] = CatBoostRegressor()
+                self.models['catboost_reg'].load_model(self.model_paths['catboost']['regressor'])
                 
-                self.models['xgboost_cls'] = xgb.XGBClassifier()
-                self.models['xgboost_cls'].load_model(self.model_paths['xgboost']['classifier'])
+                self.models['catboost_cls'] = CatBoostClassifier()
+                self.models['catboost_cls'].load_model(self.model_paths['catboost']['classifier'])
                 
-                self.scalers['xgboost'] = joblib.load(self.model_paths['xgboost']['scaler'])
-                logger.info("✅ XGBoost modelleri yüklendi")
+                self.scalers['catboost'] = joblib.load(self.model_paths['catboost']['scaler'])
+                logger.info("✅ CatBoost modelleri yüklendi")
             except Exception as e:
-                logger.warning(f"⚠️ XGBoost modelleri yüklenemedi: {e}")
-                self.models['xgboost_reg'] = None
-                self.models['xgboost_cls'] = None
+                logger.warning(f"⚠️ CatBoost modelleri yüklenemedi: {e}")
+                self.models['catboost_reg'] = None
+                self.models['catboost_cls'] = None
         else:
-            logger.warning("⚠️ XGBoost model dosyaları bulunamadı")
-            self.models['xgboost_reg'] = None
-            self.models['xgboost_cls'] = None
+            logger.warning("⚠️ CatBoost model dosyaları bulunamadı")
+            self.models['catboost_reg'] = None
+            self.models['catboost_cls'] = None
         
         # Meta-Model
-        if XGBOOST_AVAILABLE and os.path.exists(self.meta_model_path):
+        if CATBOOST_AVAILABLE and os.path.exists(self.meta_model_path):
             try:
-                self.meta_model = xgb.XGBClassifier()
+                self.meta_model = CatBoostClassifier()
                 self.meta_model.load_model(self.meta_model_path)
                 logger.info("✅ Meta-model yüklendi")
             except Exception as e:
@@ -182,7 +182,7 @@ class StackingEnsemble:
         
         Args:
             history: Geçmiş değerler
-            model_type: 'progressive', 'ultra', veya 'xgboost'
+            model_type: 'progressive', 'ultra', veya 'catboost'
             
         Returns:
             Model input dictionary
@@ -280,25 +280,25 @@ class StackingEnsemble:
                 logger.error(f"Ultra tahmin hatası: {e}")
                 predictions['ultra'] = None
         
-        # XGBoost
-        if self.models.get('xgboost_reg') is not None and self.models.get('xgboost_cls') is not None:
+        # CatBoost
+        if self.models.get('catboost_reg') is not None and self.models.get('catboost_cls') is not None:
             try:
-                inputs = self.extract_features_for_model(history, 'xgboost')
+                inputs = self.extract_features_for_model(history, 'catboost')
                 
                 # Regression
-                reg_pred = self.models['xgboost_reg'].predict(inputs['features'])
+                reg_pred = self.models['catboost_reg'].predict(inputs['features'])
                 
                 # Classification
-                cls_proba = self.models['xgboost_cls'].predict_proba(inputs['features'])
+                cls_proba = self.models['catboost_cls'].predict_proba(inputs['features'])
                 
-                predictions['xgboost'] = {
+                predictions['catboost'] = {
                     'predicted_value': float(reg_pred[0]),
                     'threshold_probability': float(cls_proba[0][1]),  # 1.5 üstü olasılığı
                     'above_threshold': cls_proba[0][1] >= 0.5
                 }
             except Exception as e:
-                logger.error(f"XGBoost tahmin hatası: {e}")
-                predictions['xgboost'] = None
+                logger.error(f"CatBoost tahmin hatası: {e}")
+                predictions['catboost'] = None
         
         return predictions
     
@@ -340,9 +340,9 @@ class StackingEnsemble:
         # Meta-model varsa stacking kullan
         if self.meta_model is not None:
             try:
-                # Meta-model input: [prog_pred, ultra_pred, xgb_pred]
+                # Meta-model input: [prog_pred, ultra_pred, catboost_pred]
                 meta_input = []
-                for model_name in ['progressive', 'ultra', 'xgboost']:
+                for model_name in ['progressive', 'ultra', 'catboost']:
                     if individual_preds.get(model_name) is not None:
                         meta_input.append(individual_preds[model_name]['threshold_probability'])
                     else:
@@ -411,7 +411,7 @@ class StackingEnsemble:
         
         Args:
             history: Geçmiş değerler
-            mode: 'ensemble', 'progressive', 'ultra', veya 'xgboost'
+            mode: 'ensemble', 'progressive', 'ultra', veya 'catboost'
             
         Returns:
             Tahmin sonucu

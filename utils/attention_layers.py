@@ -5,6 +5,170 @@ Multi-Head Attention ve Transformer-like attention layers.
 Model performansını artırmak için sequence modellerine eklenebilir.
 """
 
+class PositionalEncoding(layers.Layer):
+    """
+    Positional Encoding for Transformer
+    Time series için zamansal bilgi ekler
+    """
+    def __init__(self, max_seq_len=1000, d_model=256, **kwargs):
+        super().__init__(**kwargs)
+        self.max_seq_len = max_seq_len
+        self.d_model = d_model
+        
+        # Positional encoding matrix oluştur
+        position = tf.range(max_seq_len, dtype=tf.float32)[:, tf.newaxis]
+        div_term = tf.exp(tf.range(0, d_model, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / d_model))
+        
+        pe = tf.zeros((max_seq_len, d_model))
+        pe_sin = tf.sin(position * div_term)
+        pe_cos = tf.cos(position * div_term)
+        
+        # Sin ve cos değerlerini birleştir
+        pe_array = tf.Variable(pe, trainable=False)
+        pe_array[:, 0::2].assign(pe_sin)
+        pe_array[:, 1::2].assign(pe_cos)
+        self.pe = pe_array
+    
+    def call(self, x):
+        seq_len = tf.shape(x)[1]
+        return x + self.pe[:seq_len, :]
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'max_seq_len': self.max_seq_len,
+            'd_model': self.d_model
+        })
+        return config
+
+
+class LightweightTransformerEncoder(layers.Layer):
+    """
+    Lightweight Transformer Encoder for Time Series
+    
+    Args:
+        d_model: Model dimension (256)
+        num_layers: Number of transformer layers (4)
+        num_heads: Number of attention heads (8)
+        dff: Feedforward dimension (1024)
+        dropout: Dropout rate (0.2)
+    """
+    def __init__(
+        self, 
+        d_model=256, 
+        num_layers=4, 
+        num_heads=8, 
+        dff=1024, 
+        dropout=0.2,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        self.d_model = d_model
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.dff = dff
+        self.dropout_rate = dropout
+        
+        # Input projection (sequence_len, 1) → (sequence_len, d_model)
+        self.input_projection = layers.Dense(d_model)
+        
+        # Positional encoding
+        self.pos_encoding = PositionalEncoding(max_seq_len=1000, d_model=d_model)
+        
+        # Transformer encoder layers
+        self.encoder_layers = []
+        for _ in range(num_layers):
+            # Multi-head attention
+            mha = layers.MultiHeadAttention(
+                num_heads=num_heads,
+                key_dim=d_model // num_heads,
+                dropout=dropout
+            )
+            
+            # Feedforward network
+            ffn = tf.keras.Sequential([
+                layers.Dense(dff, activation='relu'),
+                layers.Dropout(dropout),
+                layers.Dense(d_model)
+            ])
+            
+            # Layer normalization
+            layernorm1 = layers.LayerNormalization(epsilon=1e-6)
+            layernorm2 = layers.LayerNormalization(epsilon=1e-6)
+            
+            # Dropout
+            dropout1 = layers.Dropout(dropout)
+            dropout2 = layers.Dropout(dropout)
+            
+            self.encoder_layers.append({
+                'mha': mha,
+                'ffn': ffn,
+                'layernorm1': layernorm1,
+                'layernorm2': layernorm2,
+                'dropout1': dropout1,
+                'dropout2': dropout2
+            })
+        
+        # Global average pooling
+        self.global_pool = layers.GlobalAveragePooling1D()
+        
+        # Output projection
+        self.output_projection = layers.Dense(d_model)
+        self.dropout_final = layers.Dropout(dropout)
+    
+    def call(self, inputs, training=None):
+        """
+        Forward pass
+        
+        Args:
+            inputs: (batch_size, seq_len, 1) - Time series input
+            training: Training mode flag
+            
+        Returns:
+            (batch_size, d_model) - Encoded representation
+        """
+        # Input projection
+        x = self.input_projection(inputs)  # (batch, seq_len, d_model)
+        
+        # Positional encoding
+        x = self.pos_encoding(x)
+        
+        # Transformer encoder layers
+        for layer in self.encoder_layers:
+            # Multi-head attention
+            attn_output = layer['mha'](
+                query=x,
+                key=x,
+                value=x,
+                training=training
+            )
+            attn_output = layer['dropout1'](attn_output, training=training)
+            x = layer['layernorm1'](x + attn_output)  # Residual connection
+            
+            # Feedforward network
+            ffn_output = layer['ffn'](x)
+            ffn_output = layer['dropout2'](ffn_output, training=training)
+            x = layer['layernorm2'](x + ffn_output)  # Residual connection
+        
+        # Global pooling
+        x = self.global_pool(x)  # (batch, d_model)
+        
+        # Output projection
+        x = self.output_projection(x)
+        x = self.dropout_final(x, training=training)
+        
+        return x
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'd_model': self.d_model,
+            'num_layers': self.num_layers,
+            'num_heads': self.num_heads,
+            'dff': self.dff,
+            'dropout': self.dropout_rate
+        })
+        return config
 import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
