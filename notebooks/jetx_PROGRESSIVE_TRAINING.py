@@ -82,6 +82,7 @@ from utils.balanced_batch_generator import BalancedBatchGenerator
 from utils.adaptive_weight_scheduler import AdaptiveWeightScheduler
 from utils.advanced_bankroll import AdvancedBankrollManager
 from utils.custom_losses import balanced_threshold_killer_loss, balanced_focal_loss, create_weighted_binary_crossentropy
+from utils.virtual_bankroll_callback import VirtualBankrollCallback
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
 # =============================================================================
 # TRANSFORMER LAYERS (YENİ - FAZ 2)
@@ -884,11 +885,22 @@ model.compile(
 # Dynamic Weight Callback başlat (otomatik ayarlama için)
 dynamic_callback_1 = DynamicWeightCallback("AŞAMA 1", initial_weight=1.5, target_below_acc=0.70)
 
+# Virtual Bankroll Callback (HER EPOCH için sanal kasa)
+virtual_bankroll_1 = VirtualBankrollCallback(
+    stage_name="AŞAMA 1",
+    X_test=[X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te],
+    y_test=y_reg_te,
+    threshold=1.5,
+    starting_capital=1000.0,
+    bet_amount=10.0
+)
+
 cb1 = [
     callbacks.ModelCheckpoint('stage1_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
     callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=12, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=12, min_lr=1e-6, verbose=1),
     dynamic_callback_1,
+    virtual_bankroll_1,  # YENİ: Her epoch sanal kasa gösterimi
     ProgressiveMetricsCallback("AŞAMA 1")
 ]
 
@@ -984,11 +996,22 @@ adaptive_scheduler_2 = AdaptiveWeightScheduler(
 # Dynamic Weight Callback (mevcut - opsiyonel)
 dynamic_callback_2 = DynamicWeightCallback("AŞAMA 2", initial_weight=1.5, target_below_acc=0.70)
 
+# Virtual Bankroll Callback (HER EPOCH için sanal kasa)
+virtual_bankroll_2 = VirtualBankrollCallback(
+    stage_name="AŞAMA 2",
+    X_test=[X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te],
+    y_test=y_reg_te,
+    threshold=1.5,
+    starting_capital=1000.0,
+    bet_amount=10.0
+)
+
 cb2 = [
     callbacks.ModelCheckpoint('stage2_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
     callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=10, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-7, verbose=1),
     adaptive_scheduler_2,  # YENİ: Adaptive weight scheduler
+    virtual_bankroll_2,  # YENİ: Her epoch sanal kasa gösterimi
     ProgressiveMetricsCallback("AŞAMA 2")
 ]
 
@@ -1080,11 +1103,22 @@ adaptive_scheduler_3 = AdaptiveWeightScheduler(
 # Dynamic Weight Callback (mevcut - opsiyonel)
 dynamic_callback_3 = DynamicWeightCallback("AŞAMA 3", initial_weight=2.0, target_below_acc=0.70)
 
+# Virtual Bankroll Callback (HER EPOCH için sanal kasa)
+virtual_bankroll_3 = VirtualBankrollCallback(
+    stage_name="AŞAMA 3",
+    X_test=[X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te],
+    y_test=y_reg_te,
+    threshold=1.5,
+    starting_capital=1000.0,
+    bet_amount=10.0
+)
+
 cb3 = [
     callbacks.ModelCheckpoint('stage3_best.h5', monitor='val_threshold_accuracy', save_best_only=True, mode='max', verbose=1),
     callbacks.EarlyStopping(monitor='val_threshold_accuracy', patience=8, min_delta=0.001, mode='max', restore_best_weights=True, verbose=1),
     callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-8, verbose=1),
     adaptive_scheduler_3,  # YENİ: Adaptive weight scheduler
+    virtual_bankroll_3,  # YENİ: Her epoch sanal kasa gösterimi
     ProgressiveMetricsCallback("AŞAMA 3")
 ]
 

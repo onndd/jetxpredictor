@@ -23,6 +23,16 @@ from utils.risk_manager import RiskManager
 from utils.config_loader import config
 from category_definitions import CategoryDefinitions
 
+# Yeni sistemleri import et
+try:
+    from utils.ensemble_predictor import create_ensemble_predictor, VotingStrategy
+    from utils.adaptive_threshold import create_threshold_manager
+    from utils.backtesting import create_backtest_engine
+    ADVANCED_FEATURES_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Gelişmiş özellikler yüklenemedi: {e}")
+    ADVANCED_FEATURES_AVAILABLE = False
+
 # Logging ayarla
 logging.basicConfig(
     level=logging.INFO,
@@ -63,11 +73,27 @@ st.markdown("""
     .danger-zone {
         background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
     }
+    .warning-zone {
+        background: linear-gradient(135deg, #ff9800 0%, #ffc107 100%);
+    }
     .warning-box {
         padding: 10px;
         border-left: 5px solid #ff9800;
         background-color: #fff3e0;
         margin: 10px 0;
+    }
+    .info-box {
+        padding: 10px;
+        border-left: 5px solid #2196F3;
+        background-color: #e3f2fd;
+        margin: 10px 0;
+    }
+    .metric-card {
+        background: white;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 5px 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -92,9 +118,71 @@ if 'risk_manager' not in st.session_state:
 if 'last_prediction' not in st.session_state:
     st.session_state.last_prediction = None
 
+# Yeni sistemleri session state'e ekle
+if 'use_ensemble' not in st.session_state:
+    st.session_state.use_ensemble = False
+
+if 'use_dynamic_threshold' not in st.session_state:
+    st.session_state.use_dynamic_threshold = False
+
+if 'voting_strategy' not in st.session_state:
+    st.session_state.voting_strategy = 'weighted'
+
+if 'threshold_strategy' not in st.session_state:
+    st.session_state.threshold_strategy = 'hybrid'
+
 # Sidebar
 with st.sidebar:
     st.title("🎮 Kontrol Paneli")
+    
+    # Gelişmiş Özellikler
+    if ADVANCED_FEATURES_AVAILABLE:
+        st.subheader("🚀 Gelişmiş Özellikler")
+        
+        use_ensemble = st.checkbox(
+            "🔗 Ensemble Predictor",
+            value=st.session_state.use_ensemble,
+            help="Birden fazla modeli birleştirerek daha güvenilir tahminler"
+        )
+        st.session_state.use_ensemble = use_ensemble
+        
+        if use_ensemble:
+            voting_strategy = st.selectbox(
+                "Oylama Stratejisi:",
+                options=['weighted', 'unanimous', 'confidence', 'majority'],
+                index=['weighted', 'unanimous', 'confidence', 'majority'].index(st.session_state.voting_strategy),
+                format_func=lambda x: {
+                    'weighted': '⚖️ Ağırlıklı (Önerilen)',
+                    'unanimous': '🤝 Oybirliği',
+                    'confidence': '🎯 Güven Bazlı',
+                    'majority': '📊 Çoğunluk'
+                }[x],
+                help="Weighted: CatBoost %60, NN %40\nUnanimous: Her iki model de aynı tahminde\nConfidence: En güvenli modele öncelik\nMajority: Basit çoğunluk"
+            )
+            st.session_state.voting_strategy = voting_strategy
+        
+        use_dynamic_threshold = st.checkbox(
+            "🎚️ Dinamik Threshold",
+            value=st.session_state.use_dynamic_threshold,
+            help="Güven skoruna göre threshold otomatik ayarlama"
+        )
+        st.session_state.use_dynamic_threshold = use_dynamic_threshold
+        
+        if use_dynamic_threshold:
+            threshold_strategy = st.selectbox(
+                "Threshold Stratejisi:",
+                options=['hybrid', 'confidence', 'performance'],
+                index=['hybrid', 'confidence', 'performance'].index(st.session_state.threshold_strategy),
+                format_func=lambda x: {
+                    'hybrid': '🔄 Hibrit (Önerilen)',
+                    'confidence': '🎯 Güven Bazlı',
+                    'performance': '📈 Performans Bazlı'
+                }[x],
+                help="Hybrid: Güven + Performans\nConfidence: Sadece güven skoru\nPerformance: Geçmiş performans"
+            )
+            st.session_state.threshold_strategy = threshold_strategy
+        
+        st.divider()
     
     # Mod seçimi
     st.subheader("📊 Tahmin Modu")
@@ -148,6 +236,22 @@ with st.sidebar:
 
 # Ana içerik
 st.title("🚀 JetX Tahmin Sistemi")
+
+# Sistem durumu banner
+if ADVANCED_FEATURES_AVAILABLE:
+    features_active = []
+    if st.session_state.use_ensemble:
+        features_active.append(f"Ensemble ({st.session_state.voting_strategy})")
+    if st.session_state.use_dynamic_threshold:
+        features_active.append(f"Dynamic Threshold ({st.session_state.threshold_strategy})")
+    
+    if features_active:
+        st.success(f"✨ Aktif Özellikler: {', '.join(features_active)}")
+    else:
+        st.info("💡 Gelişmiş özellikler mevcut ama aktif değil. Sol menüden aktifleştirebilirsiniz.")
+else:
+    st.warning("⚠️ Gelişmiş özellikler henüz yüklenmedi. Modeller eksik olabilir.")
+
 st.markdown("**AI destekli tahmin sistemi - Para kazandırmak için tasarlandı**")
 
 # Model kontrolü
@@ -191,8 +295,14 @@ with main_col1:
                 if 'error' in prediction:
                     st.error(f"❌ Hata: {prediction['error']}")
                 else:
-                    # Tahmin kartı
-                    card_class = "safe-zone" if prediction['above_threshold'] else "danger-zone"
+                    # Güven seviyesine göre kart rengi
+                    confidence = prediction['confidence']
+                    if confidence >= 0.8:
+                        card_class = "safe-zone"
+                    elif confidence >= 0.6:
+                        card_class = "warning-zone"
+                    else:
+                        card_class = "danger-zone"
                     
                     st.markdown(f"""
                     <div class="prediction-card {card_class}">
@@ -202,6 +312,29 @@ with main_col1:
                         <p>{prediction['detailed_category']}</p>
                     </div>
                     """, unsafe_allow_html=True)
+                    
+                    # Dinamik Threshold uygulanırsa
+                    if ADVANCED_FEATURES_AVAILABLE and st.session_state.use_dynamic_threshold:
+                        from utils.adaptive_threshold import create_threshold_manager
+                        threshold_mgr = create_threshold_manager(
+                            base_threshold=1.5,
+                            strategy=st.session_state.threshold_strategy
+                        )
+                        
+                        threshold_decision = threshold_mgr.get_threshold(
+                            confidence=prediction['confidence'],
+                            model_agreement=0.8,  # Default değer (tek model ise)
+                            prediction=prediction['predicted_value']
+                        )
+                        
+                        st.markdown(f"""
+                        <div class="info-box">
+                            <strong>🎚️ Dinamik Threshold:</strong><br>
+                            Önerilen Threshold: <strong>{threshold_decision.threshold if threshold_decision.threshold else "Bahse girme!"}x</strong><br>
+                            Risk Seviyesi: <strong>{threshold_decision.risk_level}</strong><br>
+                            Gerekçe: {threshold_decision.reasoning}
+                        </div>
+                        """, unsafe_allow_html=True)
                     
                     # Karar
                     st.subheader("🎲 Öneri")
@@ -306,6 +439,108 @@ with main_col2:
 
 st.divider()
 
+# Backtesting Bölümü (varsa)
+if ADVANCED_FEATURES_AVAILABLE:
+    with st.expander("🔬 Backtesting - Model Performans Testi", expanded=False):
+        st.markdown("""
+        Geçmiş veriler üzerinde model performansını test edin.
+        """)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            backtest_window = st.number_input("Test Veri Sayısı:", 50, 500, 200)
+        with col2:
+            starting_capital = st.number_input("Başlangıç Sermayesi:", 100, 10000, 1000)
+        with col3:
+            bet_size = st.number_input("Bahis Tutarı:", 1, 100, 10)
+        
+        if st.button("🧪 Backtest Çalıştır"):
+            with st.spinner("Backtest çalıştırılıyor..."):
+                from utils.backtesting import create_backtest_engine
+                
+                # Veriyi al
+                test_data = st.session_state.db_manager.get_recent_results(backtest_window)
+                
+                if len(test_data) < 50:
+                    st.error("En az 50 veri gerekli!")
+                else:
+                    # Tahminler yap
+                    predictions = []
+                    for i in range(50, len(test_data)):
+                        history = test_data[max(0, i-500):i]
+                        pred = st.session_state.predictor.predict(history, mode=mode)
+                        if 'error' not in pred:
+                            predictions.append(pred['predicted_value'])
+                        else:
+                            predictions.append(1.0)
+                    
+                    actuals = test_data[50:]
+                    predictions = np.array(predictions[:len(actuals)])
+                    
+                    # Backtest engine
+                    engine = create_backtest_engine(
+                        starting_capital=starting_capital,
+                        bet_size=bet_size,
+                        strategy='fixed'
+                    )
+                    
+                    result = engine.run(predictions, actuals)
+                    
+                    # Sonuçları göster
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        roi_color = "normal" if result.roi >= 0 else "inverse"
+                        st.metric("ROI", f"{result.roi:.2f}%", delta_color=roi_color)
+                    
+                    with col2:
+                        st.metric("Kazanma Oranı", f"{result.win_rate:.1%}")
+                    
+                    with col3:
+                        st.metric("Net Kar/Zarar", f"{result.net_profit:+.2f} TL")
+                    
+                    with col4:
+                        st.metric("Max Drawdown", f"{result.max_drawdown_pct:.1f}%")
+                    
+                    # Equity curve
+                    if result.equity_curve:
+                        fig_equity = go.Figure()
+                        fig_equity.add_trace(go.Scatter(
+                            y=result.equity_curve,
+                            mode='lines',
+                            name='Sermaye',
+                            line=dict(color='#2196F3', width=2)
+                        ))
+                        fig_equity.add_hline(
+                            y=starting_capital,
+                            line_dash="dash",
+                            line_color="gray",
+                            annotation_text="Başlangıç"
+                        )
+                        fig_equity.update_layout(
+                            title="Sermaye Değişimi",
+                            xaxis_title="İşlem",
+                            yaxis_title="Sermaye (TL)",
+                            height=300
+                        )
+                        st.plotly_chart(fig_equity, use_container_width=True)
+                    
+                    # Detaylar
+                    st.subheader("📊 Detaylı Sonuçlar")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Toplam Oyun:** {result.total_games}")
+                        st.write(f"**Kazanan:** {result.wins}")
+                        st.write(f"**Kaybeden:** {result.losses}")
+                        st.write(f"**Atlanan:** {result.skipped}")
+                    with col2:
+                        st.write(f"**Sharpe Ratio:** {result.sharpe_ratio:.3f}")
+                        st.write(f"**En Uzun Kazanma:** {result.max_win_streak}")
+                        st.write(f"**En Uzun Kaybetme:** {result.max_loss_streak}")
+                        st.write(f"**Ortalama Güven:** {result.avg_confidence:.1%}")
+
+st.divider()
+
 # Veri girişi bölümü
 st.subheader("➕ Yeni Veri Ekle")
 
@@ -390,8 +625,7 @@ with col2:
                     
                     st.rerun()
                 else:
-                    logger.error(f"Veri kaydedilemedi: result_id={result_id}")
-                    st.error("❌ Veri kaydedilemedi! Lütfen tekrar deneyin.")
+                    logger.error(f"Veri kaydedilemedi: Veri kaydedilemedi! Lütfen tekrar deneyin.")
             except sqlite3.IntegrityError as e:
                 logger.error(f"Veritabanı bütünlük hatası: {e}", exc_info=True)
                 st.error(f"❌ Veritabanı bütünlük hatası: Aynı veri zaten mevcut olabilir.")
@@ -421,4 +655,12 @@ st.markdown("""
 """)
 
 # Footer
-st.caption(f"JetX Predictor v1.0 | Mod: {mode.upper()} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+footer_text = f"JetX Predictor v2.0 | Mod: {mode.upper()}"
+if ADVANCED_FEATURES_AVAILABLE:
+    if st.session_state.use_ensemble:
+        footer_text += f" | Ensemble: {st.session_state.voting_strategy}"
+    if st.session_state.use_dynamic_threshold:
+        footer_text += f" | Dynamic Threshold: {st.session_state.threshold_strategy}"
+footer_text += f" | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+st.caption(footer_text)

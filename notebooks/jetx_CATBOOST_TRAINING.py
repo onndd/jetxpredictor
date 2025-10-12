@@ -71,6 +71,7 @@ os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
+from utils.virtual_bankroll_callback import CatBoostBankrollCallback
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
 
 # =============================================================================
@@ -172,12 +173,24 @@ print(f"  loss_function: MAE")
 print(f"  task_type: GPU (varsa)")
 print(f"  early_stopping_rounds: 100 (20 → 100)\n")
 
+# Virtual Bankroll Callback (Her 10 iteration'da bir sanal kasa)
+virtual_bankroll_reg = CatBoostBankrollCallback(
+    X_test=X_test,
+    y_test=y_reg_test,
+    threshold=1.5,
+    starting_capital=1000.0,
+    bet_amount=10.0,
+    model_type='regressor',
+    interval=10
+)
+
 # Eğitim
 print("🔥 CatBoost Regressor eğitimi başlıyor...")
 regressor.fit(
     X_train, y_reg_train,
     eval_set=(X_test, y_reg_test),
-    verbose=100
+    verbose=100,
+    callbacks=[virtual_bankroll_reg]  # YENİ: Her 10 iteration'da sanal kasa gösterimi
 )
 
 reg_time = time.time() - reg_start
@@ -251,12 +264,24 @@ print(f"  loss_function: Logloss")
 print(f"  auto_class_weights: Balanced (otomatik denge)")
 print(f"  early_stopping_rounds: 100 (20 → 100)\n")
 
+# Virtual Bankroll Callback (Her 10 iteration'da bir sanal kasa)
+virtual_bankroll_cls = CatBoostBankrollCallback(
+    X_test=X_test,
+    y_test=y_reg_test,  # y_reg_test kullan (gerçek değerler için)
+    threshold=1.5,
+    starting_capital=1000.0,
+    bet_amount=10.0,
+    model_type='classifier',
+    interval=10
+)
+
 # Eğitim
 print("🔥 CatBoost Classifier eğitimi başlıyor...")
 classifier.fit(
     X_train, y_cls_train,
     eval_set=(X_test, y_cls_test),
-    verbose=100
+    verbose=100,
+    callbacks=[virtual_bankroll_cls]  # YENİ: Her 10 iteration'da sanal kasa gösterimi
 )
 
 cls_time = time.time() - cls_start
