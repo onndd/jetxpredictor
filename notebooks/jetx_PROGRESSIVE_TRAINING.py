@@ -319,17 +319,61 @@ X_200 = np.log10(X_200 + 1e-8)
 X_500 = np.log10(X_500 + 1e-8)
 X_1000 = np.log10(X_1000 + 1e-8)  # YENİ: 1000'lik pencere normalizasyonu
 
-# Train/Test split - STRATIFIED SAMPLING EKLENDI
-idx = np.arange(len(X_f))
-tr_idx, te_idx = train_test_split(idx, test_size=0.2, shuffle=True, stratify=y_cls, random_state=42)
+# =============================================================================
+# TIME-SERIES SPLIT (KRONOLOJIK) - SHUFFLE YOK!
+# =============================================================================
+print("\n📊 TIME-SERIES SPLIT (Kronolojik Bölme)...")
+print("⚠️  UYARI: Shuffle devre dışı - Zaman serisi yapısı korunuyor!")
 
-X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx], X_1000[tr_idx]
-y_reg_tr, y_cls_tr, y_thr_tr = y_reg[tr_idx], y_cls[tr_idx], y_thr[tr_idx]
+# Test seti: Son 1000 kayıt
+test_size = 1000
+train_end = len(X_f) - test_size
 
-X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te = X_f[te_idx], X_50[te_idx], X_200[te_idx], X_500[te_idx], X_1000[te_idx]
-y_reg_te, y_cls_te, y_thr_te = y_reg[te_idx], y_cls[te_idx], y_thr[te_idx]
+# Train/Test split (kronolojik)
+X_f_train = X_f[:train_end]
+X_50_train = X_50[:train_end]
+X_200_train = X_200[:train_end]
+X_500_train = X_500[:train_end]
+X_1000_train = X_1000[:train_end]
+y_reg_train = y_reg[:train_end]
+y_cls_train = y_cls[:train_end]
+y_thr_train = y_thr[:train_end]
 
-print(f"✅ Train: {len(X_f_tr):,}, Test: {len(X_f_te):,}")
+X_f_te = X_f[train_end:]
+X_50_te = X_50[train_end:]
+X_200_te = X_200[train_end:]
+X_500_te = X_500[train_end:]
+X_1000_te = X_1000[train_end:]
+y_reg_te = y_reg[train_end:]
+y_cls_te = y_cls[train_end:]
+y_thr_te = y_thr[train_end:]
+
+# Validation split (eğitim setinin son %20'si, kronolojik)
+val_size = int(len(X_f_train) * 0.2)
+val_start = len(X_f_train) - val_size
+
+X_f_tr = X_f_train[:val_start]
+X_50_tr = X_50_train[:val_start]
+X_200_tr = X_200_train[:val_start]
+X_500_tr = X_500_train[:val_start]
+X_1000_tr = X_1000_train[:val_start]
+y_reg_tr = y_reg_train[:val_start]
+y_cls_tr = y_cls_train[:val_start]
+y_thr_tr = y_thr_train[:val_start]
+
+X_f_val = X_f_train[val_start:]
+X_50_val = X_50_train[val_start:]
+X_200_val = X_200_train[val_start:]
+X_500_val = X_500_train[val_start:]
+X_1000_val = X_1000_train[val_start:]
+y_reg_val = y_reg_train[val_start:]
+y_cls_val = y_cls_train[val_start:]
+y_thr_val = y_thr_train[val_start:]
+
+print(f"✅ Train: {len(X_f_tr):,}")
+print(f"✅ Validation: {len(X_f_val):,} (eğitim setinin son %20'si)")
+print(f"✅ Test: {len(X_f_te):,} (tüm verinin son {test_size} kaydı)")
+print(f"📊 Toplam: {len(X_f_tr) + len(X_f_val) + len(X_f_te):,}")
 
 # =============================================================================
 # CUSTOM LOSS FUNCTIONS
@@ -862,12 +906,12 @@ if stage1_checkpoint and stage1_checkpoint['stage'] == 1:
     initial_epoch_stage1 = stage1_checkpoint['epoch']
     print(f"   Epoch {initial_epoch_stage1} 'den devam edilecek")
 
-# Class weights - DENGELI BAŞLANGIÇ (lazy learning'i önler)
-w0_stage1 = 1.2  # 1.5 altı için: 1.2x (çok yumuşak başlangıç)
-w1_stage1 = 1.0  # 1.5 üstü baseline
+# Class weights - YÜKSEK BAŞLANGIÇ (lazy learning'i agresif önler)
+w0_stage1 = 15.0  # 1.5 altı için: 15.0x (1.2 → 15.0, 12.5x artış!)
+w1_stage1 = 1.0   # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Dengeli Başlangıç):")
-print(f"  1.5 altı: {w0_stage1:.2f}x (çok yumuşak - lazy learning'i önler)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Yüksek Başlangıç - TIME-SERIES SPLIT):")
+print(f"  1.5 altı: {w0_stage1:.2f}x (agresif - lazy learning'i önler)")
 print(f"  1.5 üstü: {w1_stage1:.2f}x\n")
 
 # AŞAMA 1: Foundation Training - DENGELI LOSS FUNCTIONS (Lazy Learning Önlendi!)
@@ -905,14 +949,18 @@ cb1 = [
 ]
 
 hist1 = model.fit(
-    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],  # X_1000_tr eklendi
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=100,
     batch_size=64,
-    validation_split=0.2,
+    validation_data=(  # ✅ MANUEL VALIDATION (kronolojik!)
+        [X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val],
+        {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}
+    ),
+    shuffle=False,  # ✅ KRITIK: Shuffle devre dışı (TIME-SERIES)!
     callbacks=cb1,
     verbose=1,
-    initial_epoch=initial_epoch_stage1  # Resume desteği
+    initial_epoch=initial_epoch_stage1
 )
 
 # AŞAMA 1 Checkpoint kaydet
@@ -961,12 +1009,12 @@ if stage2_checkpoint and stage2_checkpoint['stage'] == 2:
 else:
     model.load_weights('stage1_best.h5')
 
-# Class weights - ORTA SEVİYE
-w0 = 1.5  # 1.5 altı için: 1.5x (orta seviye baskı)
-w1 = 1.0  # 1.5 üstü baseline
+# Class weights - YÜKSEK SEVİYE
+w0 = 20.0  # 1.5 altı için: 20.0x (1.5 → 20.0, 13.3x artış!)
+w1 = 1.0   # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Orta Seviye):")
-print(f"  1.5 altı: {w0:.2f}x (orta - dengeli öğrenme)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Yüksek Seviye - TIME-SERIES SPLIT):")
+print(f"  1.5 altı: {w0:.2f}x (yüksek - lazy learning önleme)")
 print(f"  1.5 üstü: {w1:.2f}x\n")
 
 # AŞAMA 2: Regression + Threshold - DENGELI LOSS FUNCTIONS
@@ -981,11 +1029,11 @@ model.compile(
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
-# Adaptive Weight Scheduler (YENİ - Lazy Learning Önleme)
+# Adaptive Weight Scheduler (GÜÇLENDIRILDI - Lazy Learning Önleme)
 adaptive_scheduler_2 = AdaptiveWeightScheduler(
-    initial_weight=1.5,
-    min_weight=1.0,
-    max_weight=4.0,
+    initial_weight=20.0,   # 1.5 → 20.0 (13.3x artış!)
+    min_weight=10.0,       # 1.0 → 10.0 (minimum bile yüksek)
+    max_weight=50.0,       # 4.0 → 50.0 (lazy learning için yeterli!)
     target_below_acc=0.70,
     target_above_acc=0.75,
     test_data=([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], y_reg_te),
@@ -1016,14 +1064,18 @@ cb2 = [
 ]
 
 hist2 = model.fit(
-    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],  # X_1000_tr eklendi
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=80,
     batch_size=32,
-    validation_split=0.2,
+    validation_data=(  # ✅ MANUEL VALIDATION (kronolojik!)
+        [X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val],
+        {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}
+    ),
+    shuffle=False,  # ✅ KRITIK: Shuffle devre dışı (TIME-SERIES)!
     callbacks=cb2,
     verbose=1,
-    initial_epoch=initial_epoch_stage2  # Resume desteği
+    initial_epoch=initial_epoch_stage2
 )
 
 # AŞAMA 2 Checkpoint kaydet
@@ -1068,12 +1120,12 @@ if stage3_checkpoint and stage3_checkpoint['stage'] == 3:
 else:
     model.load_weights('stage2_best.h5')
 
-# Class weights - DENGELI FINAL
-w0_final = 2.0  # 1.5 altı için: 2.0x (dengeli final push)
-w1_final = 1.0  # 1.5 üstü baseline
+# Class weights - MAKSIMUM FINAL
+w0_final = 25.0  # 1.5 altı için: 25.0x (2.0 → 25.0, 12.5x artış!)
+w1_final = 1.0   # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Dengeli Final):")
-print(f"  1.5 altı: {w0_final:.2f}x (dengeli final)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Maksimum Final - TIME-SERIES SPLIT):")
+print(f"  1.5 altı: {w0_final:.2f}x (maksimum - final push)")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
 # AŞAMA 3: Tüm output'lar aktif - DENGELI LOSS FUNCTIONS
@@ -1088,11 +1140,11 @@ model.compile(
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
-# Adaptive Weight Scheduler (YENİ - Lazy Learning Önleme)
+# Adaptive Weight Scheduler (GÜÇLENDIRILDI - Lazy Learning Önleme)
 adaptive_scheduler_3 = AdaptiveWeightScheduler(
-    initial_weight=2.0,
-    min_weight=1.0,
-    max_weight=4.0,
+    initial_weight=25.0,   # 2.0 → 25.0 (12.5x artış!)
+    min_weight=15.0,       # 1.0 → 15.0 (minimum bile çok yüksek)
+    max_weight=50.0,       # 4.0 → 50.0 (lazy learning için yeterli!)
     target_below_acc=0.70,
     target_above_acc=0.75,
     test_data=([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], y_reg_te),
@@ -1123,14 +1175,18 @@ cb3 = [
 ]
 
 hist3 = model.fit(
-    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],  # X_1000_tr eklendi
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=80,
     batch_size=16,
-    validation_split=0.2,
+    validation_data=(  # ✅ MANUEL VALIDATION (kronolojik!)
+        [X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val],
+        {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}
+    ),
+    shuffle=False,  # ✅ KRITIK: Shuffle devre dışı (TIME-SERIES)!
     callbacks=cb3,
     verbose=1,
-    initial_epoch=initial_epoch_stage3  # Resume desteği
+    initial_epoch=initial_epoch_stage3
 )
 
 # AŞAMA 3 Checkpoint kaydet

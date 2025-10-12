@@ -130,12 +130,41 @@ print("\n📊 Normalizasyon...")
 scaler = StandardScaler()
 X = scaler.fit_transform(X)
 
-# Train/Test split - STRATIFIED SAMPLING
-X_train, X_test, y_reg_train, y_reg_test, y_cls_train, y_cls_test = train_test_split(
-    X, y_reg, y_cls, test_size=0.2, shuffle=True, stratify=y_cls, random_state=42
-)
+# =============================================================================
+# TIME-SERIES SPLIT (KRONOLOJIK) - SHUFFLE YOK!
+# =============================================================================
+print("\n📊 TIME-SERIES SPLIT (Kronolojik Bölme)...")
+print("⚠️  UYARI: Shuffle devre dışı - Zaman serisi yapısı korunuyor!")
 
-print(f"✅ Train: {len(X_train):,}, Test: {len(X_test):,}")
+# Test seti: Son 1000 kayıt
+test_size = 1000
+train_end = len(X) - test_size
+
+# Train/Test split (kronolojik)
+X_train = X[:train_end]
+X_test = X[train_end:]
+y_reg_train = y_reg[:train_end]
+y_reg_test = y_reg[train_end:]
+y_cls_train = y_cls[:train_end]
+y_cls_test = y_cls[train_end:]
+
+print(f"✅ Train: {len(X_train):,}")
+print(f"✅ Test: {len(X_test):,} (tüm verinin son {test_size} kaydı)")
+print(f"📊 Toplam: {len(X_train) + len(X_test):,}")
+
+# Validation için train setini böl (kronolojik)
+val_size = int(len(X_train) * 0.2)
+val_start = len(X_train) - val_size
+
+X_tr = X_train[:val_start]
+X_val = X_train[val_start:]
+y_reg_tr = y_reg_train[:val_start]
+y_reg_val = y_reg_train[val_start:]
+y_cls_tr = y_cls_train[:val_start]
+y_cls_val = y_cls_train[val_start:]
+
+print(f"   ├─ Actual Train: {len(X_tr):,}")
+print(f"   └─ Validation: {len(X_val):,} (train'in son %20'si)")
 
 # =============================================================================
 # CATBOOST REGRESSOR (Değer Tahmini)
@@ -156,7 +185,7 @@ regressor = CatBoostRegressor(
     subsample=0.8,             # YENİ: Stochastic gradient
     loss_function='MAE',
     eval_metric='MAE',
-    task_type='GPU',  # GPU varsa, yoksa otomatik CPU kullanır
+    task_type='CPU',  # GPU → CPU (callback compatibility için)
     verbose=100,               # 50 → 100 (daha az log)
     random_state=42,
     early_stopping_rounds=100  # 20 → 100 (sabırlı eğitim)
@@ -187,10 +216,10 @@ virtual_bankroll_reg = CatBoostBankrollCallback(
 # Eğitim
 print("🔥 CatBoost Regressor eğitimi başlıyor...")
 regressor.fit(
-    X_train, y_reg_train,
-    eval_set=(X_test, y_reg_test),
-    verbose=100,
-    callbacks=[virtual_bankroll_reg]  # YENİ: Her 10 iteration'da sanal kasa gösterimi
+    X_tr, y_reg_tr,
+    eval_set=(X_val, y_reg_val),  # ✅ KRONOLOJIK VALIDATION!
+    verbose=100
+    # callbacks kaldırıldı - CPU'da bile hata veriyordu
 )
 
 reg_time = time.time() - reg_start
@@ -228,10 +257,10 @@ below_count = (y_cls_train == 0).sum()
 above_count = (y_cls_train == 1).sum()
 
 # CatBoost için class_weights parametresi (native)
-class_weights = {0: 2.0, 1: 1.0}  # 1.5 altına 2x ağırlık
+class_weights = {0: 20.0, 1: 1.0}  # 1.5 altına 20x ağırlık (2.0 → 20.0, 10x artış!)
 
-print(f"📊 CLASS WEIGHTS (CatBoost Native):")
-print(f"  1.5 altı (class 0): {class_weights[0]:.1f}x")
+print(f"📊 CLASS WEIGHTS (CatBoost Native - TIME-SERIES SPLIT):")
+print(f"  1.5 altı (class 0): {class_weights[0]:.1f}x (agresif - lazy learning önleme)")
 print(f"  1.5 üstü (class 1): {class_weights[1]:.1f}x")
 print(f"  Toplam 1.5 altı: {below_count:,} örnek")
 print(f"  Toplam 1.5 üstü: {above_count:,} örnek\n")
@@ -246,7 +275,7 @@ classifier = CatBoostClassifier(
     subsample=0.8,             # YENİ: Stochastic gradient
     loss_function='Logloss',
     eval_metric='Accuracy',
-    task_type='GPU',  # GPU varsa
+    task_type='CPU',  # GPU → CPU (callback compatibility için)
     auto_class_weights='Balanced',  # Otomatik dengeli class weights
     verbose=100,               # 50 → 100 (daha az log)
     random_state=42,
@@ -278,10 +307,10 @@ virtual_bankroll_cls = CatBoostBankrollCallback(
 # Eğitim
 print("🔥 CatBoost Classifier eğitimi başlıyor...")
 classifier.fit(
-    X_train, y_cls_train,
-    eval_set=(X_test, y_cls_test),
-    verbose=100,
-    callbacks=[virtual_bankroll_cls]  # YENİ: Her 10 iteration'da sanal kasa gösterimi
+    X_tr, y_cls_tr,
+    eval_set=(X_val, y_cls_val),  # ✅ KRONOLOJIK VALIDATION!
+    verbose=100
+    # callbacks kaldırıldı - CPU'da bile hata veriyordu
 )
 
 cls_time = time.time() - cls_start
