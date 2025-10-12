@@ -45,23 +45,23 @@ class AdaptiveWeightScheduler(Callback):
         self,
         initial_weight: float = 2.0,
         min_weight: float = 1.0,
-        max_weight: float = 4.0,
+        max_weight: float = 50.0,
         target_below_acc: float = 0.70,
         target_above_acc: float = 0.75,
         test_data: Optional[Tuple] = None,
         threshold: float = 1.5,
-        check_interval: int = 5
+        check_interval: int = 1
     ):
         """
         Args:
             initial_weight: Başlangıç class weight (1.5 altı için)
             min_weight: Minimum weight (1.0 - dengeli)
-            max_weight: Maksimum weight (4.0 - aşırı agresif değil)
+            max_weight: Maksimum weight (50.0 - lazy learning için yeterli güç)
             target_below_acc: Hedef 1.5 altı accuracy (default: 0.70)
             target_above_acc: Hedef 1.5 üstü accuracy (default: 0.75)
             test_data: Test verisi (X_list, y_reg) tuple
             threshold: Class ayırma eşiği (default: 1.5)
-            check_interval: Kaç epoch'ta bir kontrol edilecek (default: 5)
+            check_interval: Kaç epoch'ta bir kontrol edilecek (default: 1 - her epoch)
         """
         super().__init__()
         
@@ -90,7 +90,7 @@ class AdaptiveWeightScheduler(Callback):
     
     def on_epoch_end(self, epoch, logs=None):
         """Her epoch sonunda çağrılır"""
-        # Sadece belirli aralıklarla kontrol et
+        # Her epoch kontrol et (check_interval=1 varsayılan)
         if epoch % self.check_interval != 0:
             return
         
@@ -173,47 +173,71 @@ class AdaptiveWeightScheduler(Callback):
         """
         old_weight = self.current_weight
         
-        # LAZY LEARNING TESPİTİ
+        # LAZY LEARNING TESPİTİ - GÜÇLENDIRILDI (Daha Agresif ve Reaktif)
         
-        # Durum 1: Model sadece "1.5 üstü" tahmin ediyor (lazy learning)
-        if below_acc < 0.20 and above_acc > 0.90:
-            # Ciddi lazy learning - agresif artış
-            self.current_weight *= 1.5
-            reason = "🔴 Ciddi Lazy Learning (×1.5)"
+        # Durum 1: Kritik Lazy Learning - Model neredeyse hiç "1.5 altı" tahmin etmiyor
+        if below_acc < 0.10 and above_acc > 0.95:
+            # Kritik durum - maksimum artış
+            self.current_weight *= 2.5
+            reason = "🔴🔴 Kritik Lazy Learning (×2.5)"
         
-        # Durum 2: Model çoğunlukla "1.5 üstü" tahmin ediyor
+        # Durum 2: Ciddi Lazy Learning - Model sadece "1.5 üstü" tahmin ediyor
+        elif below_acc < 0.20 and above_acc > 0.90:
+            # Ciddi lazy learning - çok agresif artış
+            self.current_weight *= 2.0
+            reason = "🔴 Ciddi Lazy Learning (×2.0)"
+        
+        # Durum 3: Orta Lazy Learning - Model çoğunlukla "1.5 üstü" tahmin ediyor
         elif below_acc < 0.40 and above_acc > 0.80:
-            # Orta lazy learning - orta artış
-            self.current_weight *= 1.3
-            reason = "🟠 Orta Lazy Learning (×1.3)"
+            # Orta lazy learning - agresif artış
+            self.current_weight *= 1.8
+            reason = "🟠 Orta Lazy Learning (×1.8)"
         
-        # Durum 3: Model 1.5 altı için yetersiz
-        elif below_acc < self.target_below_acc - 0.10:
-            # Hedefin çok altında - hafif artış
-            self.current_weight *= 1.15
-            reason = "🟡 Hedefin Altında (×1.15)"
+        # Durum 4: Hafif Lazy Learning - Model 1.5 altı için yetersiz
+        elif below_acc < self.target_below_acc - 0.15:
+            # Hedefin çok altında - orta artış
+            self.current_weight *= 1.5
+            reason = "🟡 Hedefin Çok Altında (×1.5)"
         
-        # Durum 4: Model sadece "1.5 altı" tahmin ediyor (aşırı weight)
+        # Durum 5: Hedefin altında ama yakın
+        elif below_acc < self.target_below_acc - 0.05:
+            # Hedefin biraz altında - hafif artış
+            self.current_weight *= 1.2
+            reason = "🟡 Hedefin Altında (×1.2)"
+        
+        # Durum 6: Kritik Aşırı Weight - Model neredeyse hiç "1.5 üstü" tahmin etmiyor
+        elif below_acc > 0.95 and above_acc < 0.20:
+            # Kritik aşırı weight - maksimum azaltma
+            self.current_weight *= 0.4
+            reason = "🟢🟢 Kritik Aşırı Weight (×0.4)"
+        
+        # Durum 7: Ciddi Aşırı Weight - Model sadece "1.5 altı" tahmin ediyor
         elif below_acc > 0.90 and above_acc < 0.50:
             # Aşırı weight - ciddi azaltma
-            self.current_weight *= 0.6
-            reason = "🟢 Aşırı Weight (×0.6)"
+            self.current_weight *= 0.5
+            reason = "🟢 Ciddi Aşırı Weight (×0.5)"
         
-        # Durum 5: Model çoğunlukla "1.5 altı" tahmin ediyor
+        # Durum 8: Orta Aşırı Weight - Model çoğunlukla "1.5 altı" tahmin ediyor
         elif below_acc > 0.85 and above_acc < 0.60:
             # Weight çok yüksek - orta azaltma
-            self.current_weight *= 0.8
-            reason = "🟢 Weight Yüksek (×0.8)"
+            self.current_weight *= 0.7
+            reason = "🟢 Weight Yüksek (×0.7)"
         
-        # Durum 6: Model dengede, hafif azaltma (genelleşme için)
+        # Durum 9: Model dengede ve hedefte - hafif azaltma (genelleşme için)
         elif abs(below_acc - above_acc) < 0.10 and below_acc >= self.target_below_acc:
             # Dengeli durum - hafif azaltma
             self.current_weight *= 0.95
             reason = "✅ Dengeli - Hafif Azaltma (×0.95)"
         
+        # Durum 10: Model hedefin üstünde - hafif azaltma
+        elif below_acc > self.target_below_acc + 0.10:
+            # Hedefin üstünde - hafif azaltma
+            self.current_weight *= 0.9
+            reason = "✅ Hedefin Üstünde - Azaltma (×0.9)"
+        
         else:
-            # Değişiklik yok
-            reason = "✅ Değişiklik Yok"
+            # Değişiklik yok - kabul edilebilir performans
+            reason = "✅ Değişiklik Yok (Kabul Edilebilir)"
         
         # Weight'i sınırla
         self.current_weight = max(self.min_weight, min(self.current_weight, self.max_weight))

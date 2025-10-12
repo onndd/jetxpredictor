@@ -92,20 +92,36 @@ class VirtualBankrollCallback(callbacks.Callback):
         else:
             wallet_emoji = "❌"
         
-        # Her epoch için kısa rapor
+        # Detaylı rapor
         print(f"\n{'='*80}")
         print(f"💰 {self.stage_name} - Epoch {epoch+1} - SANAL KASA SİMÜLASYONU")
         print(f"{'='*80}")
-        print(f"   🎲 Oyun: {total_bets} el ({total_wins} kazanç, {total_losses} kayıp)")
-        print(f"   📊 Kazanma Oranı: {win_rate:.1f}%")
-        print(f"   💰 Başlangıç: {self.starting_capital:,.0f} TL → Final: {wallet:,.0f} TL")
-        print(f"   📈 Net: {profit_loss:+,.0f} TL | ROI: {roi:+.2f}% {wallet_emoji}")
-        
-        if win_rate >= 66.7:
-            print(f"   ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
+        print(f"   📊 Test Seti: {len(self.y_test):,} örnek (sabit)")
+        print(f"   🎯 Model Tahmini: {total_bets} oyunda '1.5 üstü' dedi")
+        print(f"   🎲 Oynanan: {total_bets} el (Model tahmin ettiği için)")
+        print(f"   ")
+        print(f"   📈 SONUÇLAR:")
+        print(f"      ✅ Kazanan: {total_wins} oyun ({win_rate:.1f}%)")
+        print(f"      ❌ Kaybeden: {total_losses} oyun ({100-win_rate:.1f}%)")
+        print(f"   ")
+        print(f"   💰 KASA DURUMU:")
+        print(f"      Başlangıç: {self.starting_capital:,.0f} TL")
+        print(f"      Final: {wallet:,.0f} TL")
+        print(f"      Net: {profit_loss:+,.0f} TL | ROI: {roi:+.2f}% {wallet_emoji}")
+        print(f"   ")
+        print(f"   🎯 DEĞERLENDİRME:")
+        if total_bets == 0:
+            print(f"      ⚠️ Model hiç '1.5 üstü' tahmin etmedi - Oyun yok!")
+        elif win_rate >= 66.7:
+            print(f"      ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
+            if roi > 0:
+                print(f"      🚀 Kar ediyor! (+{profit_loss:.0f} TL)")
+            else:
+                print(f"      ⚠️ Kazanma yüksek ama toplam oyun az - ROI düşük")
         else:
-            print(f"   ⚠️ Kazanma oranı başabaş noktasının ALTINDA (Hedef: %66.7)")
-        
+            print(f"      ❌ Kazanma oranı başabaş noktasının ALTINDA (Hedef: %66.7)")
+            print(f"      💸 Eksik: %{66.7 - win_rate:.1f} daha kazanma gerekli")
+        print(f"   ")
         print(f"   🏆 En İyi: Epoch {self.best_epoch} (ROI: {self.best_roi:+.2f}%)")
         print(f"{'='*80}\n")
 

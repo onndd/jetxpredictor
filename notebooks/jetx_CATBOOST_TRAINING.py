@@ -175,7 +175,7 @@ print("="*80)
 
 reg_start = time.time()
 
-# CatBoost parametreleri - OPTIMIZE EDİLDİ
+# CatBoost parametreleri - OPTIMIZE EDİLDİ + EARLY STOPPING KALDIRILDI
 regressor = CatBoostRegressor(
     iterations=1500,           # 500 → 1500 (3x artış)
     depth=10,                  # 8 → 10 (daha derin ağaçlar)
@@ -187,8 +187,8 @@ regressor = CatBoostRegressor(
     eval_metric='MAE',
     task_type='CPU',  # GPU → CPU (callback compatibility için)
     verbose=100,               # 50 → 100 (daha az log)
-    random_state=42,
-    early_stopping_rounds=100  # 20 → 100 (sabırlı eğitim)
+    random_state=42
+    # early_stopping_rounds KALDIRILDI - Tüm 1500 iterasyon tamamlanacak
 )
 
 print("📊 Model Parametreleri (Optimize):")
@@ -200,7 +200,7 @@ print(f"  bootstrap_type: Bernoulli (YENİ - subsample için)")
 print(f"  subsample: 0.8 (YENİ)")
 print(f"  loss_function: MAE")
 print(f"  task_type: GPU (varsa)")
-print(f"  early_stopping_rounds: 100 (20 → 100)\n")
+print(f"  early_stopping_rounds: Yok (Tüm 1500 iterasyon tamamlanacak) ✅\n")
 
 # Virtual Bankroll Callback (Her 10 iteration'da bir sanal kasa)
 virtual_bankroll_reg = CatBoostBankrollCallback(
@@ -265,7 +265,7 @@ print(f"  1.5 üstü (class 1): {class_weights[1]:.1f}x")
 print(f"  Toplam 1.5 altı: {below_count:,} örnek")
 print(f"  Toplam 1.5 üstü: {above_count:,} örnek\n")
 
-# CatBoost parametreleri - OPTIMIZE EDİLDİ
+# CatBoost parametreleri - OPTIMIZE EDİLDİ + EARLY STOPPING KALDIRILDI
 classifier = CatBoostClassifier(
     iterations=1500,           # 500 → 1500 (3x artış)
     depth=9,                   # 7 → 9 (daha derin ağaçlar)
@@ -278,8 +278,8 @@ classifier = CatBoostClassifier(
     task_type='CPU',  # GPU → CPU (callback compatibility için)
     auto_class_weights='Balanced',  # Otomatik dengeli class weights
     verbose=100,               # 50 → 100 (daha az log)
-    random_state=42,
-    early_stopping_rounds=100  # 20 → 100 (sabırlı eğitim)
+    random_state=42
+    # early_stopping_rounds KALDIRILDI - Tüm 1500 iterasyon tamamlanacak
 )
 
 print("📊 Model Parametreleri (Optimize):")
@@ -291,7 +291,7 @@ print(f"  bootstrap_type: Bernoulli (YENİ - subsample için)")
 print(f"  subsample: 0.8 (YENİ)")
 print(f"  loss_function: Logloss")
 print(f"  auto_class_weights: Balanced (otomatik denge)")
-print(f"  early_stopping_rounds: 100 (20 → 100)\n")
+print(f"  early_stopping_rounds: Yok (Tüm 1500 iterasyon tamamlanacak) ✅\n")
 
 # Virtual Bankroll Callback (Her 10 iteration'da bir sanal kasa)
 virtual_bankroll_cls = CatBoostBankrollCallback(
@@ -569,7 +569,7 @@ info = {
             'l2_leaf_reg': 5,
             'subsample': 0.8,
             'loss_function': 'MAE',
-            'early_stopping_rounds': 100
+            'early_stopping_rounds': None  # Tüm iterasyonlar tamamlanacak
         },
         'classifier': {
             'iterations': 1500,
@@ -579,7 +579,7 @@ info = {
             'subsample': 0.8,
             'loss_function': 'Logloss',
             'auto_class_weights': 'Balanced',
-            'early_stopping_rounds': 100
+            'early_stopping_rounds': None  # Tüm iterasyonlar tamamlanacak
         }
     },
     'dual_bankroll_performance': {
