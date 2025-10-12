@@ -145,32 +145,37 @@ print("="*80)
 
 reg_start = time.time()
 
-# CatBoost parametreleri
+# CatBoost parametreleri - OPTIMIZE EDİLDİ
 regressor = CatBoostRegressor(
-    iterations=500,
-    depth=8,
-    learning_rate=0.05,
+    iterations=1500,           # 500 → 1500 (3x artış)
+    depth=10,                  # 8 → 10 (daha derin ağaçlar)
+    learning_rate=0.03,        # 0.05 → 0.03 (daha stabil)
+    l2_leaf_reg=5,             # YENİ: Overfitting önleme
+    subsample=0.8,             # YENİ: Stochastic gradient
     loss_function='MAE',
     eval_metric='MAE',
     task_type='GPU',  # GPU varsa, yoksa otomatik CPU kullanır
-    verbose=50,
+    verbose=100,               # 50 → 100 (daha az log)
     random_state=42,
-    early_stopping_rounds=20
+    early_stopping_rounds=100  # 20 → 100 (sabırlı eğitim)
 )
 
-print("📊 Model Parametreleri:")
-print(f"  iterations: 500")
-print(f"  depth: 8")
-print(f"  learning_rate: 0.05")
+print("📊 Model Parametreleri (Optimize):")
+print(f"  iterations: 1500 (500 → 1500)")
+print(f"  depth: 10 (8 → 10)")
+print(f"  learning_rate: 0.03 (0.05 → 0.03)")
+print(f"  l2_leaf_reg: 5 (YENİ)")
+print(f"  subsample: 0.8 (YENİ)")
 print(f"  loss_function: MAE")
-print(f"  task_type: GPU (varsa)\n")
+print(f"  task_type: GPU (varsa)")
+print(f"  early_stopping_rounds: 100 (20 → 100)\n")
 
 # Eğitim
 print("🔥 CatBoost Regressor eğitimi başlıyor...")
 regressor.fit(
     X_train, y_reg_train,
     eval_set=(X_test, y_reg_test),
-    verbose=50
+    verbose=100
 )
 
 reg_time = time.time() - reg_start
@@ -216,33 +221,38 @@ print(f"  1.5 üstü (class 1): {class_weights[1]:.1f}x")
 print(f"  Toplam 1.5 altı: {below_count:,} örnek")
 print(f"  Toplam 1.5 üstü: {above_count:,} örnek\n")
 
-# CatBoost parametreleri
+# CatBoost parametreleri - OPTIMIZE EDİLDİ
 classifier = CatBoostClassifier(
-    iterations=500,
-    depth=7,
-    learning_rate=0.05,
+    iterations=1500,           # 500 → 1500 (3x artış)
+    depth=9,                   # 7 → 9 (daha derin ağaçlar)
+    learning_rate=0.03,        # 0.05 → 0.03 (daha stabil)
+    l2_leaf_reg=5,             # YENİ: Overfitting önleme
+    subsample=0.8,             # YENİ: Stochastic gradient
     loss_function='Logloss',
     eval_metric='Accuracy',
     task_type='GPU',  # GPU varsa
-    class_weights=class_weights,  # Native class weights
-    verbose=50,
+    auto_class_weights='Balanced',  # Otomatik dengeli class weights
+    verbose=100,               # 50 → 100 (daha az log)
     random_state=42,
-    early_stopping_rounds=20
+    early_stopping_rounds=100  # 20 → 100 (sabırlı eğitim)
 )
 
-print("📊 Model Parametreleri:")
-print(f"  iterations: 500")
-print(f"  depth: 7")
-print(f"  learning_rate: 0.05")
+print("📊 Model Parametreleri (Optimize):")
+print(f"  iterations: 1500 (500 → 1500)")
+print(f"  depth: 9 (7 → 9)")
+print(f"  learning_rate: 0.03 (0.05 → 0.03)")
+print(f"  l2_leaf_reg: 5 (YENİ)")
+print(f"  subsample: 0.8 (YENİ)")
 print(f"  loss_function: Logloss")
-print(f"  class_weights: {class_weights}\n")
+print(f"  auto_class_weights: Balanced (otomatik denge)")
+print(f"  early_stopping_rounds: 100 (20 → 100)\n")
 
 # Eğitim
 print("🔥 CatBoost Classifier eğitimi başlıyor...")
 classifier.fit(
     X_train, y_cls_train,
     eval_set=(X_test, y_cls_test),
-    verbose=50
+    verbose=100
 )
 
 cls_time = time.time() - cls_start
@@ -495,17 +505,23 @@ info = {
     },
     'hyperparameters': {
         'regressor': {
-            'iterations': 500,
-            'depth': 8,
-            'learning_rate': 0.05,
-            'loss_function': 'MAE'
+            'iterations': 1500,
+            'depth': 10,
+            'learning_rate': 0.03,
+            'l2_leaf_reg': 5,
+            'subsample': 0.8,
+            'loss_function': 'MAE',
+            'early_stopping_rounds': 100
         },
         'classifier': {
-            'iterations': 500,
-            'depth': 7,
-            'learning_rate': 0.05,
+            'iterations': 1500,
+            'depth': 9,
+            'learning_rate': 0.03,
+            'l2_leaf_reg': 5,
+            'subsample': 0.8,
             'loss_function': 'Logloss',
-            'class_weights': class_weights
+            'auto_class_weights': 'Balanced',
+            'early_stopping_rounds': 100
         }
     },
     'dual_bankroll_performance': {
