@@ -15,6 +15,49 @@ from tensorflow.keras import backend as K
 # YENİ: DENGELI LOSS FUNCTIONS (Lazy Learning Çözümü)
 # =============================================================================
 
+def percentage_aware_regression_loss(y_true, y_pred):
+    """
+    YÜZDE HATAYA DAYALI REGRESSION LOSS
+    
+    Gerçek değerleri (2.7x, 3.09x, 10x, 15.77x vb.) daha doğru tahmin etmek için
+    mutlak hata yerine yüzde hata kullanır.
+    
+    Mantık:
+    - Gerçek: 10x, Tahmin: 5x → %50 hata → Yüksek ceza
+    - Gerçek: 2x, Tahmin: 1.8x → %10 hata → Düşük ceza
+    - Gerçek: 3.09x, Tahmin: 3.12x → %1 hata → Minimal ceza
+    
+    Bu şekilde model tüm değer aralıklarında eşit doğrulukla tahmin yapmaya zorlanır.
+    
+    Args:
+        y_true: Gerçek değerler
+        y_pred: Tahmin edilen değerler
+        
+    Returns:
+        Yüzde hata bazlı loss (Mean Absolute Percentage Error benzeri)
+    """
+    # Sıfıra bölme hatasını önlemek için epsilon ekle
+    epsilon = K.epsilon()
+    
+    # Yüzde hatayı hesapla: |gerçek - tahmin| / gerçek
+    # Örnek: gerçek=10, tahmin=8 → |10-8|/10 = 0.2 = %20 hata
+    percentage_error = K.abs(y_true - y_pred) / (K.abs(y_true) + epsilon)
+    
+    # Ekstra ağırlıklandırma: Yüksek değerler için biraz daha fazla önem
+    # 5x altı: normal
+    # 5x+ değerler: 1.2x ağırlık (hafif artış)
+    high_value_weight = tf.where(
+        y_true >= 5.0,
+        1.2,  # Yüksek değerler için %20 daha fazla önem
+        1.0   # Normal değerler için standart
+    )
+    
+    # Weighted percentage error
+    weighted_percentage_error = percentage_error * high_value_weight
+    
+    return K.mean(weighted_percentage_error)
+
+
 def balanced_threshold_killer_loss(y_true, y_pred):
     """
     DENGELI ve TUTARLI ceza sistemi - Lazy learning'i önler
@@ -188,6 +231,7 @@ def ultra_focal_loss(gamma=2.5, alpha=0.75):
 
 CUSTOM_OBJECTS = {
     # Yeni dengeli fonksiyonlar
+    'percentage_aware_regression_loss': percentage_aware_regression_loss,
     'balanced_threshold_killer_loss': balanced_threshold_killer_loss,
     'balanced_focal_loss': balanced_focal_loss(),
     'create_weighted_binary_crossentropy': create_weighted_binary_crossentropy,

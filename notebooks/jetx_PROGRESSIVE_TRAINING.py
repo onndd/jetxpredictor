@@ -81,7 +81,7 @@ from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.balanced_batch_generator import BalancedBatchGenerator
 from utils.adaptive_weight_scheduler import AdaptiveWeightScheduler
 from utils.advanced_bankroll import AdvancedBankrollManager
-from utils.custom_losses import balanced_threshold_killer_loss, balanced_focal_loss, create_weighted_binary_crossentropy
+from utils.custom_losses import balanced_threshold_killer_loss, balanced_focal_loss, create_weighted_binary_crossentropy, percentage_aware_regression_loss
 from utils.virtual_bankroll_callback import VirtualBankrollCallback
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
 # =============================================================================
@@ -918,11 +918,11 @@ print(f"  1.5 üstü: {w1_stage1:.2f}x\n")
 model.compile(
     optimizer=Adam(0.0001),
     loss={
-        'regression': balanced_threshold_killer_loss,  # YENİ: Dengeli, tutarlı cezalar (5x, 3x, 4x)
+        'regression': percentage_aware_regression_loss,  # YENİ: Yüzde hataya dayalı regression loss
         'classification': 'categorical_crossentropy',
         'threshold': create_weighted_binary_crossentropy(w0_stage1, w1_stage1)  # Weighted BCE korundu
     },
-    loss_weights={'regression': 0.55, 'classification': 0.10, 'threshold': 0.35},  # Regression vurgusu
+    loss_weights={'regression': 0.65, 'classification': 0.10, 'threshold': 0.25},  # Regression ağırlığı artırıldı: 0.55 → 0.65
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy']}
 )
 
@@ -1021,11 +1021,11 @@ print(f"  1.5 üstü: {w1:.2f}x\n")
 model.compile(
     optimizer=Adam(0.0001),
     loss={
-        'regression': balanced_threshold_killer_loss,  # YENİ: Dengeli loss
+        'regression': percentage_aware_regression_loss,  # YENİ: Yüzde hataya dayalı regression loss
         'classification': 'categorical_crossentropy',
         'threshold': create_weighted_binary_crossentropy(w0, w1)  # Weighted BCE korundu
     },
-    loss_weights={'regression': 0.45, 'classification': 0.10, 'threshold': 0.45},
+    loss_weights={'regression': 0.55, 'classification': 0.10, 'threshold': 0.35},  # Regression ağırlığı artırıldı: 0.45 → 0.55
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 
@@ -1132,11 +1132,11 @@ print(f"  1.5 üstü: {w1_final:.2f}x\n")
 model.compile(
     optimizer=Adam(0.00005),
     loss={
-        'regression': balanced_threshold_killer_loss,  # YENİ: Dengeli loss
+        'regression': percentage_aware_regression_loss,  # YENİ: Yüzde hataya dayalı regression loss
         'classification': 'categorical_crossentropy',
         'threshold': balanced_focal_loss()  # YENİ: Dengeli focal loss (gamma=2.0, alpha=0.7)
     },
-    loss_weights={'regression': 0.40, 'classification': 0.15, 'threshold': 0.45},
+    loss_weights={'regression': 0.50, 'classification': 0.15, 'threshold': 0.35},  # Regression ağırlığı artırıldı: 0.40 → 0.50
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
 )
 

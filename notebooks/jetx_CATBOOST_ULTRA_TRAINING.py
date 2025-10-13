@@ -213,7 +213,8 @@ base_reg_params = {
     'loss_function': 'MAE',
     'eval_metric': 'MAE',
     'task_type': 'GPU',  # GPU aktif!
-    'bootstrap_type': 'Bayesian',  # Bernoulli → Bayesian
+    'bootstrap_type': 'Bernoulli',  # Bayesian → Bernoulli (subsample ile uyumlu)
+    'subsample': 0.8,  # YENİ - Bernoulli ile uyumlu
     'verbose': 100
 }
 
@@ -227,7 +228,8 @@ print(f"  random_strength: 1.5 (YENİ)")
 print(f"  border_count: 254 (maksimum)")
 print(f"  leaf_estimation_iterations: 10 (YENİ)")
 print(f"  task_type: GPU (AKTIF!)")
-print(f"  bootstrap_type: Bayesian (YENİ)")
+print(f"  bootstrap_type: Bernoulli (subsample ile uyumlu)")
+print(f"  subsample: 0.8 (YENİ)")
 print()
 
 # Ensemble oluştur
@@ -294,7 +296,8 @@ base_cls_params = {
     'loss_function': 'Logloss',
     'eval_metric': 'Accuracy',
     'task_type': 'GPU',
-    'bootstrap_type': 'Bayesian',
+    'bootstrap_type': 'Bernoulli',  # Bayesian → Bernoulli (subsample ile uyumlu)
+    'subsample': 0.8,  # YENİ - Bernoulli ile uyumlu
     'auto_class_weights': 'Balanced',
     'verbose': 100
 }
@@ -302,6 +305,8 @@ base_cls_params = {
 print("📊 ULTRA AGGRESSIVE Parametreler:")
 print(f"  iterations: 10,000 (classifier için)")
 print(f"  depth: 12 (9 → 12)")
+print(f"  bootstrap_type: Bernoulli (subsample ile uyumlu)")
+print(f"  subsample: 0.8 (YENİ)")
 print(f"  auto_class_weights: Balanced")
 print()
 
@@ -639,7 +644,7 @@ shutil.make_archive(zip_filename, 'zip', 'models')
 print(f"✅ ZIP dosyası oluşturuldu: {zip_filename}.zip")
 print(f"📦 Boyut: {os.path.getsize(f'{zip_filename}.zip') / (1024*1024):.2f} MB")
 
-# Google Colab'da indir
+# Google Colab'da indir ve Google Drive'a yedekle
 try:
     import google.colab
     IN_COLAB = True
@@ -647,13 +652,45 @@ except ImportError:
     IN_COLAB = False
 
 if IN_COLAB:
+    # Google Drive'a otomatik yedekleme
+    try:
+        from google.colab import drive
+        import os.path
+        
+        # Drive mount edilmiş mi kontrol et
+        if not os.path.exists('/content/drive'):
+            print("\n📦 Google Drive bağlanıyor...")
+            drive.mount('/content/drive')
+        
+        # Yedekleme dizini oluştur
+        backup_dir = '/content/drive/MyDrive/JetX_Models_Backup'
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # ZIP'i kopyala
+        import shutil
+        backup_path = f'{backup_dir}/{zip_filename}.zip'
+        shutil.copy(f'{zip_filename}.zip', backup_path)
+        print(f"✅ Google Drive'a yedeklendi: {backup_path}")
+        print(f"📁 Drive klasörü: MyDrive/JetX_Models_Backup/")
+    except Exception as e:
+        print(f"⚠️ Google Drive yedekleme hatası: {e}")
+    
+    # Manuel indirme
     try:
         from google.colab import files
+        print(f"\n📥 {zip_filename}.zip tarayıcınıza indiriliyor...")
         files.download(f'{zip_filename}.zip')
-        print(f"✅ {zip_filename}.zip indiriliyor...")
+        print(f"✅ İndirme başlatıldı!")
     except Exception as e:
-        print(f"⚠️ İndirme hatası: {e}")
-        print(f"📁 Manuel indirme gerekli: {zip_filename}.zip")
+        print(f"\n⚠️ Otomatik indirme hatası: {e}")
+        print(f"\n{'='*80}")
+        print("📥 MANUEL İNDİRME TALİMATLARI")
+        print("="*80)
+        print("1. Sol panelden 'Files' (📁) ikonuna tıklayın")
+        print(f"2. '{zip_filename}.zip' dosyasını bulun")
+        print("3. Dosyaya sağ tıklayıp 'Download' seçin")
+        print(f"4. İndirilen ZIP'i lokal projenizin models/ klasörüne çıkartın")
+        print("="*80)
 else:
     print("\n⚠️ Google Colab ortamı değil - dosyalar kaydedildi")
     print(f"📁 ZIP: {zip_filename}.zip")

@@ -162,7 +162,7 @@ class AdaptiveWeightScheduler(Callback):
     
     def _adjust_weight(self, below_acc: float, above_acc: float) -> str:
         """
-        Accuracy'lere göre weight'i ayarla
+        Accuracy'lere göre weight'i ayarla (YUMUŞAK GEÇİŞLER)
         
         Args:
             below_acc: 1.5 altı accuracy
@@ -173,71 +173,72 @@ class AdaptiveWeightScheduler(Callback):
         """
         old_weight = self.current_weight
         
-        # LAZY LEARNING TESPİTİ - GÜÇLENDIRILDI (Daha Agresif ve Reaktif)
+        # LAZY LEARNING TESPİTİ - YUMUŞAK GEÇİŞLER (Kademeli Öğrenme)
+        # Çarpma yerine toplama/çıkarma kullanıyoruz (örn: +0.10, +0.15, -0.10)
         
         # Durum 1: Kritik Lazy Learning - Model neredeyse hiç "1.5 altı" tahmin etmiyor
         if below_acc < 0.10 and above_acc > 0.95:
-            # Kritik durum - maksimum artış
-            self.current_weight *= 2.5
-            reason = "🔴🔴 Kritik Lazy Learning (×2.5)"
+            # Kritik durum - maksimum artış ama yumuşak
+            self.current_weight += 0.25
+            reason = "🔴🔴 Kritik Lazy Learning (+0.25)"
         
         # Durum 2: Ciddi Lazy Learning - Model sadece "1.5 üstü" tahmin ediyor
         elif below_acc < 0.20 and above_acc > 0.90:
-            # Ciddi lazy learning - çok agresif artış
-            self.current_weight *= 2.0
-            reason = "🔴 Ciddi Lazy Learning (×2.0)"
+            # Ciddi lazy learning - güçlü artış
+            self.current_weight += 0.20
+            reason = "🔴 Ciddi Lazy Learning (+0.20)"
         
         # Durum 3: Orta Lazy Learning - Model çoğunlukla "1.5 üstü" tahmin ediyor
         elif below_acc < 0.40 and above_acc > 0.80:
-            # Orta lazy learning - agresif artış
-            self.current_weight *= 1.8
-            reason = "🟠 Orta Lazy Learning (×1.8)"
+            # Orta lazy learning - orta artış
+            self.current_weight += 0.15
+            reason = "🟠 Orta Lazy Learning (+0.15)"
         
         # Durum 4: Hafif Lazy Learning - Model 1.5 altı için yetersiz
         elif below_acc < self.target_below_acc - 0.15:
-            # Hedefin çok altında - orta artış
-            self.current_weight *= 1.5
-            reason = "🟡 Hedefin Çok Altında (×1.5)"
+            # Hedefin çok altında - standart artış
+            self.current_weight += 0.10
+            reason = "🟡 Hedefin Çok Altında (+0.10)"
         
         # Durum 5: Hedefin altında ama yakın
         elif below_acc < self.target_below_acc - 0.05:
-            # Hedefin biraz altında - hafif artış
-            self.current_weight *= 1.2
-            reason = "🟡 Hedefin Altında (×1.2)"
+            # Hedefin biraz altında - minimal artış
+            self.current_weight += 0.05
+            reason = "🟡 Hedefin Altında (+0.05)"
         
         # Durum 6: Kritik Aşırı Weight - Model neredeyse hiç "1.5 üstü" tahmin etmiyor
         elif below_acc > 0.95 and above_acc < 0.20:
             # Kritik aşırı weight - maksimum azaltma
-            self.current_weight *= 0.4
-            reason = "🟢🟢 Kritik Aşırı Weight (×0.4)"
+            self.current_weight -= 0.25
+            reason = "🟢🟢 Kritik Aşırı Weight (-0.25)"
         
         # Durum 7: Ciddi Aşırı Weight - Model sadece "1.5 altı" tahmin ediyor
         elif below_acc > 0.90 and above_acc < 0.50:
-            # Aşırı weight - ciddi azaltma
-            self.current_weight *= 0.5
-            reason = "🟢 Ciddi Aşırı Weight (×0.5)"
+            # Aşırı weight - güçlü azaltma
+            self.current_weight -= 0.20
+            reason = "🟢 Ciddi Aşırı Weight (-0.20)"
         
         # Durum 8: Orta Aşırı Weight - Model çoğunlukla "1.5 altı" tahmin ediyor
         elif below_acc > 0.85 and above_acc < 0.60:
             # Weight çok yüksek - orta azaltma
-            self.current_weight *= 0.7
-            reason = "🟢 Weight Yüksek (×0.7)"
+            self.current_weight -= 0.15
+            reason = "🟢 Weight Yüksek (-0.15)"
         
-        # Durum 9: Model dengede ve hedefte - hafif azaltma (genelleşme için)
+        # Durum 9: Model dengede ve hedefte - minimal azaltma (overfitting önleme)
         elif abs(below_acc - above_acc) < 0.10 and below_acc >= self.target_below_acc:
-            # Dengeli durum - hafif azaltma
-            self.current_weight *= 0.95
-            reason = "✅ Dengeli - Hafif Azaltma (×0.95)"
+            # Dengeli durum - çok hafif azaltma
+            self.current_weight -= 0.05
+            reason = "✅ Dengeli - Minimal Azaltma (-0.05)"
         
         # Durum 10: Model hedefin üstünde - hafif azaltma
         elif below_acc > self.target_below_acc + 0.10:
             # Hedefin üstünde - hafif azaltma
-            self.current_weight *= 0.9
-            reason = "✅ Hedefin Üstünde - Azaltma (×0.9)"
+            self.current_weight -= 0.10
+            reason = "✅ Hedefin Üstünde - Azaltma (-0.10)"
         
         else:
             # Değişiklik yok - kabul edilebilir performans
-            reason = "✅ Değişiklik Yok (Kabul Edilebilir)"
+            reason = "✅ Değişiklik Yok (Dengeli)"
         
         # Weight'i sınırla
         self.current_weight = max(self.min_weight, min(self.current_weight, self.max_weight))

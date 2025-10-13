@@ -12,11 +12,13 @@ from tensorflow.keras import callbacks
 class VirtualBankrollCallback(callbacks.Callback):
     """
     TensorFlow/Keras için Virtual Bankroll Callback
-    Her epoch sonunda sanal kasa simülasyonu gösterir
+    Her epoch sonunda 2 sanal kasa simülasyonu gösterir:
+    - Kasa 1: 1.5x eşik sistemi
+    - Kasa 2: %70 çıkış sistemi (yüksek tahminler için)
     """
     
     def __init__(self, stage_name, X_test, y_test, threshold=1.5, 
-                 starting_capital=1000.0, bet_amount=10.0):
+                 starting_capital=1000.0, bet_amount=10.0, exit_multiplier=0.70):
         """
         Args:
             stage_name: Aşama adı (örn: "AŞAMA 1")
@@ -25,6 +27,7 @@ class VirtualBankrollCallback(callbacks.Callback):
             threshold: Eşik değeri (varsayılan: 1.5)
             starting_capital: Başlangıç sermayesi
             bet_amount: Bahis tutarı
+            exit_multiplier: Kasa 2 için çıkış çarpanı (varsayılan: 0.70)
         """
         super().__init__()
         self.stage_name = stage_name
@@ -34,13 +37,23 @@ class VirtualBankrollCallback(callbacks.Callback):
         self.starting_capital = starting_capital
         self.bet_amount = bet_amount
         self.win_amount = threshold * bet_amount
-        self.best_roi = -float('inf')
-        self.best_epoch = 0
+        self.exit_multiplier = exit_multiplier
+        
+        # Kasa 1 için tracking
+        self.best_roi_kasa1 = -float('inf')
+        self.best_epoch_kasa1 = 0
+        
+        # Kasa 2 için tracking
+        self.best_roi_kasa2 = -float('inf')
+        self.best_epoch_kasa2 = 0
         
     def on_epoch_end(self, epoch, logs=None):
-        """Her epoch sonunda çağrılır"""
+        """Her epoch sonunda çağrılır - 2 kasa simülasyonu yapar"""
         # Model tahminlerini al
         predictions = self.model.predict(self.X_test, verbose=0)
+        
+        # Regression output (birinci output)
+        p_reg = predictions[0].flatten() if len(predictions) > 0 else None
         
         # Threshold output'u al (üçüncü output)
         p_thr = predictions[2].flatten() if len(predictions) > 2 else predictions[0].flatten()
@@ -49,11 +62,13 @@ class VirtualBankrollCallback(callbacks.Callback):
         p_thr_binary = (p_thr >= 0.5).astype(int)
         t_thr = (self.y_test >= self.threshold).astype(int)
         
-        # Sanal kasa simülasyonu
-        wallet = self.starting_capital
-        total_bets = 0
-        total_wins = 0
-        total_losses = 0
+        # ========================================================================
+        # KASA 1: 1.5x EŞİK SİSTEMİ
+        # ========================================================================
+        wallet1 = self.starting_capital
+        total_bets1 = 0
+        total_wins1 = 0
+        total_losses1 = 0
         
         for i in range(len(p_thr_binary)):
             model_pred = p_thr_binary[i]
@@ -61,68 +76,146 @@ class VirtualBankrollCallback(callbacks.Callback):
             
             # Model "1.5 üstü" diyorsa bahse gir
             if model_pred == 1:
-                wallet -= self.bet_amount
-                total_bets += 1
+                wallet1 -= self.bet_amount
+                total_bets1 += 1
                 
                 if actual_value >= self.threshold:
                     # Kazandık!
-                    wallet += self.win_amount
-                    total_wins += 1
+                    wallet1 += self.win_amount
+                    total_wins1 += 1
                 else:
                     # Kaybettik
-                    total_losses += 1
+                    total_losses1 += 1
         
-        # Sonuçları hesapla
-        profit_loss = wallet - self.starting_capital
-        roi = (profit_loss / self.starting_capital) * 100 if total_bets > 0 else 0
-        win_rate = (total_wins / total_bets * 100) if total_bets > 0 else 0
+        # Kasa 1 sonuçları
+        profit_loss1 = wallet1 - self.starting_capital
+        roi1 = (profit_loss1 / self.starting_capital) * 100 if total_bets1 > 0 else 0
+        win_rate1 = (total_wins1 / total_bets1 * 100) if total_bets1 > 0 else 0
         
         # En iyi ROI'yi takip et
-        if roi > self.best_roi:
-            self.best_roi = roi
-            self.best_epoch = epoch + 1
+        if roi1 > self.best_roi_kasa1:
+            self.best_roi_kasa1 = roi1
+            self.best_epoch_kasa1 = epoch + 1
         
         # Emoji seçimi
-        if profit_loss > 100:
-            wallet_emoji = "🚀"
-        elif profit_loss > 0:
-            wallet_emoji = "✅"
-        elif profit_loss > -100:
-            wallet_emoji = "⚠️"
+        if profit_loss1 > 100:
+            wallet_emoji1 = "🚀"
+        elif profit_loss1 > 0:
+            wallet_emoji1 = "✅"
+        elif profit_loss1 > -100:
+            wallet_emoji1 = "⚠️"
         else:
-            wallet_emoji = "❌"
+            wallet_emoji1 = "❌"
         
-        # Detaylı rapor
+        # ========================================================================
+        # KASA 2: %70 ÇIKIŞ SİSTEMİ
+        # ========================================================================
+        wallet2 = self.starting_capital
+        total_bets2 = 0
+        total_wins2 = 0
+        total_losses2 = 0
+        exit_points = []
+        
+        if p_reg is not None:
+            for i in range(len(p_reg)):
+                model_pred_value = p_reg[i]
+                actual_value = self.y_test[i]
+                
+                # Model 2.0+ tahmin ediyorsa bahse gir
+                if model_pred_value >= 2.0:
+                    wallet2 -= self.bet_amount
+                    total_bets2 += 1
+                    
+                    # Çıkış noktası: tahmin × 0.70
+                    exit_point = model_pred_value * self.exit_multiplier
+                    exit_points.append(exit_point)
+                    
+                    if actual_value >= exit_point:
+                        # Kazandık!
+                        wallet2 += exit_point * self.bet_amount
+                        total_wins2 += 1
+                    else:
+                        # Kaybettik
+                        total_losses2 += 1
+        
+        # Kasa 2 sonuçları
+        profit_loss2 = wallet2 - self.starting_capital
+        roi2 = (profit_loss2 / self.starting_capital) * 100 if total_bets2 > 0 else 0
+        win_rate2 = (total_wins2 / total_bets2 * 100) if total_bets2 > 0 else 0
+        avg_exit = np.mean(exit_points) if exit_points else 0
+        
+        # En iyi ROI'yi takip et
+        if roi2 > self.best_roi_kasa2:
+            self.best_roi_kasa2 = roi2
+            self.best_epoch_kasa2 = epoch + 1
+        
+        # Emoji seçimi
+        if profit_loss2 > 100:
+            wallet_emoji2 = "🚀"
+        elif profit_loss2 > 0:
+            wallet_emoji2 = "✅"
+        elif profit_loss2 > -100:
+            wallet_emoji2 = "⚠️"
+        else:
+            wallet_emoji2 = "❌"
+        
+        # ========================================================================
+        # DETAYLI RAPOR - KASA 1
+        # ========================================================================
         print(f"\n{'='*80}")
-        print(f"💰 {self.stage_name} - Epoch {epoch+1} - SANAL KASA SİMÜLASYONU")
+        print(f"💰 {self.stage_name} - Epoch {epoch+1} - KASA 1 (1.5x EŞİK)")
         print(f"{'='*80}")
-        print(f"   📊 Test Seti: {len(self.y_test):,} örnek (sabit)")
-        print(f"   🎯 Model Tahmini: {total_bets} oyunda '1.5 üstü' dedi")
-        print(f"   🎲 Oynanan: {total_bets} el (Model tahmin ettiği için)")
+        print(f"   📊 Test Seti: {len(self.y_test):,} örnek")
+        print(f"   🎯 Model Tahmini: {total_bets1} oyunda '1.5 üstü' dedi")
         print(f"   ")
         print(f"   📈 SONUÇLAR:")
-        print(f"      ✅ Kazanan: {total_wins} oyun ({win_rate:.1f}%)")
-        print(f"      ❌ Kaybeden: {total_losses} oyun ({100-win_rate:.1f}%)")
+        print(f"      ✅ Kazanan: {total_wins1} oyun ({win_rate1:.1f}%)")
+        print(f"      ❌ Kaybeden: {total_losses1} oyun")
         print(f"   ")
         print(f"   💰 KASA DURUMU:")
         print(f"      Başlangıç: {self.starting_capital:,.0f} TL")
-        print(f"      Final: {wallet:,.0f} TL")
-        print(f"      Net: {profit_loss:+,.0f} TL | ROI: {roi:+.2f}% {wallet_emoji}")
+        print(f"      Final: {wallet1:,.0f} TL")
+        print(f"      Net: {profit_loss1:+,.0f} TL | ROI: {roi1:+.2f}% {wallet_emoji1}")
         print(f"   ")
         print(f"   🎯 DEĞERLENDİRME:")
-        if total_bets == 0:
-            print(f"      ⚠️ Model hiç '1.5 üstü' tahmin etmedi - Oyun yok!")
-        elif win_rate >= 66.7:
+        if total_bets1 == 0:
+            print(f"      ⚠️ Model hiç '1.5 üstü' tahmin etmedi!")
+        elif win_rate1 >= 66.7:
             print(f"      ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
-            if roi > 0:
-                print(f"      🚀 Kar ediyor! (+{profit_loss:.0f} TL)")
-            else:
-                print(f"      ⚠️ Kazanma yüksek ama toplam oyun az - ROI düşük")
         else:
             print(f"      ❌ Kazanma oranı başabaş noktasının ALTINDA (Hedef: %66.7)")
-            print(f"      💸 Eksik: %{66.7 - win_rate:.1f} daha kazanma gerekli")
         print(f"   ")
-        print(f"   🏆 En İyi: Epoch {self.best_epoch} (ROI: {self.best_roi:+.2f}%)")
+        print(f"   🏆 En İyi: Epoch {self.best_epoch_kasa1} (ROI: {self.best_roi_kasa1:+.2f}%)")
+        print(f"{'='*80}\n")
+        
+        # ========================================================================
+        # DETAYLI RAPOR - KASA 2
+        # ========================================================================
+        print(f"{'='*80}")
+        print(f"💰 {self.stage_name} - Epoch {epoch+1} - KASA 2 (%{int(self.exit_multiplier*100)} ÇIKIŞ)")
+        print(f"{'='*80}")
+        print(f"   📊 Test Seti: {len(self.y_test):,} örnek")
+        print(f"   🎯 Model Tahmini: {total_bets2} oyunda '2.0+ değer' dedi")
+        print(f"   ")
+        print(f"   📈 SONUÇLAR:")
+        print(f"      ✅ Kazanan: {total_wins2} oyun ({win_rate2:.1f}%)")
+        print(f"      ❌ Kaybeden: {total_losses2} oyun")
+        print(f"      📊 Ortalama Çıkış: {avg_exit:.2f}x")
+        print(f"   ")
+        print(f"   💰 KASA DURUMU:")
+        print(f"      Başlangıç: {self.starting_capital:,.0f} TL")
+        print(f"      Final: {wallet2:,.0f} TL")
+        print(f"      Net: {profit_loss2:+,.0f} TL | ROI: {roi2:+.2f}% {wallet_emoji2}")
+        print(f"   ")
+        print(f"   🎯 DEĞERLENDİRME:")
+        if total_bets2 == 0:
+            print(f"      ⚠️ Model hiç '2.0+' tahmin etmedi!")
+        elif win_rate2 >= 66.7:
+            print(f"      ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
+        else:
+            print(f"      ❌ Kazanma oranı başabaş noktasının ALTINDA (Hedef: %66.7)")
+        print(f"   ")
+        print(f"   🏆 En İyi: Epoch {self.best_epoch_kasa2} (ROI: {self.best_roi_kasa2:+.2f}%)")
         print(f"{'='*80}\n")
 
 
