@@ -154,42 +154,9 @@ y_cls_val = y_cls_train[val_start:]
 
 print(f"   ├─ Actual Train: {len(X_tr):,}")
 print(f"   └─ Validation: {len(X_val):,}")
-
-# =============================================================================
-# DATA AUGMENTATION (Opsiyonel - 1.5 altı için)
-# =============================================================================
-print("\n🔧 DATA AUGMENTATION...")
-print("📌 1.5 altı sınıfı için synthetic oversampling")
-
-# 1.5 altı örnekleri bul
-below_mask = y_cls_tr == 0
-X_below = X_tr[below_mask]
-y_reg_below = y_reg_tr[below_mask]
-y_cls_below = y_cls_tr[below_mask]
-
-# Gaussian noise ile augmentation
-augmentation_factor = 2  # Her örneği 2 kez çoğalt
-augmented_X = []
-augmented_y_reg = []
-augmented_y_cls = []
-
-for i in range(len(X_below)):
-    for _ in range(augmentation_factor):
-        # Gaussian noise ekle (%5 std)
-        noise = np.random.normal(0, 0.05, X_below[i].shape)
-        augmented_sample = X_below[i] + noise
-        augmented_X.append(augmented_sample)
-        augmented_y_reg.append(y_reg_below[i])
-        augmented_y_cls.append(y_cls_below[i])
-
-# Augmented verileri ekle
-if len(augmented_X) > 0:
-    X_tr = np.vstack([X_tr, np.array(augmented_X)])
-    y_reg_tr = np.concatenate([y_reg_tr, np.array(augmented_y_reg)])
-    y_cls_tr = np.concatenate([y_cls_tr, np.array(augmented_y_cls)])
-    
-    print(f"✅ {len(augmented_X):,} augmented örnek eklendi")
-    print(f"✅ Yeni train boyutu: {len(X_tr):,}")
+print()
+print("⚠️  DATA AUGMENTATION: DEVRE DIŞI (Veri bütünlüğü korunuyor)")
+print("⚠️  VERİ SIRASI: KORUNDU (shuffle=False)")
 
 # =============================================================================
 # REGRESSOR ENSEMBLE (10 MODEL)
@@ -206,14 +173,13 @@ base_reg_params = {
     'depth': 14,  # 10 → 14 (daha derin)
     'learning_rate': 0.05,  # 0.03 → 0.05
     'l2_leaf_reg': 3,  # 5 → 3 (daha az regularization)
-    'bagging_temperature': 1.0,  # YENİ
     'random_strength': 1.5,  # YENİ
     'border_count': 254,  # Maksimum feature splits
     'leaf_estimation_iterations': 10,  # YENİ
     'loss_function': 'MAE',
     'eval_metric': 'MAE',
     'task_type': 'GPU',  # GPU aktif!
-    'bootstrap_type': 'Bernoulli',  # Bayesian → Bernoulli (subsample ile uyumlu)
+    'bootstrap_type': 'Bernoulli',  # Bernoulli (subsample ile uyumlu)
     'subsample': 0.8,  # YENİ - Bernoulli ile uyumlu
     'verbose': 100
 }
@@ -223,13 +189,13 @@ print(f"  iterations: 10,000 (1,500 → 10,000, 6.5x artış!)")
 print(f"  depth: 14 (10 → 14)")
 print(f"  learning_rate: 0.05 (0.03 → 0.05)")
 print(f"  l2_leaf_reg: 3 (5 → 3, daha az regularization)")
-print(f"  bagging_temperature: 1.0 (YENİ)")
 print(f"  random_strength: 1.5 (YENİ)")
 print(f"  border_count: 254 (maksimum)")
 print(f"  leaf_estimation_iterations: 10 (YENİ)")
 print(f"  task_type: GPU (AKTIF!)")
 print(f"  bootstrap_type: Bernoulli (subsample ile uyumlu)")
 print(f"  subsample: 0.8 (YENİ)")
+print(f"  ⚠️  bagging_temperature: KALDIRILDI (Bernoulli ile uyumsuz)")
 print()
 
 # Ensemble oluştur
@@ -289,14 +255,13 @@ base_cls_params = {
     'depth': 12,  # 9 → 12
     'learning_rate': 0.05,
     'l2_leaf_reg': 3,
-    'bagging_temperature': 1.0,
     'random_strength': 1.5,
     'border_count': 254,
     'leaf_estimation_iterations': 10,
     'loss_function': 'Logloss',
     'eval_metric': 'Accuracy',
     'task_type': 'GPU',
-    'bootstrap_type': 'Bernoulli',  # Bayesian → Bernoulli (subsample ile uyumlu)
+    'bootstrap_type': 'Bernoulli',  # Bernoulli (subsample ile uyumlu)
     'subsample': 0.8,  # YENİ - Bernoulli ile uyumlu
     'auto_class_weights': 'Balanced',
     'verbose': 100
