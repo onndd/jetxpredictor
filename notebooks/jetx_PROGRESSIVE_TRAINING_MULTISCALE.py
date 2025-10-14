@@ -108,8 +108,8 @@ print(f"  Dengesizlik: 1:{above/below:.2f}")
 print("\n📊 TIME-SERIES SPLIT (Kronolojik)...")
 train_data, val_data, test_data = split_data_preserving_order(
     all_values,
-    train_ratio=0.8,
-    val_ratio=0.1
+    train_ratio=0.70,
+    val_ratio=0.15
 )
 
 # =============================================================================
@@ -282,6 +282,84 @@ def build_model_for_window(window_size, n_features):
     return model
 
 # =============================================================================
+# WEIGHTED MODEL CHECKPOINT CALLBACK
+# =============================================================================
+class WeightedModelCheckpoint(callbacks.Callback):
+    """
+    Weighted model selection based on:
+    - 50% Below 15 accuracy
+    - 40% Above 15 accuracy  
+    - 10% ROI (normalized)
+    """
+    def __init__(self, filepath, X_val, y_val):
+        super().__init__()
+        self.filepath = filepath
+        self.X_val = X_val
+        self.y_val = y_val
+        self.best_score = -1
+    
+    def normalize_roi(self, roi):
+        """Kademeli lineer normalizasyon (Seçenek 2)"""
+        if roi < 0:
+            # Negatif ROI: 0-40 arası
+            return max(0, (roi + 100) / 100 * 40)
+        else:
+            # Pozitif ROI: 40-100 arası
+            return min(100, 40 + (roi / 200 * 60))
+    
+    def simulate_bankroll(self, predictions, actuals):
+        """1.5x eşikte sanal kasa simülasyonu"""
+        initial = 10000
+        wallet = initial
+        for pred, actual in zip(predictions, actuals):
+            if pred >= 0.5:  # Model 1.5 üstü dedi
+                wallet -= 10
+                if actual >= 1.5:
+                    wallet += 15
+        roi = ((wallet - initial) / initial) * 100
+        return roi
+    
+    def on_epoch_end(self, epoch, logs=None):
+        # Tahminler yap (threshold output kullan)
+        preds = self.model.predict(self.X_val, verbose=0)
+        threshold_preds = preds[2].flatten()  # threshold output (sigmoid)
+        
+        # Below/Above accuracy hesapla
+        below_mask = self.y_val < 1.5
+        above_mask = self.y_val >= 1.5
+        
+        below_correct = 0
+        below_total = 0
+        for pred, actual in zip(threshold_preds[below_mask], self.y_val[below_mask]):
+            below_total += 1
+            if pred < 0.5 and actual < 1.5:  # Doğru tahmin (1.5 altı)
+                below_correct += 1
+        
+        above_correct = 0
+        above_total = 0
+        for pred, actual in zip(threshold_preds[above_mask], self.y_val[above_mask]):
+            above_total += 1
+            if pred >= 0.5 and actual >= 1.5:  # Doğru tahmin (1.5 üstü)
+                above_correct += 1
+        
+        below_acc = (below_correct / below_total * 100) if below_total > 0 else 0
+        above_acc = (above_correct / above_total * 100) if above_total > 0 else 0
+        
+        # ROI hesapla
+        roi = self.simulate_bankroll(threshold_preds, self.y_val)
+        normalized_roi = self.normalize_roi(roi)
+        
+        # Weighted score
+        weighted_score = (0.5 * below_acc) + (0.4 * above_acc) + (0.1 * normalized_roi)
+        
+        # En iyi modeli kaydet
+        if weighted_score > self.best_score:
+            self.best_score = weighted_score
+            self.model.save(self.filepath)
+            print(f"\n✨ Yeni en iyi model! Weighted Score: {weighted_score:.2f}")
+            print(f"   Below 15: {below_acc:.1f}% | Above 15: {above_acc:.1f}% | ROI: {roi:+.1f}% (Normalized: {normalized_roi:.1f})")
+
+# =============================================================================
 # HER PENCERE İÇİN MODEL EĞİTİMİ
 # =============================================================================
 print("\n" + "="*80)
@@ -289,6 +367,10 @@ print("🔥 MULTI-SCALE MODEL EĞİTİMİ BAŞLIYOR")
 print("="*80)
 print(f"Window boyutları: {window_sizes}")
 print(f"Her window için ayrı model eğitilecek")
+print(f"📊 Model Seçim Kriteri: Weighted Score")
+print(f"   - 50% Below 15 Accuracy")
+print(f"   - 40% Above 15 Accuracy")
+print(f"   - 10% ROI (Normalized)")
 print("="*80 + "\n")
 
 trained_models = {}
@@ -352,20 +434,21 @@ for window_size in window_sizes:
     checkpoint_path = f'models/progressive_window_{window_size}_best.h5'
     os.makedirs('models', exist_ok=True)
     
+    # Weighted model checkpoint - 50% Below 15, 40% Above 15, 10% ROI
+    weighted_checkpoint = WeightedModelCheckpoint(
+        filepath=checkpoint_path,
+        X_val=[X_f_val, X_seq_val],
+        y_val=y_reg_val
+    )
+    
     cbs = [
-        callbacks.ModelCheckpoint(
-            checkpoint_path,
-            monitor='val_threshold_accuracy',
-            save_best_only=True,
-            mode='max',
-            verbose=1
-        ),
+        weighted_checkpoint,  # Weighted model selection
         callbacks.EarlyStopping(
-            monitor='val_threshold_accuracy',
-            patience=15,
+            monitor='val_loss',
+            patience=20,
             min_delta=0.001,
-            mode='max',
-            restore_best_weights=True,
+            mode='min',
+            restore_best_weights=False,  # Weighted checkpoint handles this
             verbose=1
         ),
         callbacks.ReduceLROnPlateau(
