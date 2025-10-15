@@ -229,6 +229,13 @@ class FeatureEngineering:
                 features[f'min_{window}'] = np.min(recent)
                 features[f'max_{window}'] = np.max(recent)
                 features[f'median_{window}'] = np.median(recent)
+            else:
+                # Yeterli veri yoksa varsayılan değerler
+                features[f'mean_{window}'] = 0.0
+                features[f'std_{window}'] = 0.0
+                features[f'min_{window}'] = 0.0
+                features[f'max_{window}'] = 0.0
+                features[f'median_{window}'] = 0.0
         
         return features
     
@@ -258,9 +265,18 @@ class FeatureEngineering:
             # Son 50 elde oran
             if len(recent_50) > 0:
                 features['threshold_ratio_50'] = sum(1 for v in recent_50 if v >= threshold) / len(recent_50)
+            else:
+                features['threshold_ratio_50'] = 0.0
             
             # Kritik bölge (1.45-1.55) analizi
             features['in_critical_zone_10'] = sum(1 for v in recent_10 if 1.45 <= v <= 1.55)
+        else:
+            # Yeterli veri yoksa varsayılan değerler
+            features['below_threshold_10'] = 0.0
+            features['above_threshold_10'] = 0.0
+            features['threshold_ratio_10'] = 0.0
+            features['threshold_ratio_50'] = 0.0
+            features['in_critical_zone_10'] = 0.0
         
         return features
     
@@ -335,6 +351,13 @@ class FeatureEngineering:
                 current_cat = recent_categories[-1]
                 same_category_count = sum(1 for c in recent_categories if c == current_cat)
                 features['same_category_count_10'] = same_category_count
+            else:
+                features['same_category_count_10'] = 0.0
+        else:
+            # Yeterli veri yoksa varsayılan değerler
+            features['rising_streak'] = 0.0
+            features['falling_streak'] = 0.0
+            features['same_category_count_10'] = 0.0
         
         return features
     
@@ -356,11 +379,16 @@ class FeatureEngineering:
             
             # Değişim oranları
             changes = [recent[i] - recent[i-1] for i in range(1, len(recent))]
-            features['volatility_10'] = np.std(changes) if changes else 0
-            features['mean_change_10'] = np.mean(changes) if changes else 0
+            features['volatility_10'] = np.std(changes) if changes else 0.0
+            features['mean_change_10'] = np.mean(changes) if changes else 0.0
             
             # Range
             features['range_10'] = np.max(recent) - np.min(recent)
+        else:
+            # Yeterli veri yoksa varsayılan değerler
+            features['volatility_10'] = 0.0
+            features['mean_change_10'] = 0.0
+            features['range_10'] = 0.0
         
         return features
     
@@ -395,11 +423,19 @@ class FeatureEngineering:
                     if cat_recent == cat_prev:
                         similarity += 1
                 features['pattern_repetition_score'] = similarity / pattern_length
+            else:
+                features['pattern_repetition_score'] = 0.0
             
             # Kategorilerin dağılımı
             features['loss_zone_count_10'] = sum(1 for c in recent_10_categories if c == 0)
             features['safe_zone_count_10'] = sum(1 for c in recent_10_categories if c == 1)
             features['high_zone_count_10'] = sum(1 for c in recent_10_categories if c == 2)
+        else:
+            # Yeterli veri yoksa varsayılan değerler
+            features['pattern_repetition_score'] = 0.0
+            features['loss_zone_count_10'] = 0.0
+            features['safe_zone_count_10'] = 0.0
+            features['high_zone_count_10'] = 0.0
         
         return features
     
@@ -443,6 +479,15 @@ class FeatureEngineering:
             
             # IQR (Interquartile Range)
             features['iqr'] = features['percentile_75'] - features['percentile_25']
+        else:
+            # Yeterli veri yoksa varsayılan değerler
+            features['skewness_50'] = 0.0
+            features['kurtosis_50'] = 0.0
+            features['percentile_25'] = 0.0
+            features['percentile_50'] = 0.0
+            features['percentile_75'] = 0.0
+            features['percentile_90'] = 0.0
+            features['iqr'] = 0.0
         
         return features
     
@@ -478,12 +523,18 @@ class FeatureEngineering:
                 changes = [recent[i] - recent[i-1] for i in range(1, len(recent))]
                 positive_changes = sum(1 for c in changes if c > 0)
                 features[f'trend_strength_{name}'] = (positive_changes / len(changes)) * 2 - 1  # -1 ile 1 arası
+            else:
+                # Yeterli veri yoksa varsayılan değerler
+                features[f'momentum_{name}'] = 0.0
+                features[f'trend_strength_{name}'] = 0.0
         
         # Acceleration (ivme) - momentum değişim hızı
         if len(values) >= 100:
             momentum_50_old = calc_momentum(values[-100:-50]) if len(values) >= 100 else 0
             momentum_50_new = calc_momentum(values[-50:])
             features['acceleration'] = momentum_50_new - momentum_50_old
+        else:
+            features['acceleration'] = 0.0
         
         return features
     
@@ -528,6 +579,13 @@ class FeatureEngineering:
                 first_half_mean = np.mean(recent_50[:25])
                 second_half_mean = np.mean(recent_50[25:])
                 features['trend_reversal'] = (second_half_mean - first_half_mean) / (first_half_mean + 1e-8)
+            else:
+                features['trend_reversal'] = 0.0
+        else:
+            # Yeterli veri yoksa varsayılan değerler
+            features['volatility_normalization'] = 0.0
+            features['post_big_multiplier_stability'] = 0.5
+            features['trend_reversal'] = 0.0
         
         return features
     
@@ -570,6 +628,12 @@ class FeatureEngineering:
             
             # Son değerin percentile'i
             features['current_value_percentile'] = sum(1 for v in recent_50 if v <= current_value) / len(recent_50)
+        else:
+            # Yeterli veri yoksa varsayılan değerler
+            features['z_score'] = 0.0
+            features['is_outlier'] = 0.0
+            features['mad_score'] = 0.0
+            features['current_value_percentile'] = 0.0
         
         return features
     
@@ -586,21 +650,23 @@ class FeatureEngineering:
         """
         features = {}
         
-        if len(values) >= 50:
-            # Büyük çarpanlardan mesafe
-            features.update(FeatureEngineering.extract_distance_features(
-                values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]
-            ))
-            
+        # Büyük çarpanlardan mesafe (her zaman çalışır)
+        features.update(FeatureEngineering.extract_distance_features(
+            values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]
+        ))
+        
+        if len(values) >= 10:
             # Son 10 elde volatilite pattern
-            if len(values) >= 10:
-                recent_10 = values[-10:]
-                features['recent_volatility_pattern'] = np.std(recent_10) / (np.mean(recent_10) + 1e-8)
+            recent_10 = values[-10:]
+            features['recent_volatility_pattern'] = np.std(recent_10) / (np.mean(recent_10) + 1e-8)
             
             # Ardışık düşük değer sayısı
-            if len(values) >= 10:
-                below_2x_count = sum(1 for v in values[-10:] if v < 2.0)
-                features['low_value_streak_10'] = below_2x_count
+            below_2x_count = sum(1 for v in values[-10:] if v < 2.0)
+            features['low_value_streak_10'] = below_2x_count
+        else:
+            # Yeterli veri yoksa varsayılan değerler
+            features['recent_volatility_pattern'] = 0.0
+            features['low_value_streak_10'] = 0.0
         
         return features
     
@@ -615,7 +681,14 @@ class FeatureEngineering:
         Returns:
             Wavelet özellikleri
         """
-        features = {}
+        # Her zaman aynı sayıda özellik döndürmek için default değerler
+        features = {
+            'wavelet_energy_level_0': 0.0, 'wavelet_mean_level_0': 0.0, 'wavelet_std_level_0': 0.0,
+            'wavelet_energy_level_1': 0.0, 'wavelet_mean_level_1': 0.0, 'wavelet_std_level_1': 0.0,
+            'wavelet_energy_level_2': 0.0, 'wavelet_mean_level_2': 0.0, 'wavelet_std_level_2': 0.0,
+            'wavelet_energy_level_3': 0.0, 'wavelet_mean_level_3': 0.0, 'wavelet_std_level_3': 0.0,
+            'wavelet_total_energy': 0.0, 'wavelet_low_freq_ratio': 0.0
+        }
         
         if len(values) >= 100:
             try:
@@ -624,7 +697,6 @@ class FeatureEngineering:
                 recent_100 = values[-100:]
                 
                 # Discrete Wavelet Transform (DWT)
-                # db4: Daubechies wavelet family (iyi time-frequency localization)
                 coeffs = pywt.wavedec(recent_100, 'db4', level=3)
                 
                 # Her level için energy hesapla
@@ -638,9 +710,9 @@ class FeatureEngineering:
                 total_energy = sum(np.sum(c ** 2) for c in coeffs)
                 features['wavelet_total_energy'] = total_energy
                 
-                # Energy ratios (low freq vs high freq)
+                # Energy ratios
                 if total_energy > 0:
-                    features['wavelet_low_freq_ratio'] = coeffs[0].sum() ** 2 / total_energy
+                    features['wavelet_low_freq_ratio'] = np.sum(coeffs[0] ** 2) / total_energy
                 
             except ImportError:
                 logger.warning("pywt bulunamadı, wavelet features atlanıyor")
@@ -653,7 +725,6 @@ class FeatureEngineering:
     def extract_advanced_dfa_features(values: List[float]) -> Dict[str, float]:
         """
         DFA (Detrended Fluctuation Analysis) özellikleri
-        Uzun vadeli correlation ve trend persistence analizi
         
         Args:
             values: Geçmiş değerler
@@ -661,28 +732,20 @@ class FeatureEngineering:
         Returns:
             DFA özellikleri
         """
-        features = {}
+        features = {'dfa_alpha': 0.5, 'dfa_regime': 0.5} # Default to random walk
         
         if len(values) >= 200:
             try:
                 import nolds
                 
                 recent_200 = values[-200:]
-                
-                # DFA alpha parametresi
-                # alpha < 0.5: Anti-persistent (mean reverting)
-                # alpha = 0.5: Random walk
-                # alpha > 0.5: Persistent (trending)
                 dfa_alpha = nolds.dfa(recent_200)
                 features['dfa_alpha'] = dfa_alpha
                 
-                # Interpretation
                 if dfa_alpha < 0.5:
                     features['dfa_regime'] = 0  # Mean reverting
                 elif dfa_alpha > 0.5:
                     features['dfa_regime'] = 1  # Trending
-                else:
-                    features['dfa_regime'] = 0.5  # Random
                 
             except ImportError:
                 logger.warning("nolds bulunamadı, DFA features atlanıyor")
@@ -695,7 +758,6 @@ class FeatureEngineering:
     def extract_advanced_hurst_features(values: List[float]) -> Dict[str, float]:
         """
         Hurst Exponent özellikleri
-        Trend gücü ve persistence ölçümü
         
         Args:
             values: Geçmiş değerler
@@ -703,31 +765,22 @@ class FeatureEngineering:
         Returns:
             Hurst özellikleri
         """
-        features = {}
+        features = {'hurst_exponent': 0.5, 'hurst_classification': 0, 'trend_strength_hurst': 0.0}
         
         if len(values) >= 200:
             try:
                 import nolds
                 
                 recent_200 = values[-200:]
-                
-                # Hurst exponent
-                # H < 0.5: Mean reverting (anti-persistent)
-                # H = 0.5: Random walk
-                # H > 0.5: Trending (persistent)
                 hurst = nolds.hurst_rs(recent_200)
                 features['hurst_exponent'] = hurst
                 
-                # Classification
                 if hurst < 0.45:
-                    features['hurst_classification'] = -1  # Strong mean reversion
-                elif hurst < 0.55:
-                    features['hurst_classification'] = 0  # Random
-                else:
-                    features['hurst_classification'] = 1  # Strong trend
+                    features['hurst_classification'] = -1
+                elif hurst > 0.55:
+                    features['hurst_classification'] = 1
                 
-                # Trend strength score
-                features['trend_strength_hurst'] = abs(hurst - 0.5) * 2  # 0-1 scale
+                features['trend_strength_hurst'] = abs(hurst - 0.5) * 2
                 
             except ImportError:
                 logger.warning("nolds bulunamadı, Hurst features atlanıyor")
@@ -739,8 +792,7 @@ class FeatureEngineering:
     @staticmethod
     def extract_advanced_fourier_features(values: List[float]) -> Dict[str, float]:
         """
-        Fourier Transform özellikleri (frequency domain)
-        Periyodik pattern ve cycle detection
+        Fourier Transform özellikleri
         
         Args:
             values: Geçmiş değerler
@@ -748,26 +800,26 @@ class FeatureEngineering:
         Returns:
             Fourier özellikleri
         """
-        features = {}
+        features = {
+            'dominant_frequency_idx': 0.0, 'dominant_frequency_magnitude': 0.0,
+            'spectral_energy': 0.0, 'low_freq_energy_ratio': 0.0,
+            'mid_freq_energy_ratio': 0.0, 'high_freq_energy_ratio': 0.0,
+            'spectral_centroid': 0.0
+        }
         
         if len(values) >= 100:
             try:
                 recent_100 = values[-100:]
-                
-                # Fast Fourier Transform
                 fft = np.fft.fft(recent_100)
-                fft_abs = np.abs(fft[:50])  # İlk 50 frequency component
+                fft_abs = np.abs(fft[:50])
                 
-                # Dominant frequency
-                dominant_freq_idx = np.argmax(fft_abs[1:]) + 1  # Skip DC component
+                dominant_freq_idx = np.argmax(fft_abs[1:]) + 1
                 features['dominant_frequency_idx'] = dominant_freq_idx
                 features['dominant_frequency_magnitude'] = fft_abs[dominant_freq_idx]
                 
-                # Spectral energy
                 spectral_energy = np.sum(fft_abs ** 2)
                 features['spectral_energy'] = spectral_energy
                 
-                # Energy distribution
                 if spectral_energy > 0:
                     low_freq_energy = np.sum(fft_abs[1:10] ** 2)
                     mid_freq_energy = np.sum(fft_abs[10:25] ** 2)
@@ -777,9 +829,8 @@ class FeatureEngineering:
                     features['mid_freq_energy_ratio'] = mid_freq_energy / spectral_energy
                     features['high_freq_energy_ratio'] = high_freq_energy / spectral_energy
                 
-                # Spectral centroid (weighted mean frequency)
                 freqs = np.arange(len(fft_abs))
-                if spectral_energy > 0:
+                if np.sum(fft_abs) > 0:
                     features['spectral_centroid'] = np.sum(freqs * fft_abs) / np.sum(fft_abs)
                 
             except Exception as e:
@@ -791,7 +842,6 @@ class FeatureEngineering:
     def extract_advanced_autocorrelation_features(values: List[float]) -> Dict[str, float]:
         """
         Autocorrelation özellikleri
-        Kendine benzerlik ve lag-based patterns
         
         Args:
             values: Geçmiş değerler
@@ -799,18 +849,17 @@ class FeatureEngineering:
         Returns:
             Autocorrelation özellikleri
         """
-        features = {}
+        lags = [1, 2, 3, 5, 10, 20]
+        features = {f'acf_lag_{lag}': 0.0 for lag in lags}
+        features['acf_max_value'] = 0.0
+        features['acf_max_lag'] = 0.0
         
         if len(values) >= 50:
             try:
                 recent_50 = values[-50:]
                 
-                # Autocorrelation için farklı lag'ler
-                lags = [1, 2, 3, 5, 10, 20]
-                
                 for lag in lags:
                     if len(recent_50) > lag:
-                        # Pearson correlation coefficient
                         series1 = recent_50[:-lag]
                         series2 = recent_50[lag:]
                         
@@ -818,7 +867,6 @@ class FeatureEngineering:
                             acf = np.corrcoef(series1, series2)[0, 1]
                             features[f'acf_lag_{lag}'] = acf
                 
-                # ACF için maximum lag value ve position
                 acf_values = [features.get(f'acf_lag_{lag}', 0) for lag in lags]
                 if acf_values:
                     max_acf = max(acf_values)
@@ -834,68 +882,32 @@ class FeatureEngineering:
     @staticmethod
     def extract_category_set_features(values: List[float]) -> Dict[str, float]:
         """
-        15 Kategori Seti Özellikleri - Çok boyutlu analiz için
-        
-        Her değer 15 farklı perspektiften kategorilere ayrılır.
-        Model bu farklı bakış açılarından cross-correlation pattern'lerini öğrenir.
+        15 Kategori Seti Özellikleri
         
         Args:
             values: Geçmiş değerler
             
         Returns:
-            15 kategori seti özelliği (her biri 0-14 arası integer)
+            15 kategori seti özelliği
         """
-        features = {}
+        features = {f'cat_set_{i}': 0.0 for i in range(1, 16)}
         
         if len(values) > 0:
             current_value = values[-1]
             
-            # 15 farklı kategori setinden değerin kategorisini bul
-            features['cat_set_1'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_1
-            )
-            features['cat_set_2'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_2
-            )
-            features['cat_set_3'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_3
-            )
-            features['cat_set_4'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_4
-            )
-            features['cat_set_5'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_5
-            )
-            features['cat_set_6'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_6
-            )
-            features['cat_set_7'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_7
-            )
-            features['cat_set_8'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_8
-            )
-            features['cat_set_9'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_9
-            )
-            features['cat_set_10'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_10
-            )
-            features['cat_set_11'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_11
-            )
-            features['cat_set_12'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_12
-            )
-            features['cat_set_13'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_13
-            )
-            features['cat_set_14'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_14
-            )
-            features['cat_set_15'] = CategoryDefinitions.get_category_set_index(
-                current_value, CategoryDefinitions.CATEGORY_SET_15
-            )
+            all_sets = [
+                CategoryDefinitions.CATEGORY_SET_1, CategoryDefinitions.CATEGORY_SET_2,
+                CategoryDefinitions.CATEGORY_SET_3, CategoryDefinitions.CATEGORY_SET_4,
+                CategoryDefinitions.CATEGORY_SET_5, CategoryDefinitions.CATEGORY_SET_6,
+                CategoryDefinitions.CATEGORY_SET_7, CategoryDefinitions.CATEGORY_SET_8,
+                CategoryDefinitions.CATEGORY_SET_9, CategoryDefinitions.CATEGORY_SET_10,
+                CategoryDefinitions.CATEGORY_SET_11, CategoryDefinitions.CATEGORY_SET_12,
+                CategoryDefinitions.CATEGORY_SET_13, CategoryDefinitions.CATEGORY_SET_14,
+                CategoryDefinitions.CATEGORY_SET_15
+            ]
+            
+            for i, cat_set in enumerate(all_sets, 1):
+                features[f'cat_set_{i}'] = CategoryDefinitions.get_category_set_index(current_value, cat_set)
         
         return features
     
@@ -904,74 +916,34 @@ class FeatureEngineering:
     def _extract_features_cached(values_tuple: Tuple[float, ...]) -> Dict[str, float]:
         """
         Cache'lenmiş özellik çıkarma (internal method)
-        
-        Args:
-            values_tuple: Geçmiş değerler tuple'ı (hashable olması için)
-            
-        Returns:
-            Tüm özellikler
         """
-        # Tuple'ı list'e çevir
         values = list(values_tuple)
         all_features = {}
         
-        # Temel özellikler (güncellenen pencere boyutlarıyla)
         all_features.update(FeatureEngineering.extract_basic_features(values))
-        
-        # Eşik özellikleri
         all_features.update(FeatureEngineering.extract_threshold_features(values))
-        
-        # Mesafe özellikleri (genişletilmiş milestones)
-        all_features.update(FeatureEngineering.extract_distance_features(
-            values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]
-        ))
-        
-        # Ardışıklık özellikleri
+        all_features.update(FeatureEngineering.extract_distance_features(values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]))
         all_features.update(FeatureEngineering.extract_streak_features(values))
-        
-        # Volatilite özellikleri
         all_features.update(FeatureEngineering.extract_volatility_features(values))
-        
-        # YENİ: Sequence pattern özellikleri
         all_features.update(FeatureEngineering.extract_sequence_pattern_features(values))
-        
-        # YENİ: İstatistiksel dağılım özellikleri
         all_features.update(FeatureEngineering.extract_statistical_distribution_features(values))
-        
-        # YENİ: Multi-timeframe momentum
         all_features.update(FeatureEngineering.extract_multi_timeframe_momentum(values))
-        
-        # YENİ: Recovery pattern
         all_features.update(FeatureEngineering.extract_recovery_pattern_features(values))
-        
-        # YENİ: Anomaly detection
         all_features.update(FeatureEngineering.extract_anomaly_detection_features(values))
-        
-        # YENİ: Soğuma dönemi pattern'leri (model için)
         all_features.update(FeatureEngineering.extract_cooling_period_features(values))
-        
-        # YENİ: 15 Kategori Seti Özellikleri (çok boyutlu analiz)
         all_features.update(FeatureEngineering.extract_category_set_features(values))
-        
-        # ADVANCED: Wavelet Transform (frequency domain)
         all_features.update(FeatureEngineering.extract_advanced_wavelet_features(values))
-        
-        # ADVANCED: DFA (Detrended Fluctuation Analysis)
         all_features.update(FeatureEngineering.extract_advanced_dfa_features(values))
-        
-        # ADVANCED: Hurst Exponent
         all_features.update(FeatureEngineering.extract_advanced_hurst_features(values))
-        
-        # ADVANCED: Fourier Transform (frequency domain)
         all_features.update(FeatureEngineering.extract_advanced_fourier_features(values))
-        
-        # ADVANCED: Autocorrelation
         all_features.update(FeatureEngineering.extract_advanced_autocorrelation_features(values))
         
-        # Son değer
         if len(values) > 0:
             all_features['last_value'] = values[-1]
             all_features['last_category'] = CategoryDefinitions.get_category_numeric(values[-1])
+        else:
+            all_features['last_value'] = 0.0
+            all_features['last_category'] = 0.0
         
         return all_features
     
@@ -979,101 +951,19 @@ class FeatureEngineering:
     def extract_all_features(values: List[float]) -> Dict[str, float]:
         """
         Tüm özellikleri çıkar - Cache'li versiyon
-        
-        Args:
-            values: Geçmiş değerler listesi
-            
-        Returns:
-            Tüm özellikler (cache'ten veya yeni hesaplanan)
         """
-        # List'i tuple'a çevir (hashable olması için lru_cache ile kullanılabilir)
-        # Son 1000 değeri cache'le (daha fazlası memory problemi yaratabilir)
-        if len(values) > 1000:
-            values_to_cache = values[-1000:]
+        if not values:
+            values_tuple = tuple()
         else:
-            values_to_cache = values
+            values_to_cache = values[-1000:] if len(values) > 1000 else values
+            values_tuple = tuple(values_to_cache)
         
-        values_tuple = tuple(values_to_cache)
-        
-        try:
-            # Cache'lenmiş metodu çağır
-            return FeatureEngineering._extract_features_cached(values_tuple)
-        except Exception as e:
-            logger.warning(f"Cache'den özellik çıkarma hatası, direkt hesaplama yapılıyor: {e}")
-            # Cache hatası durumunda direkt hesapla
-            all_features = {}
-            
-            # Temel özellikler
-            all_features.update(FeatureEngineering.extract_basic_features(values))
-            
-            # Eşik özellikleri
-            all_features.update(FeatureEngineering.extract_threshold_features(values))
-            
-            # Mesafe özellikleri
-            all_features.update(FeatureEngineering.extract_distance_features(
-                values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]
-            ))
-            
-            # Ardışıklık özellikleri
-            all_features.update(FeatureEngineering.extract_streak_features(values))
-            
-            # Volatilite özellikleri
-            all_features.update(FeatureEngineering.extract_volatility_features(values))
-            
-            # Sequence pattern özellikleri
-            all_features.update(FeatureEngineering.extract_sequence_pattern_features(values))
-            
-            # İstatistiksel dağılım özellikleri
-            all_features.update(FeatureEngineering.extract_statistical_distribution_features(values))
-            
-            # Multi-timeframe momentum
-            all_features.update(FeatureEngineering.extract_multi_timeframe_momentum(values))
-            
-            # Recovery pattern
-            all_features.update(FeatureEngineering.extract_recovery_pattern_features(values))
-            
-            # Anomaly detection
-            all_features.update(FeatureEngineering.extract_anomaly_detection_features(values))
-            
-            # Soğuma dönemi pattern'leri
-            all_features.update(FeatureEngineering.extract_cooling_period_features(values))
-            
-            # 15 Kategori Seti Özellikleri
-            all_features.update(FeatureEngineering.extract_category_set_features(values))
-            
-            # ADVANCED: Wavelet Transform
-            all_features.update(FeatureEngineering.extract_advanced_wavelet_features(values))
-            
-            # ADVANCED: DFA
-            all_features.update(FeatureEngineering.extract_advanced_dfa_features(values))
-            
-            # ADVANCED: Hurst Exponent
-            all_features.update(FeatureEngineering.extract_advanced_hurst_features(values))
-            
-            # ADVANCED: Fourier Transform
-            all_features.update(FeatureEngineering.extract_advanced_fourier_features(values))
-            
-            # ADVANCED: Autocorrelation
-            all_features.update(FeatureEngineering.extract_advanced_autocorrelation_features(values))
-            
-            # Son değer
-            if len(values) > 0:
-                all_features['last_value'] = values[-1]
-                all_features['last_category'] = CategoryDefinitions.get_category_numeric(values[-1])
-            
-            return all_features
+        return FeatureEngineering._extract_features_cached(values_tuple)
 
 
 def create_sequences(data: List[float], sequence_length: int = 50) -> Tuple[np.ndarray, np.ndarray]:
     """
     Zaman serisi için sequence'ler oluştur (LSTM/TCN için)
-    
-    Args:
-        data: Veri listesi
-        sequence_length: Sequence uzunluğu
-        
-    Returns:
-        X (sequences), y (hedefler)
     """
     X, y = [], []
     
@@ -1086,14 +976,14 @@ def create_sequences(data: List[float], sequence_length: int = 50) -> Tuple[np.n
 
 # Model eğitiminde kullanılacak sabitler
 SEQUENCE_LENGTHS = {
-    'short': 50,    # Kısa vadeli pattern'ler
-    'medium': 200,  # Orta vadeli trend
-    'long': 500     # Uzun vadeli davranış
+    'short': 50,
+    'medium': 200,
+    'long': 500
 }
 
 # Risk yönetimi eşikleri
 CONFIDENCE_THRESHOLDS = {
-    'aggressive': 0.50,  # Agresif mod
-    'normal': 0.65,      # Normal mod
-    'rolling': 0.80      # Rolling (konservatif) mod
+    'aggressive': 0.50,
+    'normal': 0.65,
+    'rolling': 0.80
 }
