@@ -120,9 +120,15 @@ print("📌 Her pencere boyutu için feature engineering")
 
 window_sizes = [500, 250, 100, 50, 20]
 
-def extract_features_for_window(data, window_size):
+def extract_features_for_window(data, window_size, start_idx=None, end_idx=None):
     """
     Belirli bir pencere boyutu için feature extraction
+    
+    Args:
+        data: Input veri
+        window_size: Pencere boyutu
+        start_idx: Başlangıç indeksi (None ise window_size'den başlar)
+        end_idx: Bitiş indeksi (None ise veri sonuna kadar)
     """
     X_features = []
     X_sequences = []
@@ -130,7 +136,13 @@ def extract_features_for_window(data, window_size):
     y_classification = []
     y_threshold = []
     
-    for i in tqdm(range(window_size, len(data)-1), desc=f'Window {window_size}'):
+    # Başlangıç ve bitiş indekslerini belirle
+    if start_idx is None:
+        start_idx = window_size
+    if end_idx is None:
+        end_idx = len(data) - 1
+    
+    for i in tqdm(range(start_idx, end_idx), desc=f'Window {window_size}'):
         hist = data[:i].tolist()
         target = data[i]
         
@@ -165,6 +177,10 @@ def extract_features_for_window(data, window_size):
 # Her window boyutu için feature extraction
 all_data_by_window = {}
 
+# En büyük pencere boyutu (500) için test başlangıç indeksini hesapla
+max_window = max(window_sizes)
+test_start_idx = max_window  # En büyük pencere boyutu kadar offset
+
 for window_size in window_sizes:
     print(f"\n🔧 Window {window_size} için feature extraction...")
     
@@ -178,9 +194,10 @@ for window_size in window_sizes:
         val_data, window_size
     )
     
-    # Test data
+    # Test data - TÜM MODELLER İÇİN AYNI BAŞLANGIÇ İNDEKSİ
+    # Bu, ensemble için tutarlı tahmin uzunlukları sağlar
     X_f_test, X_seq_test, y_reg_test, y_cls_test, y_thr_test = extract_features_for_window(
-        test_data, window_size
+        test_data, window_size, start_idx=test_start_idx
     )
     
     # Normalizasyon
