@@ -67,8 +67,30 @@ from tqdm.auto import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
-print(f"✅ TensorFlow: {tf.__version__}")
-print(f"✅ GPU: {'Mevcut' if len(tf.config.list_physical_devices('GPU')) > 0 else 'Yok (CPU)'}")
+# GPU konfigürasyonu
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        # Memory growth ayarla - GPU belleğini dinamik kullan
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        
+        # Mixed precision training - GPU performansını artırır
+        from tensorflow.keras import mixed_precision
+        mixed_precision.set_global_policy('mixed_float16')
+        
+        print(f"✅ TensorFlow: {tf.__version__}")
+        print(f"✅ GPU: {len(gpus)} GPU bulundu ve yapılandırıldı")
+        print(f"   - Memory growth: Aktif")
+        print(f"   - Mixed precision: Aktif (float16)")
+        print(f"   - GPU'lar: {[gpu.name for gpu in gpus]}")
+    except RuntimeError as e:
+        print(f"⚠️ GPU konfigürasyon hatası: {e}")
+        print(f"✅ TensorFlow: {tf.__version__}")
+        print(f"✅ GPU: Mevcut ama CPU modunda çalışacak")
+else:
+    print(f"✅ TensorFlow: {tf.__version__}")
+    print(f"⚠️ GPU: Bulunamadı - CPU modunda çalışacak")
 
 # Proje yükle
 if not os.path.exists('jetxpredictor'):
@@ -299,6 +321,79 @@ def build_model_for_window(window_size, n_features):
     return model
 
 # =============================================================================
+# DETAYLI EPOCH CALLBACK
+# =============================================================================
+class DetailedMetricsCallback(callbacks.Callback):
+    """
+    Her epoch sonunda detaylı metrikler gösterir:
+    - Below 1.5 doğruluğu
+    - Above 1.5 doğruluğu
+    - ROI (kar oranı)
+    - Win rate
+    - Threshold accuracy
+    """
+    def __init__(self, X_val, y_val):
+        super().__init__()
+        self.X_val = X_val
+        self.y_val = y_val
+    
+    def simulate_bankroll(self, predictions, actuals):
+        """1.5x eşikte sanal kasa simülasyonu"""
+        initial = 10000
+        wallet = initial
+        wins = 0
+        total_bets = 0
+        for pred, actual in zip(predictions, actuals):
+            if pred >= 0.5:  # Model 1.5 üstü dedi
+                wallet -= 10
+                total_bets += 1
+                if actual >= 1.5:
+                    wallet += 15
+                    wins += 1
+        roi = ((wallet - initial) / initial) * 100
+        win_rate = (wins / total_bets * 100) if total_bets > 0 else 0
+        return roi, win_rate, wins, total_bets
+    
+    def on_epoch_end(self, epoch, logs=None):
+        # Tahminler yap
+        preds = self.model.predict(self.X_val, verbose=0)
+        threshold_preds = preds[2].flatten()  # threshold output (sigmoid)
+        
+        # Below/Above accuracy hesapla
+        below_mask = self.y_val < 1.5
+        above_mask = self.y_val >= 1.5
+        
+        below_correct = sum(1 for pred, actual in zip(threshold_preds[below_mask], self.y_val[below_mask]) 
+                          if pred < 0.5 and actual < 1.5)
+        below_total = below_mask.sum()
+        below_acc = (below_correct / below_total * 100) if below_total > 0 else 0
+        
+        above_correct = sum(1 for pred, actual in zip(threshold_preds[above_mask], self.y_val[above_mask]) 
+                          if pred >= 0.5 and actual >= 1.5)
+        above_total = above_mask.sum()
+        above_acc = (above_correct / above_total * 100) if above_total > 0 else 0
+        
+        # Threshold accuracy
+        thr_true = (self.y_val >= 1.5).astype(int)
+        thr_pred = (threshold_preds >= 0.5).astype(int)
+        thr_acc = accuracy_score(thr_true, thr_pred) * 100
+        
+        # ROI ve Win Rate hesapla
+        roi, win_rate, wins, total_bets = self.simulate_bankroll(threshold_preds, self.y_val)
+        
+        # Renkli çıktı
+        print(f"\n{'='*80}")
+        print(f"📊 EPOCH {epoch+1} DETAYLI METRİKLER")
+        print(f"{'='*80}")
+        print(f"🔴 1.5 Altı Doğruluk:  {below_acc:6.2f}%  ({below_correct}/{below_total})")
+        print(f"🟢 1.5 Üstü Doğruluk:  {above_acc:6.2f}%  ({above_correct}/{above_total})")
+        print(f"🎯 Threshold Accuracy: {thr_acc:6.2f}%")
+        print(f"💰 ROI (Sanal Kasa):   {roi:+7.2f}%")
+        print(f"📈 Win Rate:           {win_rate:6.2f}%  ({wins}/{total_bets})")
+        print(f"📉 Loss:               val_loss={logs.get('val_loss', 0):.4f}")
+        print(f"{'='*80}\n")
+
+# =============================================================================
 # WEIGHTED MODEL CHECKPOINT CALLBACK
 # =============================================================================
 class WeightedModelCheckpoint(callbacks.Callback):
@@ -451,6 +546,12 @@ for window_size in window_sizes:
     checkpoint_path = f'models/progressive_window_{window_size}_best.h5'
     os.makedirs('models', exist_ok=True)
     
+    # Detaylı metrikler callback'i
+    detailed_metrics = DetailedMetricsCallback(
+        X_val=[X_f_val, X_seq_val],
+        y_val=y_reg_val
+    )
+    
     # Weighted model checkpoint - 50% Below 15, 40% Above 15, 10% ROI
     weighted_checkpoint = WeightedModelCheckpoint(
         filepath=checkpoint_path,
@@ -459,6 +560,7 @@ for window_size in window_sizes:
     )
     
     cbs = [
+        detailed_metrics,  # Her epoch detaylı metrikler
         weighted_checkpoint,  # Weighted model selection
         callbacks.EarlyStopping(
             monitor='val_loss',

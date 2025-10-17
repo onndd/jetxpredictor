@@ -237,6 +237,28 @@ class JetXPredictor:
         # Özellikleri ve sequence'leri çıkar
         model_inputs = self.extract_features_from_history(history)
         
+        # Sequence kontrolü - Eğer herhangi biri None ise hata döndür
+        required_sequences = ['seq_50', 'seq_200', 'seq_500', 'seq_1000']
+        missing_sequences = [seq for seq in required_sequences if model_inputs.get(seq) is None]
+        
+        if missing_sequences:
+            min_required_data = {
+                'seq_50': 50,
+                'seq_200': 200,
+                'seq_500': 500,
+                'seq_1000': 1000
+            }
+            max_missing = max(min_required_data[seq] for seq in missing_sequences)
+            return {
+                'error': f'Yetersiz veri: En az {max_missing} geçmiş veri gerekli (mevcut: {len(history)})',
+                'predicted_value': None,
+                'confidence': 0.0,
+                'above_threshold': None,
+                'category': None,
+                'recommendation': 'BEKLE',
+                'pattern_risk': 0.0
+            }
+        
         # Model inputları hazırla (5 girdi: features + 4 sequence)
         input_data = [
             model_inputs['features'],

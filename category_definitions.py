@@ -15,6 +15,64 @@ from functools import lru_cache
 # Logging ayarla
 logger = logging.getLogger(__name__)
 
+# Yeni modülleri import et
+try:
+    from utils.psychological_analyzer import PsychologicalAnalyzer
+    from utils.anomaly_streak_detector import AnomalyStreakDetector
+    ADVANCED_ANALYZERS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Gelişmiş analiz modülleri yüklenemedi: {e}")
+    ADVANCED_ANALYZERS_AVAILABLE = False
+
+# Bağımlılık kontrol sistemi
+MISSING_DEPENDENCIES = []
+DEPENDENCY_WARNINGS_SHOWN = False
+
+# Optional dependencies kontrolü
+try:
+    import scipy
+    from scipy import stats
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    MISSING_DEPENDENCIES.append('scipy')
+
+try:
+    import pywt
+    PYWT_AVAILABLE = True
+except ImportError:
+    PYWT_AVAILABLE = False
+    MISSING_DEPENDENCIES.append('pywt')
+
+try:
+    import nolds
+    NOLDS_AVAILABLE = True
+except ImportError:
+    NOLDS_AVAILABLE = False
+    MISSING_DEPENDENCIES.append('nolds')
+
+def check_and_warn_dependencies():
+    """Eksik bağımlılıkları kontrol et ve uyar (sadece bir kez)"""
+    global DEPENDENCY_WARNINGS_SHOWN
+    
+    if MISSING_DEPENDENCIES and not DEPENDENCY_WARNINGS_SHOWN:
+        logger.warning("=" * 70)
+        logger.warning("EKSİK BAĞIMLILIKLAR TESPİT EDİLDİ!")
+        logger.warning("=" * 70)
+        logger.warning("Aşağıdaki kütüphaneler bulunamadı:")
+        for dep in MISSING_DEPENDENCIES:
+            logger.warning(f"  ❌ {dep}")
+        logger.warning("")
+        logger.warning("Bu, model performansını düşürebilir!")
+        logger.warning("Eksik özelliklerin yerine 0.0 değerleri kullanılacak.")
+        logger.warning("")
+        logger.warning("Kurulum için:")
+        logger.warning(f"  pip install {' '.join(MISSING_DEPENDENCIES)}")
+        logger.warning("=" * 70)
+        DEPENDENCY_WARNINGS_SHOWN = True
+    
+    return len(MISSING_DEPENDENCIES) == 0
+
 
 class CategoryDefinitions:
     """
@@ -208,13 +266,13 @@ class FeatureEngineering:
     """
     
     @staticmethod
-    def extract_basic_features(values: List[float], window_sizes: List[int] = [25, 50, 100, 200, 500]) -> Dict[str, float]:
+    def extract_basic_features(values: List[float], window_sizes: List[int] = [25, 50, 100, 200, 500, 1000]) -> Dict[str, float]:
         """
         Temel özellikler: Ortalama, std, min, max
         
         Args:
             values: Geçmiş değerler listesi (en yeni en sonda)
-            window_sizes: Pencere boyutları
+            window_sizes: Pencere boyutları (güncellenmiş: 1000 veri penceresi eklendi)
             
         Returns:
             Özellik sözlüğü
@@ -920,6 +978,7 @@ class FeatureEngineering:
         values = list(values_tuple)
         all_features = {}
         
+        # Temel özellikler
         all_features.update(FeatureEngineering.extract_basic_features(values))
         all_features.update(FeatureEngineering.extract_threshold_features(values))
         all_features.update(FeatureEngineering.extract_distance_features(values, milestones=[10.0, 20.0, 50.0, 100.0, 200.0]))
@@ -929,7 +988,6 @@ class FeatureEngineering:
         all_features.update(FeatureEngineering.extract_statistical_distribution_features(values))
         all_features.update(FeatureEngineering.extract_multi_timeframe_momentum(values))
         all_features.update(FeatureEngineering.extract_recovery_pattern_features(values))
-        all_features.update(FeatureEngineering.extract_anomaly_detection_features(values))
         all_features.update(FeatureEngineering.extract_cooling_period_features(values))
         all_features.update(FeatureEngineering.extract_category_set_features(values))
         all_features.update(FeatureEngineering.extract_advanced_wavelet_features(values))
@@ -938,6 +996,55 @@ class FeatureEngineering:
         all_features.update(FeatureEngineering.extract_advanced_fourier_features(values))
         all_features.update(FeatureEngineering.extract_advanced_autocorrelation_features(values))
         
+        # YENİ: Psikolojik Analiz Özellikleri
+        if ADVANCED_ANALYZERS_AVAILABLE:
+            try:
+                psychological_analyzer = PsychologicalAnalyzer(threshold=1.5)
+                psych_features = psychological_analyzer.analyze_psychological_patterns(values)
+                all_features.update(psych_features)
+            except Exception as e:
+                logger.warning(f"Psikolojik analiz hatası: {e}")
+                # Default değerlerle devam et
+                all_features.update({
+                    'bait_switch_score': 0.0,
+                    'trap_risk': 0.0,
+                    'false_confidence_score': 0.0,
+                    'heating_score': 0.0,
+                    'cooling_score': 0.0,
+                    'volatility_shift': 0.0,
+                    'desperation_level': 0.0,
+                    'gambler_fallacy_risk': 0.0,
+                    'manipulation_score': 0.0
+                })
+        
+        # YENİ: Anomaly Streak Özellikleri
+        if ADVANCED_ANALYZERS_AVAILABLE:
+            try:
+                anomaly_detector = AnomalyStreakDetector(threshold=1.5)
+                streak_features = anomaly_detector.extract_streak_features(values)
+                all_features.update(streak_features)
+            except Exception as e:
+                logger.warning(f"Anomaly streak analiz hatası: {e}")
+                # Default değerlerle devam et
+                all_features.update({
+                    'current_above_streak': 0.0,
+                    'current_below_streak': 0.0,
+                    'current_streak_length': 0.0,
+                    'max_above_streak_10': 0.0,
+                    'max_below_streak_10': 0.0,
+                    'max_above_streak_20': 0.0,
+                    'max_below_streak_20': 0.0,
+                    'max_above_streak_50': 0.0,
+                    'max_below_streak_50': 0.0,
+                    'has_extreme_above_streak': 0.0,
+                    'has_extreme_below_streak': 0.0,
+                    'extreme_streak_risk': 0.0,
+                    'streak_break_probability': 0.5,
+                    'alternating_pattern_score': 0.0,
+                    'is_alternating': 0.0
+                })
+        
+        # Son değer bilgileri
         if len(values) > 0:
             all_features['last_value'] = values[-1]
             all_features['last_category'] = CategoryDefinitions.get_category_numeric(values[-1])
@@ -978,7 +1085,8 @@ def create_sequences(data: List[float], sequence_length: int = 50) -> Tuple[np.n
 SEQUENCE_LENGTHS = {
     'short': 50,
     'medium': 200,
-    'long': 500
+    'long': 500,
+    'extra_long': 1000  # Yeni: 1000 veri penceresi
 }
 
 # Risk yönetimi eşikleri

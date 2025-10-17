@@ -37,11 +37,36 @@ class ConfigLoader:
             if os.path.exists(config_path):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     self._config = yaml.safe_load(f)
+                print(f"✅ Config yüklendi: {config_path}")
             else:
                 # Config dosyası yoksa default değerler
+                print("=" * 70)
+                print("⚠️ UYARI: Config dosyası bulunamadı!")
+                print("=" * 70)
+                print(f"  Aranan yol: {config_path}")
+                print(f"  Default değerler kullanılacak.")
+                print("  Config dosyası oluşturmak için:")
+                print(f"  1. '{os.path.dirname(config_path)}' klasörünü oluşturun")
+                print(f"  2. '{config_path}' dosyasını oluşturun")
+                print("=" * 70)
                 self._config = self._get_default_config()
+        except yaml.YAMLError as e:
+            print("=" * 70)
+            print("❌ YAML Parse Hatası!")
+            print("=" * 70)
+            print(f"  Config dosyası geçersiz YAML formatında: {e}")
+            print(f"  Dosya: {config_path}")
+            print("  Default değerler kullanılacak.")
+            print("=" * 70)
+            self._config = self._get_default_config()
         except Exception as e:
-            print(f"⚠️ Config yükleme hatası: {e}")
+            print("=" * 70)
+            print("❌ Config Yükleme Hatası!")
+            print("=" * 70)
+            print(f"  Hata: {e}")
+            print(f"  Dosya: {config_path}")
+            print("  Default değerler kullanılacak.")
+            print("=" * 70)
             self._config = self._get_default_config()
     
     def _get_default_config(self) -> Dict[str, Any]:

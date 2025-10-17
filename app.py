@@ -33,7 +33,7 @@ except ImportError as e:
     logging.warning(f"Gelişmiş özellikler yüklenemedi: {e}")
     ADVANCED_FEATURES_AVAILABLE = False
 
-# Logging ayarla
+# Logging ayarla (Model kontrolünden ÖNCE)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -43,6 +43,37 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Model varlık kontrolü fonksiyonu
+def check_model_files():
+    """Gerekli model dosyalarının varlığını kontrol eder"""
+    model_files = {
+        'Neural Network Model': config.get('model.path', 'models/jetx_model.h5'),
+        'Scaler': config.get('model.scaler_path', 'models/scaler.pkl'),
+        'CatBoost Regressor': 'models/catboost_regressor.cbm',
+        'CatBoost Classifier': 'models/catboost_classifier.cbm',
+        'CatBoost Scaler': 'models/catboost_scaler.pkl'
+    }
+    
+    missing_files = []
+    for name, path in model_files.items():
+        if not os.path.exists(path):
+            missing_files.append((name, path))
+    
+    return missing_files
+
+# Modelleri kontrol et (logger tanımlandıktan SONRA)
+MISSING_MODEL_FILES = check_model_files()
+if MISSING_MODEL_FILES:
+    logger.warning("=" * 70)
+    logger.warning("EKSIK MODEL DOSYALARI TESPİT EDİLDİ!")
+    logger.warning("=" * 70)
+    for name, path in MISSING_MODEL_FILES:
+        logger.warning(f"  ❌ {name}: {path}")
+    logger.warning("")
+    logger.warning("Bazı özellikler kullanılamayabilir.")
+    logger.warning("Modelleri eğitmek için notebooks/ klasöründeki Colab notebook'larını kullanın.")
+    logger.warning("=" * 70)
 
 # Sayfa konfigürasyonu
 st.set_page_config(
@@ -327,10 +358,11 @@ with main_col1:
                             prediction=prediction['predicted_value']
                         )
                         
+                        threshold_text = f"{threshold_decision.threshold}x" if threshold_decision.threshold else "Bahse girme!"
                         st.markdown(f"""
                         <div class="info-box">
                             <strong>🎚️ Dinamik Threshold:</strong><br>
-                            Önerilen Threshold: <strong>{threshold_decision.threshold if threshold_decision.threshold else "Bahse girme!"}x</strong><br>
+                            Önerilen Threshold: <strong>{threshold_text}</strong><br>
                             Risk Seviyesi: <strong>{threshold_decision.risk_level}</strong><br>
                             Gerekçe: {threshold_decision.reasoning}
                         </div>

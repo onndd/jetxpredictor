@@ -68,6 +68,21 @@ warnings.filterwarnings('ignore')
 
 print(f"✅ CatBoost: İmport edildi")
 
+# GPU kontrolü ve fallback
+try:
+    # GPU test için geçici model oluştur
+    from catboost import CatBoostClassifier
+    temp_model = CatBoostClassifier(iterations=1, task_type='GPU', devices='0')
+    temp_model.fit([[1]], [0], verbose=False)
+    GPU_AVAILABLE = True
+    TASK_TYPE = 'GPU'
+    print(f"✅ GPU: Mevcut ve kullanılabilir")
+except Exception as e:
+    GPU_AVAILABLE = False
+    TASK_TYPE = 'CPU'
+    print(f"⚠️ GPU: Kullanılamıyor, CPU modunda çalışacak")
+    print(f"   Sebep: {str(e)[:100]}")
+
 # Proje yükle
 if not os.path.exists('jetxpredictor'):
     print("\n📥 Proje klonlanıyor...")
@@ -297,7 +312,7 @@ for window_size in window_sizes:
         subsample=0.8,
         loss_function='MAE',
         eval_metric='MAE',
-        task_type='GPU',
+        task_type=TASK_TYPE,  # GPU veya CPU (otomatik seçildi)
         verbose=100,
         random_state=42
     )
@@ -318,7 +333,7 @@ for window_size in window_sizes:
     mae_reg = mean_absolute_error(y_reg_test, y_reg_pred)
     rmse_reg = np.sqrt(mean_squared_error(y_reg_test, y_reg_pred))
     
-    print(f"\n📊 REGRESSOR PERFORMANSI:")
+    print(f"\n📊 REGRESSOR FINAL PERFORMANSI:")
     print(f"  MAE: {mae_reg:.4f}")
     print(f"  RMSE: {rmse_reg:.4f}")
     
@@ -350,7 +365,7 @@ for window_size in window_sizes:
         subsample=0.8,
         loss_function='Logloss',
         eval_metric='Accuracy',
-        task_type='GPU',
+        task_type=TASK_TYPE,  # GPU veya CPU (otomatik seçildi)
         auto_class_weights='Balanced',
         verbose=100,
         random_state=42
@@ -371,10 +386,12 @@ for window_size in window_sizes:
     below_acc = accuracy_score(y_cls_test[below_mask], y_cls_pred[below_mask]) if below_mask.sum() > 0 else 0
     above_acc = accuracy_score(y_cls_test[above_mask], y_cls_pred[above_mask]) if above_mask.sum() > 0 else 0
     
-    print(f"\n📊 CLASSIFIER PERFORMANSI:")
-    print(f"  Genel Accuracy: {cls_acc*100:.2f}%")
-    print(f"  🔴 1.5 Altı: {below_acc*100:.2f}%")
-    print(f"  🟢 1.5 Üstü: {above_acc*100:.2f}%")
+    print(f"\n{'='*80}")
+    print(f"📊 CLASSIFIER FINAL PERFORMANSI")
+    print(f"{'='*80}")
+    print(f"🎯 Genel Accuracy:     {cls_acc*100:6.2f}%")
+    print(f"🔴 1.5 Altı Doğruluk:  {below_acc*100:6.2f}%")
+    print(f"🟢 1.5 Üstü Doğruluk:  {above_acc*100:6.2f}%")
     
     # Validation setinde Weighted Score hesapla
     y_cls_pred_val = classifier.predict(X_val)
@@ -382,8 +399,25 @@ for window_size in window_sizes:
         y_reg_val, y_cls_pred_val
     )
     
-    print(f"\n✨ VALIDATION WEIGHTED SCORE: {weighted_score:.2f}")
-    print(f"   Below 15: {below_acc_val:.1f}% | Above 15: {above_acc_val:.1f}% | ROI: {roi_val:+.1f}% (Normalized: {normalized_roi_val:.1f})")
+    # Sanal kasa simülasyonu detayları
+    wins_val = 0
+    total_bets_val = 0
+    for pred, actual in zip(y_cls_pred_val, y_reg_val):
+        if pred == 1:
+            total_bets_val += 1
+            if actual >= 1.5:
+                wins_val += 1
+    win_rate_val = (wins_val / total_bets_val * 100) if total_bets_val > 0 else 0
+    
+    print(f"\n{'='*80}")
+    print(f"✨ VALIDATION DETAYLI METRİKLER")
+    print(f"{'='*80}")
+    print(f"📊 Weighted Score:     {weighted_score:6.2f}")
+    print(f"🔴 Below 1.5 Acc:      {below_acc_val:6.1f}%")
+    print(f"🟢 Above 1.5 Acc:      {above_acc_val:6.1f}%")
+    print(f"💰 ROI:                {roi_val:+7.2f}%  (Normalized: {normalized_roi_val:6.1f})")
+    print(f"📈 Win Rate:           {win_rate_val:6.2f}%  ({wins_val}/{total_bets_val})")
+    print(f"{'='*80}\n")
     
     window_time = time.time() - window_start_time
     training_times[window_size] = window_time
