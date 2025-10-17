@@ -282,8 +282,8 @@ class JetXPredictor:
         # Model confidence
         model_confidence = max(threshold_prob, 1 - threshold_prob)
         
-        # Güven skorunu hesapla
-        confidence = (model_confidence + self._calculate_confidence(history, predicted_value)) / 2
+        # Güven skorunu hesapla (model confidence'a daha fazla ağırlık)
+        confidence = model_confidence * 0.7 + self._calculate_confidence(history, predicted_value) * 0.3
         
         # 1.5x eşik kontrolü
         above_threshold = predicted_value >= CategoryDefinitions.CRITICAL_THRESHOLD
@@ -329,9 +329,9 @@ class JetXPredictor:
         threshold_proba = self.classifier.predict_proba(feature_values)[0]
         threshold_prob = float(threshold_proba[1])  # 1.5 üstü olma olasılığı
         
-        # Confidence
+        # Confidence (model confidence'a daha fazla ağırlık)
         model_confidence = max(threshold_prob, 1 - threshold_prob)
-        confidence = (model_confidence + self._calculate_confidence(history, predicted_value)) / 2
+        confidence = model_confidence * 0.7 + self._calculate_confidence(history, predicted_value) * 0.3
         
         # 1.5x eşik kontrolü
         above_threshold = predicted_value >= CategoryDefinitions.CRITICAL_THRESHOLD

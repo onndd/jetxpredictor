@@ -262,12 +262,13 @@ class StackingEnsemble:
         if self.models.get('ultra') is not None:
             try:
                 inputs = self.extract_features_for_model(history, 'ultra')
+                # Ultra model 1000 yerine 500 kullanıyor, seq_1000 varsa kullan yoksa seq_500
                 input_list = [
                     inputs['features'],
                     inputs.get('seq_50'),
                     inputs.get('seq_200'),
                     inputs.get('seq_500'),
-                    inputs.get('seq_500')  # Ultra 1000 yok, 500 kullan
+                    inputs.get('seq_1000') if inputs.get('seq_1000') is not None else inputs.get('seq_500')
                 ]
                 
                 preds = self.models['ultra'].predict(input_list, verbose=0)

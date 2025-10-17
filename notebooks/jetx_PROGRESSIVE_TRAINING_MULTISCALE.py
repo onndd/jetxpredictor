@@ -278,10 +278,10 @@ def build_model_for_window(window_size, n_features):
         # Büyük pencere: 3-layer LSTM + Attention
         x_seq = layers.LSTM(256, return_sequences=True)(inp_sequence)
         x_seq = layers.Dropout(0.2)(x_seq)
-        x_seq = layers.LSTM(128, return_sequences=True)(inp_sequence)
+        x_seq = layers.LSTM(128, return_sequences=True)(x_seq)
         x_seq = layers.Dropout(0.2)(x_seq)
         
-        # Attention
+        # Attention - Lambda yerine GlobalAveragePooling1D kullan
         attention = layers.Dense(1, activation='tanh')(x_seq)
         attention = layers.Flatten()(attention)
         attention = layers.Activation('softmax')(attention)
@@ -289,7 +289,10 @@ def build_model_for_window(window_size, n_features):
         attention = layers.Permute([2, 1])(attention)
         
         x_seq_attended = layers.Multiply()([x_seq, attention])
-        x_seq = layers.Lambda(lambda x: K.sum(x, axis=1))(x_seq_attended)
+        # Lambda yerine manuel sum - serialization sorununu çözer
+        x_seq = layers.GlobalAveragePooling1D()(x_seq_attended)
+        # GlobalAveragePooling mean alır, sum'a yakın sonuç için scale
+        x_seq = layers.Dense(128, activation='linear', use_bias=False)(x_seq)
         x_seq = layers.Dropout(0.2)(x_seq)
     
     # Fusion

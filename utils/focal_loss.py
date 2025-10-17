@@ -14,6 +14,45 @@ from tensorflow import keras
 import numpy as np
 from typing import Optional
 
+# CatBoost için numpy tabanlı Focal Loss
+class CatBoostFocalLoss(object):
+    '''
+    CatBoost için Focal Loss implementasyonu.
+    Gradyan ve Hessian'ı numpy kullanarak hesaplar.
+    '''
+    def __init__(self, alpha=0.75, gamma=2.0):
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def calc_ders_range(self, approxes, targets, weights):
+        # approxes: modelin ham çıktısı (logits)
+        # targets: gerçek etiketler (0 veya 1)
+        
+        # Sigmoid fonksiyonu ile olasılığa çevir
+        p = 1. / (1. + np.exp(-approxes))
+        
+        # Hata
+        error = p - targets
+        
+        # Gradyan (loss'un birinci türevi)
+        # Standart LogLoss gradyanı: p - y
+        # Focal Loss modülasyon faktörü: alpha * (1-p)^gamma veya (1-alpha) * p^gamma
+        grad_modulator = np.where(targets == 1, self.alpha * np.power(1. - p, self.gamma), (1. - self.alpha) * np.power(p, self.gamma))
+        
+        # Odaklanma teriminin türevi
+        focus_term_grad = np.where(targets == 1, -self.gamma * p * np.log(p), self.gamma * (1. - p) * np.log(1. - p))
+        
+        # Gradyan
+        grad = grad_modulator * (error + focus_term_grad)
+
+        # Hessian (loss'un ikinci türevi)
+        # Hessian'ı basitleştirmek için p*(1-p) kullanıyoruz (LogLoss'tan gelir)
+        # Bu, eğitimin stabilitesini artırır.
+        hess_modulator = np.where(targets == 1, self.alpha * np.power(1. - p, self.gamma - 1.) * (p * self.gamma * (1. - p) * np.log(p) + p - 1.), (1. - self.alpha) * np.power(p, self.gamma - 1.) * (1. - p * self.gamma * np.log(1. - p) - p))
+        hess = p * (1. - p) * grad_modulator * hess_modulator
+
+        return list(zip(grad, hess))
+
 
 class FocalLoss(keras.losses.Loss):
     """

@@ -15,14 +15,9 @@ from functools import lru_cache
 # Logging ayarla
 logger = logging.getLogger(__name__)
 
-# Yeni modülleri import et
-try:
-    from utils.psychological_analyzer import PsychologicalAnalyzer
-    from utils.anomaly_streak_detector import AnomalyStreakDetector
-    ADVANCED_ANALYZERS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Gelişmiş analiz modülleri yüklenemedi: {e}")
-    ADVANCED_ANALYZERS_AVAILABLE = False
+# Döngüsel import'u önlemek için lazy loading kullanılıyor
+# Import'lar extract_all_features fonksiyonu içinde yapılacak
+ADVANCED_ANALYZERS_AVAILABLE = None  # İlk çağrıda kontrol edilecek
 
 # Bağımlılık kontrol sistemi
 MISSING_DEPENDENCIES = []
@@ -996,14 +991,33 @@ class FeatureEngineering:
         all_features.update(FeatureEngineering.extract_advanced_fourier_features(values))
         all_features.update(FeatureEngineering.extract_advanced_autocorrelation_features(values))
         
-        # YENİ: Psikolojik Analiz Özellikleri
+        # YENİ: Psikolojik Analiz Özellikleri (lazy loading ile)
+        global ADVANCED_ANALYZERS_AVAILABLE
+        if ADVANCED_ANALYZERS_AVAILABLE is None:
+            # İlk kez kontrol ediliyor
+            try:
+                from utils.psychological_analyzer import PsychologicalAnalyzer
+                from utils.anomaly_streak_detector import AnomalyStreakDetector
+                ADVANCED_ANALYZERS_AVAILABLE = True
+            except ImportError:
+                ADVANCED_ANALYZERS_AVAILABLE = False
+        
         if ADVANCED_ANALYZERS_AVAILABLE:
             try:
+                from utils.psychological_analyzer import PsychologicalAnalyzer
+                from utils.anomaly_streak_detector import AnomalyStreakDetector
+                
+                # Psikolojik analiz
                 psychological_analyzer = PsychologicalAnalyzer(threshold=1.5)
                 psych_features = psychological_analyzer.analyze_psychological_patterns(values)
                 all_features.update(psych_features)
+                
+                # Anomaly streak analiz
+                anomaly_detector = AnomalyStreakDetector(threshold=1.5)
+                streak_features = anomaly_detector.extract_streak_features(values)
+                all_features.update(streak_features)
             except Exception as e:
-                logger.warning(f"Psikolojik analiz hatası: {e}")
+                logger.warning(f"Gelişmiş analiz hatası: {e}")
                 # Default değerlerle devam et
                 all_features.update({
                     'bait_switch_score': 0.0,
@@ -1014,19 +1028,7 @@ class FeatureEngineering:
                     'volatility_shift': 0.0,
                     'desperation_level': 0.0,
                     'gambler_fallacy_risk': 0.0,
-                    'manipulation_score': 0.0
-                })
-        
-        # YENİ: Anomaly Streak Özellikleri
-        if ADVANCED_ANALYZERS_AVAILABLE:
-            try:
-                anomaly_detector = AnomalyStreakDetector(threshold=1.5)
-                streak_features = anomaly_detector.extract_streak_features(values)
-                all_features.update(streak_features)
-            except Exception as e:
-                logger.warning(f"Anomaly streak analiz hatası: {e}")
-                # Default değerlerle devam et
-                all_features.update({
+                    'manipulation_score': 0.0,
                     'current_above_streak': 0.0,
                     'current_below_streak': 0.0,
                     'current_streak_length': 0.0,
@@ -1043,6 +1045,34 @@ class FeatureEngineering:
                     'alternating_pattern_score': 0.0,
                     'is_alternating': 0.0
                 })
+        else:
+            # Advanced analyzers mevcut değil, default değerleri ekle
+            all_features.update({
+                'bait_switch_score': 0.0,
+                'trap_risk': 0.0,
+                'false_confidence_score': 0.0,
+                'heating_score': 0.0,
+                'cooling_score': 0.0,
+                'volatility_shift': 0.0,
+                'desperation_level': 0.0,
+                'gambler_fallacy_risk': 0.0,
+                'manipulation_score': 0.0,
+                'current_above_streak': 0.0,
+                'current_below_streak': 0.0,
+                'current_streak_length': 0.0,
+                'max_above_streak_10': 0.0,
+                'max_below_streak_10': 0.0,
+                'max_above_streak_20': 0.0,
+                'max_below_streak_20': 0.0,
+                'max_above_streak_50': 0.0,
+                'max_below_streak_50': 0.0,
+                'has_extreme_above_streak': 0.0,
+                'has_extreme_below_streak': 0.0,
+                'extreme_streak_risk': 0.0,
+                'streak_break_probability': 0.5,
+                'alternating_pattern_score': 0.0,
+                'is_alternating': 0.0
+            })
         
         # Son değer bilgileri
         if len(values) > 0:

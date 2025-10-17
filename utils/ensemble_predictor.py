@@ -65,13 +65,13 @@ class EnsemblePredictor:
         self.threshold = threshold
         self.min_confidence = min_confidence
         
-        # Varsayılan ağırlıklar (CatBoost analiz sonuçlarına göre)
+        # Varsayılan ağırlıklar (Dengeli dağılım)
         if weights is None:
             self.weights = {
-                'catboost_regressor': 0.40,
-                'catboost_classifier': 0.30,
-                'nn_regressor': 0.20,
-                'nn_classifier': 0.10
+                'catboost_regressor': 0.30,
+                'catboost_classifier': 0.20,
+                'nn_regressor': 0.30,
+                'nn_classifier': 0.20
             }
         else:
             self.weights = weights
@@ -189,10 +189,20 @@ class EnsemblePredictor:
             confidence = np.mean(list(confidences.values()))
             should_bet = confidence >= self.min_confidence
         else:
-            # Modeller anlaşamadı
+            # Modeller anlaşamadı - gradient confidence hesapla
             final_pred = np.mean(list(predictions.values()))
-            confidence = 0.3  # Düşük güven
-            should_bet = False  # Bahse girme
+            pred_values = list(predictions.values())
+            std_dev = np.std(pred_values)
+            mean_pred = np.mean(pred_values)
+            
+            # Uyuşmazlık skoruna göre confidence (düşük std = yüksek confidence)
+            if mean_pred > 0:
+                agreement_score = 1.0 - min(1.0, std_dev / mean_pred)
+                confidence = max(0.3, min(0.7, agreement_score))
+            else:
+                confidence = 0.3
+            
+            should_bet = False  # Anlaşmazlık durumunda bahse girme
         
         return final_pred, confidence, should_bet
     

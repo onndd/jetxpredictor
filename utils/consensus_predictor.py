@@ -94,13 +94,31 @@ class ConsensusPredictor:
                 logger.warning(f"⚠️  NN scaler not found: {scaler_path}")
                 continue
             
-            # Model yükle
-            self.nn_models[window_size] = models.load_model(model_path, compile=False)
+            # Model yükle - Lambda katmanı desteğiyle
+            try:
+                # İlk önce compile=False ile dene (yeni modeller için)
+                self.nn_models[window_size] = models.load_model(model_path, compile=False)
+                logger.info(f"✅ Loaded NN model for window {window_size}")
+            except Exception as e:
+                # Eğer Lambda hatası varsa, custom_objects ile tekrar dene
+                logger.warning(f"⚠️  Initial load failed, trying with Lambda support...")
+                try:
+                    from tensorflow.keras import backend as K
+                    custom_objects = {
+                        'lambda': lambda x: K.sum(x, axis=1)  # Lambda fallback
+                    }
+                    self.nn_models[window_size] = models.load_model(
+                        model_path, 
+                        compile=False,
+                        custom_objects=custom_objects
+                    )
+                    logger.info(f"✅ Loaded NN model for window {window_size} (with Lambda support)")
+                except Exception as e2:
+                    logger.error(f"❌ Failed to load NN model for window {window_size}: {e2}")
+                    continue
             
             # Scaler yükle
             self.nn_scalers[window_size] = joblib.load(scaler_path)
-            
-            logger.info(f"✅ Loaded NN model for window {window_size}")
         
         logger.info(f"Total NN models loaded: {len(self.nn_models)}")
         logger.info("="*70 + "\n")
@@ -245,7 +263,8 @@ class ConsensusPredictor:
             # Feature extraction
             features = self.extract_features(data, window_size)
             
-            # features = self.catboost_scalers[window_size].transform(features)
+            # Normalizasyon
+            features = self.catboost_scalers[window_size].transform(features)
             
             # Tahminler
             p_reg = self.catboost_regressors[window_size].predict(features)[0]

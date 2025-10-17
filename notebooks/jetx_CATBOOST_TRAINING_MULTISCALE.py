@@ -50,10 +50,11 @@ print()
 
 # Kütüphaneleri yükle
 print("📦 Kütüphaneler yükleniyor...")
+print("   ⚠️  Advanced features için scipy, PyWavelets, nolds yükleniyor...")
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", 
                       "catboost", "scikit-learn", "pandas", "numpy", 
-                      "scipy", "joblib", "matplotlib", "seaborn", "tqdm",
-                      "PyWavelets", "nolds"])
+                      "scipy>=1.10.0", "joblib", "matplotlib", "seaborn", "tqdm",
+                      "PyWavelets>=1.4.1", "nolds>=0.5.2"])
 
 import numpy as np
 import pandas as pd
@@ -191,6 +192,22 @@ for window_size in window_sizes:
     X_test, y_reg_test, y_cls_test = extract_features_for_window(
         test_data, window_size, start_idx=test_start_idx
     )
+    
+    # FEATURE VALIDATION - CatBoost için kritik!
+    print(f"\n🔍 Feature validation (Window {window_size})...")
+    print(f"  Feature sayısı: {X_train.shape[1]}")
+    print(f"  Feature ortalaması: {np.mean(X_train):.4f}")
+    print(f"  Feature std: {np.std(X_train):.4f}")
+    print(f"  Sıfır olmayan feature sayısı: {np.count_nonzero(np.std(X_train, axis=0))}/{X_train.shape[1]}")
+    
+    # Constant features kontrolü
+    feature_stds = np.std(X_train, axis=0)
+    constant_features = np.sum(feature_stds < 1e-10)
+    if constant_features > X_train.shape[1] * 0.5:  # %50'den fazla constant varsa uyar
+        print(f"  ⚠️  UYARI: {constant_features} feature constant veya sıfıra çok yakın!")
+        print(f"  ⚠️  Bu CatBoost performansını düşürebilir!")
+    else:
+        print(f"  ✅ Feature kalitesi iyi: {constant_features} constant feature")
     
     # Normalizasyon
     scaler = StandardScaler()
@@ -704,10 +721,13 @@ except ImportError:
 if IN_COLAB:
     try:
         from google.colab import files
+        print(f"✅ {zip_filename}.zip tarayıcınıza indiriliyor...")
+        print(f"   Eğer otomatik indirme başlamazsa, sol panelden Files sekmesine gidin")
+        print(f"   ve '{zip_filename}.zip' dosyasına sağ tıklayıp 'Download' seçin.")
         files.download(f'{zip_filename}.zip')
-        print(f"✅ {zip_filename}.zip indiriliyor...")
     except Exception as e:
-        print(f"⚠️ İndirme hatası: {e}")
+        print(f"⚠️ Otomatik indirme hatası: {e}")
+        print(f"📁 Manuel indirme: Sol panelden Files → '{zip_filename}.zip' → Download")
 else:
     print(f"📁 ZIP dosyası mevcut: {zip_filename}.zip")
 

@@ -71,7 +71,8 @@ os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
-from utils.virtual_bankroll_callback import CatBoostBankrollCallback
+# from utils.virtual_bankroll_callback import CatBoostBankrollCallback # Bu callback hatalı ve kullanılmıyor.
+from utils.focal_loss import CatBoostFocalLoss
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
 
 # =============================================================================
@@ -185,7 +186,7 @@ regressor = CatBoostRegressor(
     subsample=0.8,             # YENİ: Stochastic gradient
     loss_function='MAE',
     eval_metric='MAE',
-    task_type='CPU',  # GPU → CPU (callback compatibility için)
+    task_type='GPU',  # GPU → CPU (callback compatibility için) -> GPU'ya çevrildi
     verbose=100,               # 50 → 100 (daha az log)
     random_state=42
     # early_stopping_rounds KALDIRILDI - Tüm 1500 iterasyon tamamlanacak
@@ -202,16 +203,8 @@ print(f"  loss_function: MAE")
 print(f"  task_type: GPU (varsa)")
 print(f"  early_stopping_rounds: Yok (Tüm 1500 iterasyon tamamlanacak) ✅\n")
 
-# Virtual Bankroll Callback (Her 10 iteration'da bir sanal kasa)
-virtual_bankroll_reg = CatBoostBankrollCallback(
-    X_test=X_test,
-    y_test=y_reg_test,
-    threshold=1.5,
-    starting_capital=1000.0,
-    bet_amount=10.0,
-    model_type='regressor',
-    interval=10
-)
+# Hatalı Virtual Bankroll Callback kaldırıldı.
+# Eğitim sonunda zaten daha kapsamlı bir simülasyon yapılıyor.
 
 # Eğitim
 print("🔥 CatBoost Regressor eğitimi başlıyor...")
@@ -219,7 +212,6 @@ regressor.fit(
     X_tr, y_reg_tr,
     eval_set=(X_val, y_reg_val),  # ✅ KRONOLOJIK VALIDATION!
     verbose=100
-    # callbacks kaldırıldı - CPU'da bile hata veriyordu
 )
 
 reg_time = time.time() - reg_start
@@ -257,7 +249,8 @@ below_count = (y_cls_train == 0).sum()
 above_count = (y_cls_train == 1).sum()
 
 # CatBoost için class_weights parametresi (native)
-class_weights = {0: 20.0, 1: 1.0}  # 1.5 altına 20x ağırlık (2.0 → 20.0, 10x artış!)
+# Focal Loss ile birlikte daha güçlü bir etki için manuel ağırlıklandırma deniyoruz.
+class_weights = [20.0, 1.0]  # CatBoost class_weights'i liste olarak bekler [class_0_weight, class_1_weight]
 
 print(f"📊 CLASS WEIGHTS (CatBoost Native - TIME-SERIES SPLIT):")
 print(f"  1.5 altı (class 0): {class_weights[0]:.1f}x (agresif - lazy learning önleme)")
@@ -273,10 +266,11 @@ classifier = CatBoostClassifier(
     l2_leaf_reg=5,             # YENİ: Overfitting önleme
     bootstrap_type='Bernoulli',  # YENİ: subsample için gerekli
     subsample=0.8,             # YENİ: Stochastic gradient
-    loss_function='Logloss',
+    loss_function=CatBoostFocalLoss(),  # Logloss -> Focal Loss
     eval_metric='Accuracy',
-    task_type='CPU',  # GPU → CPU (callback compatibility için)
-    auto_class_weights='Balanced',  # Otomatik dengeli class weights
+    task_type='GPU',  # GPU → CPU (callback compatibility için) -> GPU'ya çevrildi
+    class_weights=class_weights, # Manuel sınıf ağırlıklarını etkinleştir
+    # auto_class_weights='Balanced', # Focal Loss ile birlikte kullanılmaz
     verbose=100,               # 50 → 100 (daha az log)
     random_state=42
     # early_stopping_rounds KALDIRILDI - Tüm 1500 iterasyon tamamlanacak
@@ -289,20 +283,12 @@ print(f"  learning_rate: 0.03 (0.05 → 0.03)")
 print(f"  l2_leaf_reg: 5 (YENİ)")
 print(f"  bootstrap_type: Bernoulli (YENİ - subsample için)")
 print(f"  subsample: 0.8 (YENİ)")
-print(f"  loss_function: Logloss")
-print(f"  auto_class_weights: Balanced (otomatik denge)")
+print(f"  loss_function: Focal Loss (Dengesiz Veri İçin)")
+print(f"  auto_class_weights: Devre Dışı (Focal Loss kullanılıyor)")
 print(f"  early_stopping_rounds: Yok (Tüm 1500 iterasyon tamamlanacak) ✅\n")
 
-# Virtual Bankroll Callback (Her 10 iteration'da bir sanal kasa)
-virtual_bankroll_cls = CatBoostBankrollCallback(
-    X_test=X_test,
-    y_test=y_reg_test,  # y_reg_test kullan (gerçek değerler için)
-    threshold=1.5,
-    starting_capital=1000.0,
-    bet_amount=10.0,
-    model_type='classifier',
-    interval=10
-)
+# Hatalı Virtual Bankroll Callback kaldırıldı.
+# Eğitim sonunda zaten daha kapsamlı bir simülasyon yapılıyor.
 
 # Eğitim
 print("🔥 CatBoost Classifier eğitimi başlıyor...")
@@ -310,7 +296,6 @@ classifier.fit(
     X_tr, y_cls_tr,
     eval_set=(X_val, y_cls_val),  # ✅ KRONOLOJIK VALIDATION!
     verbose=100
-    # callbacks kaldırıldı - CPU'da bile hata veriyordu
 )
 
 cls_time = time.time() - cls_start
