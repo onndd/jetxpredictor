@@ -218,9 +218,23 @@ def extract_features_for_window(data, window_size, start_idx=None, end_idx=None)
 # Her window boyutu için feature extraction
 all_data_by_window = {}
 
-# En büyük pencere boyutu (500) için test başlangıç indeksini hesapla
+# En büyük pencere boyutu için gerekli minimum data uzunluğunu hesapla
 max_window = max(window_sizes)
-test_start_idx = max_window  # En büyük pencere boyutu kadar offset
+
+# Val ve test için gerekli minimum sample sayısını hesapla
+# Window size + minimum 360 sample = yeterli veri
+min_required_samples = max_window + 360
+
+# Val data'yı sınırla (eğer çok uzunsa)
+val_data_limited = val_data[:min_required_samples] if len(val_data) > min_required_samples else val_data
+
+# Test data'yı sınırla (eğer çok uzunsa)
+test_data_limited = test_data[:min_required_samples] if len(test_data) > min_required_samples else test_data
+
+print(f"\n📊 DATA LIMITING (Büyük window'lar için):")
+print(f"  En büyük window: {max_window}")
+print(f"  Val data: {len(val_data)} → {len(val_data_limited)} sample")
+print(f"  Test data: {len(test_data)} → {len(test_data_limited)} sample")
 
 for window_size in window_sizes:
     print(f"\n🔧 Window {window_size} için feature extraction...")
@@ -230,15 +244,14 @@ for window_size in window_sizes:
         train_data, window_size
     )
     
-    # Val data
+    # Val data - limited version kullan
     X_f_val, X_seq_val, y_reg_val, y_cls_val, y_thr_val = extract_features_for_window(
-        val_data, window_size
+        val_data_limited, window_size
     )
     
-    # Test data - TÜM MODELLER İÇİN AYNI BAŞLANGIÇ İNDEKSİ
-    # Bu, ensemble için tutarlı tahmin uzunlukları sağlar
+    # Test data - limited version kullan
     X_f_test, X_seq_test, y_reg_test, y_cls_test, y_thr_test = extract_features_for_window(
-        test_data, window_size, start_idx=test_start_idx
+        test_data_limited, window_size
     )
     
     # Normalizasyon
