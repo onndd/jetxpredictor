@@ -171,6 +171,53 @@ class StackingEnsemble:
         else:
             logger.warning("⚠️ Meta-model dosyası bulunamadı. Fallback: Weighted average kullanılacak.")
             self.meta_model = None
+        
+        # Guardian Model (AutoGluon)
+        try:
+            from autogluon.tabular import TabularPredictor
+            guardian_path = 'models/autogluon_guardian_model/'
+            if os.path.exists(guardian_path):
+                self.guardian_model = TabularPredictor.load(guardian_path)
+                logger.info("✅ Guardian (AutoGluon) model yüklendi")
+            else:
+                logger.warning(f"⚠️ Guardian model bulunamadı: {guardian_path}")
+                self.guardian_model = None
+        except ImportError:
+            logger.warning("⚠️ AutoGluon bulunamadı. Guardian model yüklenemeyecek.")
+            self.guardian_model = None
+        except Exception as e:
+            logger.warning(f"⚠️ Guardian model yüklenemedi: {e}")
+            self.guardian_model = None
+        
+        # High-X Hunter Model (TabNet)
+        try:
+            from pytorch_tabnet.tab_model import TabNetRegressor
+            hunter_path = 'models/tabnet_high_x_model.zip'
+            if os.path.exists(hunter_path):
+                self.high_x_hunter = TabNetRegressor()
+                self.high_x_hunter.load_model(hunter_path)
+                logger.info("✅ High-X Hunter (TabNet) model yüklendi")
+                
+                # Hunter scaler'ını da yükle
+                hunter_scaler_path = 'models/tabnet_scaler.pkl'
+                if os.path.exists(hunter_scaler_path):
+                    self.hunter_scaler = joblib.load(hunter_scaler_path)
+                    logger.info("✅ Hunter scaler yüklendi")
+                else:
+                    logger.warning(f"⚠️ Hunter scaler bulunamadı: {hunter_scaler_path}")
+                    self.hunter_scaler = None
+            else:
+                logger.warning(f"⚠️ Hunter model bulunamadı: {hunter_path}")
+                self.high_x_hunter = None
+                self.hunter_scaler = None
+        except ImportError:
+            logger.warning("⚠️ TabNet bulunamadı. Hunter model yüklenemeyecek.")
+            self.high_x_hunter = None
+            self.hunter_scaler = None
+        except Exception as e:
+            logger.warning(f"⚠️ Hunter model yüklenemedi: {e}")
+            self.high_x_hunter = None
+            self.hunter_scaler = None
     
     def extract_features_for_model(
         self, 
@@ -392,6 +439,9 @@ class StackingEnsemble:
         avg_value = np.mean([p['predicted_value'] for p in valid_preds.values()])
         avg_threshold = np.mean([p['threshold_probability'] for p in valid_preds.values()])
         
+        # Expert signals (Guardian ve Hunter)
+        expert_signals = self._get_expert_signals(history)
+        
         return {
             'predicted_value': round(avg_value, 2),
             'threshold_probability': round(avg_threshold, 2),
@@ -399,8 +449,73 @@ class StackingEnsemble:
             'confidence': round(avg_threshold if avg_threshold >= 0.5 else 1 - avg_threshold, 2),
             'ensemble_method': 'weighted_average',
             'individual_predictions': individual_preds,
-            'active_models': list(valid_preds.keys())
+            'active_models': list(valid_preds.keys()),
+            'expert_signals': expert_signals
         }
+    
+    def _get_expert_signals(self, history: List[float]) -> Dict:
+        """
+        Guardian ve Hunter modellerinden expert sinyalleri al
+        
+        Args:
+            history: Geçmiş değerler
+            
+        Returns:
+            Expert signals dictionary
+        """
+        signals = {}
+        
+        # Guardian Signal (1.5 altı koruma)
+        if hasattr(self, 'guardian_model') and self.guardian_model is not None:
+            try:
+                # Guardian için features hazırla
+                features_dict = FeatureEngineering.extract_all_features(history)
+                features_df = pd.DataFrame([list(features_dict.values())], columns=list(features_dict.keys()))
+                
+                # Guardian tahmini (1.5 üstü olma olasılığı)
+                guardian_proba = self.guardian_model.predict_proba(features_df)
+                safety_score = float(guardian_proba[0])  # 1.5 altı olma olasılığı
+                
+                signals['guardian_safety_score'] = safety_score
+                signals['guardian_recommendation'] = 'SAFE' if safety_score > 0.75 else 'RISKY'
+                
+                logger.info(f"Guardian signal: {safety_score:.2%} güvenlik skoru")
+            except Exception as e:
+                logger.error(f"Guardian signal hatası: {e}")
+                signals['guardian_safety_score'] = None
+                signals['guardian_recommendation'] = 'UNAVAILABLE'
+        else:
+            signals['guardian_safety_score'] = None
+            signals['guardian_recommendation'] = 'NOT_LOADED'
+        
+        # Hunter Signal (yüksek çarpan tahmini)
+        if hasattr(self, 'high_x_hunter') and self.high_x_hunter is not None:
+            try:
+                # Hunter için features hazırla
+                features_dict = FeatureEngineering.extract_all_features(history)
+                feature_values = np.array(list(features_dict.values())).reshape(1, -1)
+                
+                # Hunter scaler varsa kullan
+                if hasattr(self, 'hunter_scaler') and self.hunter_scaler is not None:
+                    feature_values = self.hunter_scaler.transform(feature_values)
+                
+                # Hunter tahmini
+                high_x_prediction = self.high_x_hunter.predict(feature_values)
+                high_x_value = float(high_x_prediction[0])
+                
+                signals['high_x_prediction'] = high_x_value
+                signals['high_x_alert'] = high_x_value >= 8.0
+                
+                logger.info(f"Hunter signal: {high_x_value:.2f}x yüksek değer tahmini")
+            except Exception as e:
+                logger.error(f"Hunter signal hatası: {e}")
+                signals['high_x_prediction'] = None
+                signals['high_x_alert'] = False
+        else:
+            signals['high_x_prediction'] = None
+            signals['high_x_alert'] = False
+        
+        return signals
     
     def predict(
         self,

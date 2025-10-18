@@ -368,10 +368,66 @@ with main_col1:
                         </div>
                         """, unsafe_allow_html=True)
                     
+                    # Expert Signals (Guardian ve Hunter)
+                    if prediction.get('expert_signals'):
+                        st.subheader("🔍 Uzman Model Sinyalleri")
+                        
+                        expert_signals = prediction['expert_signals']
+                        col1, col2 = st.columns(2)
+                        
+                        # Guardian Signal
+                        with col1:
+                            if expert_signals.get('guardian_safety_score') is not None:
+                                safety = expert_signals['guardian_safety_score']
+                                if safety > 0.75:
+                                    st.success(f"🛡️ **Guardian: Yüksek Güvenlik**")
+                                    st.caption(f"Güvenlik Skoru: {safety:.0%}")
+                                    st.caption("Guardian modeli para kaybı riskini düşük görüyor")
+                                elif safety > 0.50:
+                                    st.warning(f"⚠️ **Guardian: Orta Güvenlik**")
+                                    st.caption(f"Güvenlik Skoru: {safety:.0%}")
+                                else:
+                                    st.error(f"🚨 **Guardian: Düşük Güvenlik**")
+                                    st.caption(f"Güvenlik Skoru: {safety:.0%}")
+                            else:
+                                st.info("🛡️ Guardian: Mevcut değil")
+                        
+                        # Hunter Signal
+                        with col2:
+                            if expert_signals.get('high_x_prediction') is not None:
+                                high_x = expert_signals['high_x_prediction']
+                                if high_x >= 8.0:
+                                    st.success(f"🚀 **Hunter: Yüksek X Potansiyeli**")
+                                    st.caption(f"Tahmin: {high_x:.2f}x")
+                                    st.caption("TabNet yüksek çarpan öngörüyor!")
+                                elif high_x >= 5.0:
+                                    st.info(f"📊 **Hunter: Orta X Potansiyeli**")
+                                    st.caption(f"Tahmin: {high_x:.2f}x")
+                                else:
+                                    st.caption(f"📉 Hunter Tahmin: {high_x:.2f}x")
+                            else:
+                                st.info("🚀 Hunter: Mevcut değil")
+                        
+                        # Altın Fırsat - Her iki sinyal de pozitif
+                        if (expert_signals.get('guardian_safety_score', 0) > 0.75 and 
+                            expert_signals.get('high_x_prediction', 0) >= 8.0):
+                            st.markdown("""
+                            <div style="background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%); 
+                                        padding: 15px; border-radius: 10px; text-align: center; margin: 10px 0;">
+                                <h3 style="color: #000; margin: 0;">⭐ ALTIN FIRSAT ⭐</h3>
+                                <p style="color: #000; margin: 5px 0;">Hem Guardian hem Hunter pozitif sinyal veriyor!</p>
+                            """, unsafe_allow_html=True)
+                    
                     # Karar
                     st.subheader("🎲 Öneri")
                     if risk_decision['should_play']:
-                        st.success(f"✅ **OYNA** - Risk: {risk_decision['risk_level']}")
+                        # Guardian desteğini kontrol et
+                        guardian_boost = False
+                        if prediction.get('expert_signals', {}).get('guardian_safety_score', 0) > 0.80:
+                            guardian_boost = True
+                            st.success(f"✅ **OYNA** - Risk: {risk_decision['risk_level']} 🛡️ Ekstra Güvenli!")
+                        else:
+                            st.success(f"✅ **OYNA** - Risk: {risk_decision['risk_level']}")
                         
                         # Bahis önerisi
                         betting = st.session_state.risk_manager.get_betting_suggestion(prediction)
