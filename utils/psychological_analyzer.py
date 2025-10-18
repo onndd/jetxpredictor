@@ -57,8 +57,8 @@ class PsychologicalAnalyzer:
         features.update(self.calculate_desperation_score(history))
         features.update(self.calculate_gambler_fallacy_score(history))
         
-        # D) Genel Manipülasyon
-        features['manipulation_score'] = self.detect_manipulation_pattern(history)
+        # D) Genel Manipülasyon - Recursive çağrıyı kaldır, doğrudan hesapla
+        features['manipulation_score'] = self._calculate_manipulation_score_direct(features)
         
         return features
     
@@ -340,24 +340,16 @@ class PsychologicalAnalyzer:
         
         return {'gambler_fallacy_risk': float(fallacy_risk)}
     
-    def detect_manipulation_pattern(self, history: List[float]) -> float:
+    def _calculate_manipulation_score_direct(self, features: Dict[str, float]) -> float:
         """
-        Genel manipülasyon pattern skoru
-        
-        Tüm psikolojik faktörleri birleştiren genel skor
+        Manipülasyon skorunu doğrudan hesapla (recursive çağrı olmadan)
         
         Args:
-            history: Geçmiş değerler
+            features: Zaten hesaplanmış psikolojik özellikler
             
         Returns:
             Genel manipülasyon skoru (0-1)
         """
-        if len(history) < 20:
-            return 0.0
-        
-        # Tüm skorları al
-        features = self.analyze_psychological_patterns(history)
-        
         # Ağırlıklı ortalama
         weights = {
             'bait_switch_score': 0.25,
@@ -374,6 +366,27 @@ class PsychologicalAnalyzer:
                 manipulation_score += features[feature] * weight
         
         return float(manipulation_score)
+    
+    def detect_manipulation_pattern(self, history: List[float]) -> float:
+        """
+        Genel manipülasyon pattern skoru
+        
+        Tüm psikolojik faktörleri birleştiren genel skor
+        
+        Args:
+            history: Geçmiş değerler
+            
+        Returns:
+            Genel manipülasyon skoru (0-1)
+        """
+        if len(history) < 20:
+            return 0.0
+        
+        # Tüm skorları al (recursive değil, direct)
+        features = self.analyze_psychological_patterns(history)
+        
+        # Manipülasyon skorunu doğrudan hesapla
+        return self._calculate_manipulation_score_direct(features)
     
     def _get_default_features(self) -> Dict[str, float]:
         """Default özellikler (yetersiz veri durumunda)"""
