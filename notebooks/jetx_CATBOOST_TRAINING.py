@@ -70,6 +70,12 @@ if not os.path.exists('jetxpredictor'):
 os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
 
+# GPU Konfigürasyonunu yükle ve uygula
+from utils.gpu_config import setup_catboost_gpu, print_gpu_status
+print_gpu_status()
+catboost_gpu_config = setup_catboost_gpu()
+print()
+
 from category_definitions import CategoryDefinitions, FeatureEngineering
 # from utils.virtual_bankroll_callback import CatBoostBankrollCallback # Bu callback hatalı ve kullanılmıyor.
 from utils.focal_loss import CatBoostFocalLoss
@@ -177,20 +183,20 @@ print("="*80)
 reg_start = time.time()
 
 # CatBoost parametreleri - OPTIMIZE EDİLDİ + EARLY STOPPING KALDIRILDI
-regressor = CatBoostRegressor(
-    iterations=1500,           # 500 → 1500 (3x artış)
-    depth=10,                  # 8 → 10 (daha derin ağaçlar)
-    learning_rate=0.03,        # 0.05 → 0.03 (daha stabil)
-    l2_leaf_reg=5,             # YENİ: Overfitting önleme
-    bootstrap_type='Bernoulli',  # YENİ: subsample için gerekli
-    subsample=0.8,             # YENİ: Stochastic gradient
-    loss_function='MAE',
-    eval_metric='MAE',
-    task_type='GPU',  # GPU → CPU (callback compatibility için) -> GPU'ya çevrildi
-    verbose=100,               # 50 → 100 (daha az log)
-    random_state=42
-    # early_stopping_rounds KALDIRILDI - Tüm 1500 iterasyon tamamlanacak
-)
+regressor_params = {
+    'iterations': 1500,           # 500 → 1500 (3x artış)
+    'depth': 10,                  # 8 → 10 (daha derin ağaçlar)
+    'learning_rate': 0.03,        # 0.05 → 0.03 (daha stabil)
+    'l2_leaf_reg': 5,             # YENİ: Overfitting önleme
+    'bootstrap_type': 'Bernoulli',  # YENİ: subsample için gerekli
+    'subsample': 0.8,             # YENİ: Stochastic gradient
+    'loss_function': 'MAE',
+    'eval_metric': 'MAE',
+    'verbose': 100,               # 50 → 100 (daha az log)
+    'random_state': 42,
+    **catboost_gpu_config  # GPU konfigürasyonunu ekle
+}
+regressor = CatBoostRegressor(**regressor_params)
 
 print("📊 Model Parametreleri (Optimize):")
 print(f"  iterations: 1500 (500 → 1500)")
@@ -259,22 +265,22 @@ print(f"  Toplam 1.5 altı: {below_count:,} örnek")
 print(f"  Toplam 1.5 üstü: {above_count:,} örnek\n")
 
 # CatBoost parametreleri - OPTIMIZE EDİLDİ + EARLY STOPPING KALDIRILDI
-classifier = CatBoostClassifier(
-    iterations=1500,           # 500 → 1500 (3x artış)
-    depth=9,                   # 7 → 9 (daha derin ağaçlar)
-    learning_rate=0.03,        # 0.05 → 0.03 (daha stabil)
-    l2_leaf_reg=5,             # YENİ: Overfitting önleme
-    bootstrap_type='Bernoulli',  # YENİ: subsample için gerekli
-    subsample=0.8,             # YENİ: Stochastic gradient
-    loss_function=CatBoostFocalLoss(),  # Logloss -> Focal Loss
-    eval_metric='Accuracy',
-    task_type='GPU',  # GPU → CPU (callback compatibility için) -> GPU'ya çevrildi
-    class_weights=class_weights, # Manuel sınıf ağırlıklarını etkinleştir
+classifier_params = {
+    'iterations': 1500,           # 500 → 1500 (3x artış)
+    'depth': 9,                   # 7 → 9 (daha derin ağaçlar)
+    'learning_rate': 0.03,        # 0.05 → 0.03 (daha stabil)
+    'l2_leaf_reg': 5,             # YENİ: Overfitting önleme
+    'bootstrap_type': 'Bernoulli',  # YENİ: subsample için gerekli
+    'subsample': 0.8,             # YENİ: Stochastic gradient
+    'loss_function': CatBoostFocalLoss(),  # Logloss -> Focal Loss
+    'eval_metric': 'Accuracy',
+    'class_weights': class_weights, # Manuel sınıf ağırlıklarını etkinleştir
     # auto_class_weights='Balanced', # Focal Loss ile birlikte kullanılmaz
-    verbose=100,               # 50 → 100 (daha az log)
-    random_state=42
-    # early_stopping_rounds KALDIRILDI - Tüm 1500 iterasyon tamamlanacak
-)
+    'verbose': 100,               # 50 → 100 (daha az log)
+    'random_state': 42,
+    **catboost_gpu_config  # GPU konfigürasyonunu ekle
+}
+classifier = CatBoostClassifier(**classifier_params)
 
 print("📊 Model Parametreleri (Optimize):")
 print(f"  iterations: 1500 (500 → 1500)")

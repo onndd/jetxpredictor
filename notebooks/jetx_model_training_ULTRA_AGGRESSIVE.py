@@ -49,8 +49,7 @@ from tqdm.auto import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
-print(f"TensorFlow: {tf.__version__}")
-print(f"GPU: {'✅ MEVCUT' if len(tf.config.list_physical_devices('GPU')) > 0 else '❌ YOK (CPU ile 10x daha uzun sürer)'}")
+print(f"✅ TensorFlow: {tf.__version__}")
 
 # =============================================================================
 # PROJE YÜKLE
@@ -61,6 +60,12 @@ if not os.path.exists('jetxpredictor'):
 
 os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
+
+# GPU Konfigürasyonunu yükle ve uygula
+from utils.gpu_config import setup_tensorflow_gpu, print_gpu_status
+print_gpu_status()
+gpu_config = setup_tensorflow_gpu()
+print()
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.advanced_bankroll import AdvancedBankrollManager

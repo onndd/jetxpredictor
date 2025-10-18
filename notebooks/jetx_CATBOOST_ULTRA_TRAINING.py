@@ -61,6 +61,12 @@ if not os.path.exists('jetxpredictor'):
 os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
 
+# GPU Konfigürasyonunu yükle ve uygula
+from utils.gpu_config import setup_catboost_gpu, print_gpu_status
+print_gpu_status()
+catboost_gpu_config = setup_catboost_gpu()
+print()
+
 from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.catboost_ensemble import CatBoostEnsemble, CrossValidatedEnsemble
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
@@ -178,10 +184,10 @@ base_reg_params = {
     'leaf_estimation_iterations': 10,  # YENİ
     'loss_function': 'MAE',
     'eval_metric': 'MAE',
-    'task_type': 'GPU',  # GPU aktif!
     'bootstrap_type': 'Bernoulli',  # Bernoulli (subsample ile uyumlu)
     'subsample': 0.8,  # YENİ - Bernoulli ile uyumlu
-    'verbose': 100
+    'verbose': 100,
+    **catboost_gpu_config  # GPU konfigürasyonunu ekle
 }
 
 print("📊 ULTRA AGGRESSIVE Parametreler:")
@@ -260,11 +266,11 @@ base_cls_params = {
     'leaf_estimation_iterations': 10,
     'loss_function': 'Logloss',
     'eval_metric': 'Accuracy',
-    'task_type': 'GPU',
     'bootstrap_type': 'Bernoulli',  # Bernoulli (subsample ile uyumlu)
     'subsample': 0.8,  # YENİ - Bernoulli ile uyumlu
     'auto_class_weights': 'Balanced',
-    'verbose': 100
+    'verbose': 100,
+    **catboost_gpu_config  # GPU konfigürasyonunu ekle
 }
 
 print("📊 ULTRA AGGRESSIVE Parametreler:")

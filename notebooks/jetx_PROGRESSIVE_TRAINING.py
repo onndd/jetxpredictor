@@ -24,22 +24,10 @@ import os
 import time
 from datetime import datetime
 
-# ============================================================================
-# XLA OPTİMİZASYONU DEVRE DIŞI (GPU Derleyici Hatası Önleme)
-# ============================================================================
-# Transformer modeli GPU'da derlenirken register overflow hatası veriyor.
-# XLA'yı devre dışı bırakarak bu sorunu çözüyoruz.
-# Not: Eğitim %10-15 daha yavaş olabilir ama model çalışacak.
-os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # TensorFlow uyarılarını azalt
-
 print("="*80)
 print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print()
-print("⚙️  XLA optimizasyonu devre dışı (GPU uyumluluk için)")
-print("   → Eğitim biraz daha yavaş olabilir ama model kararlı çalışacak")
 print()
 
 # Kütüphaneleri yükle
@@ -76,6 +64,12 @@ if not os.path.exists('jetxpredictor'):
 
 os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
+
+# GPU Konfigürasyonunu yükle ve uygula
+from utils.gpu_config import setup_tensorflow_gpu, print_gpu_status
+print_gpu_status()
+gpu_config = setup_tensorflow_gpu()
+print()
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.balanced_batch_generator import BalancedBatchGenerator
