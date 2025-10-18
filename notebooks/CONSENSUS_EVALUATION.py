@@ -74,6 +74,28 @@ from utils.consensus_predictor import ConsensusPredictor, simulate_consensus_ban
 from utils.multi_scale_window import split_data_preserving_order
 print(f"✅ Consensus modülü yüklendi\n")
 
+# Google Drive mount (Colab için)
+try:
+    from google.colab import drive
+    
+    if not os.path.exists('/content/drive'):
+        print("\n📦 Google Drive bağlanıyor...")
+        drive.mount('/content/drive')
+    
+    # Model kayıt dizini
+    DRIVE_MODEL_DIR = '/content/drive/MyDrive/JetX_Models/Consensus/'
+    os.makedirs(DRIVE_MODEL_DIR, exist_ok=True)
+    print(f"✅ Google Drive bağlandı: {DRIVE_MODEL_DIR}")
+    USE_DRIVE = True
+except ImportError:
+    print("⚠️ Google Colab dışında - lokal kayıt kullanılacak")
+    DRIVE_MODEL_DIR = 'results/'
+    USE_DRIVE = False
+except Exception as e:
+    print(f"⚠️ Google Drive mount hatası: {e}")
+    DRIVE_MODEL_DIR = 'results/'
+    USE_DRIVE = False
+
 # =============================================================================
 # VERİ YÜKLEME
 # =============================================================================
@@ -323,7 +345,7 @@ print("\n" + "="*80)
 print("💾 SONUÇLAR KAYDEDİLİYOR")
 print("="*80)
 
-os.makedirs('results', exist_ok=True)
+os.makedirs(DRIVE_MODEL_DIR, exist_ok=True)
 
 results_dict = {
     'evaluation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -358,10 +380,10 @@ results_dict = {
     'false_consensus': len(false_consensus)
 }
 
-with open('results/consensus_evaluation.json', 'w') as f:
+with open(f'{DRIVE_MODEL_DIR}consensus_evaluation.json', 'w') as f:
     json.dump(results_dict, f, indent=2)
 
-print(f"✅ Sonuçlar kaydedildi: results/consensus_evaluation.json")
+print(f"✅ Sonuçlar kaydedildi: {DRIVE_MODEL_DIR}consensus_evaluation.json")
 
 # =============================================================================
 # FINAL RAPOR

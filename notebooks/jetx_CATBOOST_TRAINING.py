@@ -62,6 +62,28 @@ warnings.filterwarnings('ignore')
 
 print(f"✅ CatBoost: İmport edildi")
 
+# Google Drive mount (Colab için)
+try:
+    from google.colab import drive
+    
+    if not os.path.exists('/content/drive'):
+        print("\n📦 Google Drive bağlanıyor...")
+        drive.mount('/content/drive')
+    
+    # Model kayıt dizini
+    DRIVE_MODEL_DIR = '/content/drive/MyDrive/JetX_Models/CatBoost/'
+    os.makedirs(DRIVE_MODEL_DIR, exist_ok=True)
+    print(f"✅ Google Drive bağlandı: {DRIVE_MODEL_DIR}")
+    USE_DRIVE = True
+except ImportError:
+    print("⚠️ Google Colab dışında - lokal kayıt kullanılacak")
+    DRIVE_MODEL_DIR = 'models/'
+    USE_DRIVE = False
+except Exception as e:
+    print(f"⚠️ Google Drive mount hatası: {e}")
+    DRIVE_MODEL_DIR = 'models/'
+    USE_DRIVE = False
+
 # Proje yükle
 if not os.path.exists('jetxpredictor'):
     print("\n📥 Proje klonlanıyor...")
@@ -513,15 +535,15 @@ import shutil
 os.makedirs('models', exist_ok=True)
 
 # 1. CatBoost Regressor (.cbm formatı)
-regressor.save_model('models/catboost_regressor.cbm')
+regressor.save_model(f'{DRIVE_MODEL_DIR}catboost_regressor.cbm')
 print("✅ CatBoost Regressor kaydedildi: catboost_regressor.cbm")
 
 # 2. CatBoost Classifier (.cbm formatı)
-classifier.save_model('models/catboost_classifier.cbm')
+classifier.save_model(f'{DRIVE_MODEL_DIR}catboost_classifier.cbm')
 print("✅ CatBoost Classifier kaydedildi: catboost_classifier.cbm")
 
 # 3. Scaler
-joblib.dump(scaler, 'models/catboost_scaler.pkl')
+joblib.dump(scaler, f'{DRIVE_MODEL_DIR}catboost_scaler.pkl')
 print("✅ Scaler kaydedildi: catboost_scaler.pkl")
 
 # 4. Model bilgileri (JSON)
@@ -591,7 +613,7 @@ info = {
     'top_features': [{'name': feat, 'importance': float(imp)} for feat, imp in top_features]
 }
 
-with open('models/catboost_model_info.json', 'w') as f:
+with open(f'{DRIVE_MODEL_DIR}catboost_model_info.json', 'w') as f:
     json.dump(info, f, indent=2)
 print("✅ Model bilgileri kaydedildi: catboost_model_info.json")
 

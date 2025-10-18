@@ -37,6 +37,24 @@ from datetime import datetime
 import json
 import shutil
 
+# =============================================================================
+# GOOGLE DRIVE BAĞLANTISI
+# =============================================================================
+try:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    # Modellerin kaydedileceği ana klasör
+    DRIVE_OUTPUT_DIR = '/content/drive/MyDrive/jetx_models_output'
+    print(f"✅ Google Drive bağlandı. Modeller şu klasöre kaydedilecek: {DRIVE_OUTPUT_DIR}")
+except ImportError:
+    DRIVE_OUTPUT_DIR = 'models' # Colab dışı için normal klasör
+    print("⚠️ Colab ortamı değil. Modeller lokal 'models' klasörüne kaydedilecek.")
+except Exception as e:
+    DRIVE_OUTPUT_DIR = 'models' # Hata durumunda normal klasör
+    print(f"⚠️ Drive bağlantı hatası: {e}. Modeller lokal 'models' klasörüne kaydedilecek.")
+
+os.makedirs(DRIVE_OUTPUT_DIR, exist_ok=True)
+
 print("="*80)
 print("🤖 JetX CATBOOST TRAINING - MULTI-SCALE WINDOW ENSEMBLE")
 print("="*80)
@@ -46,6 +64,7 @@ print("🔧 YENİ SİSTEM: Her pencere boyutu için ayrı CatBoost modeli")
 print("   Window boyutları: [500, 250, 100, 50, 20]")
 print("   ⚠️  Veri sırası KORUNUYOR (shuffle=False)")
 print("   ⚠️  Data augmentation KAPALI")
+print(f"📁 Çıktı klasörü: {DRIVE_OUTPUT_DIR}")
 print()
 
 # Kütüphaneleri yükle
@@ -131,7 +150,7 @@ train_data, val_data, test_data = split_data_preserving_order(
 print("\n🔧 MULTI-SCALE FEATURE EXTRACTION...")
 print("📌 Her pencere boyutu için feature engineering")
 
-window_sizes = [500, 250, 100, 50, 20]
+window_sizes = [1000, 500, 250, 100, 50, 20]
 
 def extract_features_for_window(data, window_size, start_idx=None, end_idx=None):
     """
@@ -632,31 +651,33 @@ print(f"  ROI: {roi2:+.2f}%")
 print("\n" + "="*80)
 
 # =============================================================================
-# MODEL KAYDETME
+# MODEL KAYDETME (GOOGLE DRIVE'A)
 # =============================================================================
 print("\n" + "="*80)
-print("💾 MODELLER KAYDEDİLİYOR")
+print("💾 MODELLER GOOGLE DRIVE'A KAYDEDİLİYOR")
 print("="*80)
 
-os.makedirs('models/catboost_multiscale', exist_ok=True)
+# CatBoost multiscale klasörü
+catboost_dir = os.path.join(DRIVE_OUTPUT_DIR, 'catboost_multiscale')
+os.makedirs(catboost_dir, exist_ok=True)
 
 # Her window için model kaydet
 for window_size in window_sizes:
     model_dict = trained_models[window_size]
     
-    # Regressor
-    reg_path = f'models/catboost_multiscale/regressor_window_{window_size}.cbm'
+    # Regressor - Drive'a kaydet
+    reg_path = os.path.join(catboost_dir, f'regressor_window_{window_size}.cbm')
     model_dict['regressor'].save_model(reg_path)
     
-    # Classifier
-    cls_path = f'models/catboost_multiscale/classifier_window_{window_size}.cbm'
+    # Classifier - Drive'a kaydet
+    cls_path = os.path.join(catboost_dir, f'classifier_window_{window_size}.cbm')
     model_dict['classifier'].save_model(cls_path)
     
-    # Scaler
-    scaler_path = f'models/catboost_multiscale/scaler_window_{window_size}.pkl'
+    # Scaler - Drive'a kaydet
+    scaler_path = os.path.join(catboost_dir, f'scaler_window_{window_size}.pkl')
     joblib.dump(model_dict['scaler'], scaler_path)
     
-    print(f"✅ Window {window_size} kaydedildi")
+    print(f"✅ Window {window_size} Drive'a kaydedildi")
 
 # Model bilgileri
 info = {
@@ -699,38 +720,13 @@ info = {
     }
 }
 
-with open('models/catboost_multiscale/model_info.json', 'w') as f:
+# Model bilgilerini Drive'a kaydet
+info_path = os.path.join(catboost_dir, 'model_info.json')
+with open(info_path, 'w') as f:
     json.dump(info, f, indent=2)
 
-print(f"✅ Model bilgileri kaydedildi")
-
-# ZIP oluştur
-zip_filename = 'jetx_models_catboost_multiscale_v3.0'
-shutil.make_archive(zip_filename, 'zip', 'models/catboost_multiscale')
-
-print(f"\n✅ ZIP dosyası oluşturuldu: {zip_filename}.zip")
-print(f"📦 Boyut: {os.path.getsize(f'{zip_filename}.zip') / (1024*1024):.2f} MB")
-
-# Google Colab'da indirme
-try:
-    import google.colab
-    IN_COLAB = True
-except ImportError:
-    IN_COLAB = False
-
-if IN_COLAB:
-    try:
-        from google.colab import files
-        print(f"✅ {zip_filename}.zip tarayıcınıza indiriliyor...")
-        print(f"   Eğer otomatik indirme başlamazsa, sol panelden Files sekmesine gidin")
-        print(f"   ve '{zip_filename}.zip' dosyasına sağ tıklayıp 'Download' seçin.")
-        files.download(f'{zip_filename}.zip')
-    except Exception as e:
-        print(f"⚠️ Otomatik indirme hatası: {e}")
-        print(f"📁 Manuel indirme: Sol panelden Files → '{zip_filename}.zip' → Download")
-else:
-    print(f"📁 ZIP dosyası mevcut: {zip_filename}.zip")
-
+print(f"✅ Model bilgileri Drive'a kaydedildi")
+print(f"📁 Tüm dosyalar şurada: {catboost_dir}")
 print("="*80)
 
 # =============================================================================
@@ -751,7 +747,7 @@ elif below_acc_ensemble >= 0.70:
     print(f"  🔴 1.5 ALTI: {below_acc_ensemble*100:.1f}%")
 else:
     print("⚠️ Hedefin altında")
-    print(f"  🔴 1.5 ALTI: {below_acc_ensemble*100:.1f}% (Hedef: 75%+)")
+    print(f"  � 1.5 ALTI: {below_acc_ensemble*100:.1f}% (Hedef: 75%+)")
 
 print(f"\n{'='*80}")
 print(f"Bitiş: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

@@ -32,6 +32,24 @@ import shutil
 from pathlib import Path
 import pickle
 
+# =============================================================================
+# GOOGLE DRIVE BAĞLANTISI
+# =============================================================================
+try:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    # Modellerin kaydedileceği ana klasör
+    DRIVE_OUTPUT_DIR = '/content/drive/MyDrive/jetx_models_output'
+    print(f"✅ Google Drive bağlandı. Modeller şu klasöre kaydedilecek: {DRIVE_OUTPUT_DIR}")
+except ImportError:
+    DRIVE_OUTPUT_DIR = 'models' # Colab dışı için normal klasör
+    print("⚠️ Colab ortamı değil. Modeller lokal 'models' klasörüne kaydedilecek.")
+except Exception as e:
+    DRIVE_OUTPUT_DIR = 'models' # Hata durumunda normal klasör
+    print(f"⚠️ Drive bağlantı hatası: {e}. Modeller lokal 'models' klasörüne kaydedilecek.")
+
+os.makedirs(DRIVE_OUTPUT_DIR, exist_ok=True)
+
 # XLA optimizasyonu devre dışı
 os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -45,6 +63,7 @@ print("🔧 YENİ SİSTEM: Her pencere boyutu için ayrı model")
 print("   Window boyutları: [500, 250, 100, 50, 20]")
 print("   ⚠️  Veri sırası KORUNUYOR (shuffle=False)")
 print("   ⚠️  Data augmentation KAPALI")
+print(f"📁 Çıktı klasörü: {DRIVE_OUTPUT_DIR}")
 print()
 
 # Kütüphaneleri yükle
@@ -140,7 +159,7 @@ train_data, val_data, test_data = split_data_preserving_order(
 print("\n🔧 MULTI-SCALE FEATURE EXTRACTION...")
 print("📌 Her pencere boyutu için feature engineering")
 
-window_sizes = [500, 250, 100, 50, 20]
+window_sizes = [1000, 500, 250, 100, 50, 20]
 
 def extract_features_for_window(data, window_size, start_idx=None, end_idx=None):
     """
@@ -546,8 +565,9 @@ for window_size in window_sizes:
     )
     
     # Callbacks
-    checkpoint_path = f'models/progressive_window_{window_size}_best.h5'
-    os.makedirs('models', exist_ok=True)
+    progressive_dir = os.path.join(DRIVE_OUTPUT_DIR, 'progressive_multiscale')
+    os.makedirs(progressive_dir, exist_ok=True)
+    checkpoint_path = os.path.join(progressive_dir, f'progressive_window_{window_size}_best.h5')
     
     # Detaylı metrikler callback'i
     detailed_metrics = DetailedMetricsCallback(
@@ -831,27 +851,29 @@ print(f"  ROI: {roi2:+.2f}%")
 print("\n" + "="*80)
 
 # =============================================================================
-# MODEL KAYDETME
+# MODEL KAYDETME (GOOGLE DRIVE'A)
 # =============================================================================
 print("\n" + "="*80)
-print("💾 MODELLER KAYDEDİLİYOR")
+print("💾 MODELLER GOOGLE DRIVE'A KAYDEDİLİYOR")
 print("="*80)
 
-os.makedirs('models/progressive_multiscale', exist_ok=True)
+# Progressive multiscale klasörü
+progressive_dir = os.path.join(DRIVE_OUTPUT_DIR, 'progressive_multiscale')
+os.makedirs(progressive_dir, exist_ok=True)
 
 # Her window için model kaydet
 for window_size in window_sizes:
     model_dict = trained_models[window_size]
     
-    # Model
-    model_path = f'models/progressive_multiscale/model_window_{window_size}.h5'
+    # Model - Drive'a kaydet
+    model_path = os.path.join(progressive_dir, f'model_window_{window_size}.h5')
     model_dict['model'].save(model_path)
     
-    # Scaler
-    scaler_path = f'models/progressive_multiscale/scaler_window_{window_size}.pkl'
+    # Scaler - Drive'a kaydet
+    scaler_path = os.path.join(progressive_dir, f'scaler_window_{window_size}.pkl')
     joblib.dump(model_dict['scaler'], scaler_path)
     
-    print(f"✅ Window {window_size} kaydedildi")
+    print(f"✅ Window {window_size} Drive'a kaydedildi")
 
 # Model bilgileri
 info = {
@@ -893,35 +915,13 @@ info = {
     }
 }
 
-with open('models/progressive_multiscale/model_info.json', 'w') as f:
+# Model bilgilerini Drive'a kaydet
+info_path = os.path.join(progressive_dir, 'model_info.json')
+with open(info_path, 'w') as f:
     json.dump(info, f, indent=2)
 
-print(f"✅ Model bilgileri kaydedildi")
-
-# ZIP oluştur
-zip_filename = 'jetx_models_progressive_multiscale_v3.0'
-shutil.make_archive(zip_filename, 'zip', 'models/progressive_multiscale')
-
-print(f"\n✅ ZIP dosyası oluşturuldu: {zip_filename}.zip")
-print(f"📦 Boyut: {os.path.getsize(f'{zip_filename}.zip') / (1024*1024):.2f} MB")
-
-# Google Colab'da indirme
-try:
-    import google.colab
-    IN_COLAB = True
-except ImportError:
-    IN_COLAB = False
-
-if IN_COLAB:
-    try:
-        from google.colab import files
-        files.download(f'{zip_filename}.zip')
-        print(f"✅ {zip_filename}.zip indiriliyor...")
-    except Exception as e:
-        print(f"⚠️ İndirme hatası: {e}")
-else:
-    print(f"📁 ZIP dosyası mevcut: {zip_filename}.zip")
-
+print(f"✅ Model bilgileri Drive'a kaydedildi")
+print(f"📁 Tüm dosyalar şurada: {progressive_dir}")
 print("="*80)
 
 # =============================================================================
@@ -942,7 +942,7 @@ elif below_acc_ensemble >= 0.70:
     print(f"  🔴 1.5 ALTI: {below_acc_ensemble*100:.1f}%")
 else:
     print("⚠️ Hedefin altında")
-    print(f"  🔴 1.5 ALTI: {below_acc_ensemble*100:.1f}% (Hedef: 75%+)")
+    print(f"  � 1.5 ALTI: {below_acc_ensemble*100:.1f}% (Hedef: 75%+)")
 
 print(f"\n{'='*80}")
 print(f"Bitiş: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

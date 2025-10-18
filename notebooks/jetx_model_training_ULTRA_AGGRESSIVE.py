@@ -51,6 +51,28 @@ warnings.filterwarnings('ignore')
 
 print(f"✅ TensorFlow: {tf.__version__}")
 
+# Google Drive mount (Colab için)
+try:
+    from google.colab import drive
+    
+    if not os.path.exists('/content/drive'):
+        print("\n📦 Google Drive bağlanıyor...")
+        drive.mount('/content/drive')
+    
+    # Model kayıt dizini
+    DRIVE_MODEL_DIR = '/content/drive/MyDrive/JetX_Models/Ultra_Aggressive/'
+    os.makedirs(DRIVE_MODEL_DIR, exist_ok=True)
+    print(f"✅ Google Drive bağlandı: {DRIVE_MODEL_DIR}")
+    USE_DRIVE = True
+except ImportError:
+    print("⚠️ Google Colab dışında - lokal kayıt kullanılacak")
+    DRIVE_MODEL_DIR = 'models/'
+    USE_DRIVE = False
+except Exception as e:
+    print(f"⚠️ Google Drive mount hatası: {e}")
+    DRIVE_MODEL_DIR = 'models/'
+    USE_DRIVE = False
+
 # =============================================================================
 # PROJE YÜKLE
 # =============================================================================
@@ -401,7 +423,7 @@ ultra_metrics = UltraMetricsCallback()
 
 cb = [
     callbacks.ModelCheckpoint(
-        'jetx_ultra_best.h5',
+        f'{DRIVE_MODEL_DIR}jetx_ultra_best.h5',
         monitor='val_threshold_accuracy',
         save_best_only=True,
         mode='max',
@@ -543,8 +565,8 @@ print(classification_report(thr_true, thr_pred, target_names=['1.5 Altı', '1.5 
 # =============================================================================
 print("\n💾 Model ve dosyalar kaydediliyor...")
 
-model.save('jetx_ultra_model.h5')
-joblib.dump(scaler, 'scaler_ultra.pkl')
+model.save(f'{DRIVE_MODEL_DIR}jetx_ultra_model.h5')
+joblib.dump(scaler, f'{DRIVE_MODEL_DIR}scaler_ultra.pkl')
 
 import json
 info = {
@@ -573,7 +595,7 @@ info = {
     }
 }
 
-with open('ultra_model_info.json', 'w') as f:
+with open(f'{DRIVE_MODEL_DIR}ultra_model_info.json', 'w') as f:
     json.dump(info, f, indent=2)
 
 print("✅ Dosyalar kaydedildi:")

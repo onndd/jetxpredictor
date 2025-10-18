@@ -48,6 +48,28 @@ from category_definitions import CategoryDefinitions, FeatureEngineering
 
 print("✅ Proje yüklendi")
 
+# Google Drive mount (Colab için)
+try:
+    from google.colab import drive
+    
+    if not os.path.exists('/content/drive'):
+        print("\n📦 Google Drive bağlanıyor...")
+        drive.mount('/content/drive')
+    
+    # Model kayıt dizini
+    DRIVE_MODEL_DIR = '/content/drive/MyDrive/JetX_Models/Meta_Model/'
+    os.makedirs(DRIVE_MODEL_DIR, exist_ok=True)
+    print(f"✅ Google Drive bağlandı: {DRIVE_MODEL_DIR}")
+    USE_DRIVE = True
+except ImportError:
+    print("⚠️ Google Colab dışında - lokal kayıt kullanılacak")
+    DRIVE_MODEL_DIR = 'models/'
+    USE_DRIVE = False
+except Exception as e:
+    print(f"⚠️ Google Drive mount hatası: {e}")
+    DRIVE_MODEL_DIR = 'models/'
+    USE_DRIVE = False
+
 # =============================================================================
 # VERİ YÜKLE
 # =============================================================================
@@ -420,8 +442,8 @@ axes[1, 1].axvline(x=0.5, color='red', linestyle='--', label='Threshold')
 axes[1, 1].legend()
 
 plt.tight_layout()
-plt.savefig('meta_model_evaluation.png', dpi=300, bbox_inches='tight')
-print("✅ Görselleştirme kaydedildi: meta_model_evaluation.png")
+plt.savefig(f'{DRIVE_MODEL_DIR}meta_model_evaluation.png', dpi=300, bbox_inches='tight')
+print(f"✅ Görselleştirme kaydedildi: {DRIVE_MODEL_DIR}meta_model_evaluation.png")
 
 # =============================================================================
 # SAVE META-MODEL
@@ -430,6 +452,7 @@ print("\n💾 Meta-model kaydediliyor...")
 
 # Modeli kaydet
 os.makedirs('models', exist_ok=True)
+meta_model.save_model(f'{DRIVE_MODEL_DIR}meta_model.json')
 meta_model.save_model('models/meta_model.json')
 
 # Model bilgilerini kaydet
@@ -461,12 +484,12 @@ model_info = {
     }
 }
 
-with open('models/meta_model_info.json', 'w') as f:
+with open(f'{DRIVE_MODEL_DIR}meta_model_info.json', 'w') as f:
     json.dump(model_info, f, indent=2)
 
 print("✅ Dosyalar kaydedildi:")
-print("- models/meta_model.json")
-print("- models/meta_model_info.json")
+print(f"- {DRIVE_MODEL_DIR}meta_model.json")
+print(f"- {DRIVE_MODEL_DIR}meta_model_info.json")
 print("- meta_model_evaluation.png")
 
 # Google Colab'da ise indir

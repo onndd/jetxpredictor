@@ -57,6 +57,28 @@ warnings.filterwarnings('ignore')
 print(f"✅ TensorFlow: {tf.__version__}")
 print(f"✅ GPU: {'Mevcut' if len(tf.config.list_physical_devices('GPU')) > 0 else 'Yok (CPU)'}")
 
+# Google Drive mount (Colab için)
+try:
+    from google.colab import drive
+    
+    if not os.path.exists('/content/drive'):
+        print("\n📦 Google Drive bağlanıyor...")
+        drive.mount('/content/drive')
+    
+    # Model kayıt dizini
+    DRIVE_MODEL_DIR = '/content/drive/MyDrive/JetX_Models/Progressive/'
+    os.makedirs(DRIVE_MODEL_DIR, exist_ok=True)
+    print(f"✅ Google Drive bağlandı: {DRIVE_MODEL_DIR}")
+    USE_DRIVE = True
+except ImportError:
+    print("⚠️ Google Colab dışında - lokal kayıt kullanılacak")
+    DRIVE_MODEL_DIR = 'models/'
+    USE_DRIVE = False
+except Exception as e:
+    print(f"⚠️ Google Drive mount hatası: {e}")
+    DRIVE_MODEL_DIR = 'models/'
+    USE_DRIVE = False
+
 # Proje yükle
 if not os.path.exists('jetxpredictor'):
     print("\n📥 Proje klonlanıyor...")

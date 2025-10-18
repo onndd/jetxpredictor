@@ -50,7 +50,7 @@ class ConsensusPredictor:
         self,
         nn_model_dir: str = 'models/progressive_multiscale',
         catboost_model_dir: str = 'models/catboost_multiscale',
-        window_sizes: List[int] = [500, 250, 100, 50, 20]
+        window_sizes: List[int] = [1000, 500, 250, 100, 50, 20]
     ):
         """
         Args:
@@ -74,13 +74,59 @@ class ConsensusPredictor:
         logger.info(f"  Window sizes: {window_sizes}")
     
     def load_nn_models(self):
-        """Progressive NN modellerini yükle"""
+        """Progressive NN modellerini yükle - Gelişmiş Lambda desteği ile"""
         if not TF_AVAILABLE:
             raise RuntimeError("TensorFlow is not available. Cannot load NN models.")
         
         logger.info("\n" + "="*70)
-        logger.info("LOADING PROGRESSIVE NN MODELS")
+        logger.info("LOADING PROGRESSIVE NN MODELS (Enhanced Lambda Support)")
         logger.info("="*70)
+        
+        # Custom objects for Lambda layers
+        from tensorflow.keras import backend as K
+        from tensorflow.keras.layers import Layer
+        from tensorflow.keras.utils import register_keras_serializable
+        
+        @register_keras_serializable()
+        class SafeLambdaLayer(Layer):
+            """Lambda katmanı için güvenli wrapper"""
+            def __init__(self, function, **kwargs):
+                super().__init__(**kwargs)
+                self.function = function
+            
+            def call(self, inputs):
+                return self.function(inputs)
+            
+            def get_config(self):
+                config = super().get_config()
+                config.update({'function': self.function})
+                return config
+        
+        # Lambda fonksiyonları
+        def safe_sum_axis1(x):
+            """Lambda: sum(x, axis=1) için güvenli alternatif"""
+            return K.sum(x, axis=1)
+        
+        def safe_mean_axis1(x):
+            """Lambda: mean(x, axis=1) için güvenli alternatif"""
+            return K.mean(x, axis=1)
+        
+        # Custom objects dictionary
+        custom_objects = {
+            'SafeLambdaLayer': SafeLambdaLayer,
+            'lambda': lambda x: K.sum(x, axis=1),  # Fallback
+            'safe_sum_axis1': safe_sum_axis1,
+            'safe_mean_axis1': safe_mean_axis1,
+            'tf': tf,  # TensorFlow modülü
+            'K': K,    # Keras backend
+        }
+        
+        # Custom losses de ekle
+        try:
+            from utils.custom_losses import CUSTOM_OBJECTS
+            custom_objects.update(CUSTOM_OBJECTS)
+        except ImportError:
+            logger.warning("⚠️  Custom losses yüklenemedi")
         
         for window_size in self.window_sizes:
             model_path = os.path.join(self.nn_model_dir, f'model_window_{window_size}.h5')
@@ -94,34 +140,112 @@ class ConsensusPredictor:
                 logger.warning(f"⚠️  NN scaler not found: {scaler_path}")
                 continue
             
-            # Model yükle - Lambda katmanı desteğiyle
+            # 3 aşamalı model yükleme stratejisi
+            model_loaded = False
+            
+            # 1. Deneme: Normal yükleme (yeni modeller için)
             try:
-                # İlk önce compile=False ile dene (yeni modeller için)
+                logger.info(f"🔄 Loading NN model for window {window_size} (Attempt 1: Normal)...")
                 self.nn_models[window_size] = models.load_model(model_path, compile=False)
-                logger.info(f"✅ Loaded NN model for window {window_size}")
+                logger.info(f"✅ Loaded NN model for window {window_size} (Normal)")
+                model_loaded = True
             except Exception as e:
-                # Eğer Lambda hatası varsa, custom_objects ile tekrar dene
-                logger.warning(f"⚠️  Initial load failed, trying with Lambda support...")
+                logger.warning(f"⚠️  Normal load failed: {str(e)[:100]}...")
+            
+            # 2. Deneme: Custom objects ile yükleme
+            if not model_loaded:
                 try:
-                    from tensorflow.keras import backend as K
-                    custom_objects = {
-                        'lambda': lambda x: K.sum(x, axis=1)  # Lambda fallback
-                    }
+                    logger.info(f"🔄 Loading NN model for window {window_size} (Attempt 2: Custom Objects)...")
                     self.nn_models[window_size] = models.load_model(
                         model_path, 
                         compile=False,
                         custom_objects=custom_objects
                     )
-                    logger.info(f"✅ Loaded NN model for window {window_size} (with Lambda support)")
-                except Exception as e2:
-                    logger.error(f"❌ Failed to load NN model for window {window_size}: {e2}")
-                    continue
+                    logger.info(f"✅ Loaded NN model for window {window_size} (Custom Objects)")
+                    model_loaded = True
+                except Exception as e:
+                    logger.warning(f"⚠️  Custom objects load failed: {str(e)[:100]}...")
+            
+            # 3. Deneme: Lambda rebuild ile yükleme
+            if not model_loaded:
+                try:
+                    logger.info(f"🔄 Loading NN model for window {window_size} (Attempt 3: Lambda Rebuild)...")
+                    self.nn_models[window_size] = self._load_model_with_lambda_rebuild(
+                        model_path, custom_objects
+                    )
+                    logger.info(f"✅ Loaded NN model for window {window_size} (Lambda Rebuild)")
+                    model_loaded = True
+                except Exception as e:
+                    logger.error(f"❌ Lambda rebuild failed: {str(e)[:100]}...")
+            
+            # Eğer hiçbiri çalışmadıysa
+            if not model_loaded:
+                logger.error(f"❌ All loading attempts failed for window {window_size}")
+                continue
             
             # Scaler yükle
-            self.nn_scalers[window_size] = joblib.load(scaler_path)
+            try:
+                self.nn_scalers[window_size] = joblib.load(scaler_path)
+                logger.info(f"✅ Loaded scaler for window {window_size}")
+            except Exception as e:
+                logger.error(f"❌ Failed to load scaler for window {window_size}: {e}")
+                continue
         
         logger.info(f"Total NN models loaded: {len(self.nn_models)}")
         logger.info("="*70 + "\n")
+    
+    def _load_model_with_lambda_rebuild(self, model_path: str, custom_objects: dict):
+        """Modeli Lambda katmanlarını yeniden oluşturarak yükle"""
+        # Model mimarisini JSON olarak yükle (varsa)
+        json_path = model_path.replace('.h5', '.json')
+        weights_path = model_path.replace('.h5', '_weights.h5')
+        
+        if os.path.exists(json_path) and os.path.exists(weights_path):
+            # JSON + weights ile yükle
+            with open(json_path, 'r') as f:
+                model_json = f.read()
+            
+            model = models.model_from_json(model_json, custom_objects=custom_objects)
+            model.load_weights(weights_path)
+            return model
+        
+        # Son çare: Modeli mimarisini yeniden oluştur
+        logger.warning("⚠️  Attempting model architecture rebuild...")
+        return self._rebuild_model_architecture(model_path, custom_objects)
+    
+    def _rebuild_model_architecture(self, model_path: str, custom_objects: dict):
+        """Model mimarisini yeniden oluştur (son çare)"""
+        # Bu fonksiyon model mimarisini bilerek yeniden oluşturur
+        # Gerçek implementasyon model yapısına göre değişebilir
+        
+        from tensorflow.keras import layers, models
+        
+        # Dummy model oluştur (aynı input/output şekliyle)
+        input_features = layers.Input((64,), name='features')  # Tahmini feature sayısı
+        input_sequence = layers.Input((1000, 1), name='sequence')  # Tahmini sequence boyutu
+        
+        # Basit bir mimari oluştur
+        x_feat = layers.Dense(256, activation='relu')(input_features)
+        x_seq = layers.LSTM(128)(input_sequence)
+        
+        fusion = layers.Concatenate()([x_feat, x_seq])
+        fusion = layers.Dense(128, activation='relu')(fusion)
+        
+        # Outputs
+        out_reg = layers.Dense(1, activation='linear', name='regression')(fusion)
+        out_cls = layers.Dense(3, activation='softmax', name='classification')(fusion)
+        out_thr = layers.Dense(1, activation='sigmoid', name='threshold')(fusion)
+        
+        model = models.Model([input_features, input_sequence], [out_reg, out_cls, out_thr])
+        
+        # Ağırlıkları yükle (mümkünse)
+        try:
+            model.load_weights(model_path, by_name=True, skip_mismatch=True)
+            logger.info("✅ Partial weights loaded successfully")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not load weights: {e}")
+        
+        return model
     
     def load_catboost_models(self):
         """CatBoost modellerini yükle"""

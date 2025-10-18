@@ -66,6 +66,28 @@ from category_definitions import CategoryDefinitions, FeatureEngineering
 
 print("✅ Proje yüklendi")
 
+# Google Drive mount (Colab için)
+try:
+    from google.colab import drive
+    
+    if not os.path.exists('/content/drive'):
+        print("\n📦 Google Drive bağlanıyor...")
+        drive.mount('/content/drive')
+    
+    # Model kayıt dizini
+    DRIVE_MODEL_DIR = '/content/drive/MyDrive/JetX_Models/Optuna/'
+    os.makedirs(DRIVE_MODEL_DIR, exist_ok=True)
+    print(f"✅ Google Drive bağlandı: {DRIVE_MODEL_DIR}")
+    USE_DRIVE = True
+except ImportError:
+    print("⚠️ Google Colab dışında - lokal kayıt kullanılacak")
+    DRIVE_MODEL_DIR = './'
+    USE_DRIVE = False
+except Exception as e:
+    print(f"⚠️ Google Drive mount hatası: {e}")
+    DRIVE_MODEL_DIR = './'
+    USE_DRIVE = False
+
 # =============================================================================
 # VERİ HAZIRLIK
 # =============================================================================
@@ -445,8 +467,8 @@ ax.colorbar(ax.scatter(weights, accs, alpha=0.6, c=accs, cmap='viridis'), ax=ax,
 ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('optuna_results.png', dpi=300, bbox_inches='tight')
-print("✅ Görselleştirme kaydedildi: optuna_results.png")
+plt.savefig(f'{DRIVE_MODEL_DIR}optuna_results.png', dpi=300, bbox_inches='tight')
+print(f"✅ Görselleştirme kaydedildi: {DRIVE_MODEL_DIR}optuna_results.png")
 
 # Interactive plots (Plotly)
 try:
@@ -454,11 +476,11 @@ try:
     
     # Optimization history
     fig1 = plot_optimization_history(study)
-    pio.write_html(fig1, 'optuna_history.html')
+    pio.write_html(fig1, f'{DRIVE_MODEL_DIR}optuna_history.html')
     
     # Parameter importances
     fig2 = plot_param_importances(study)
-    pio.write_html(fig2, 'optuna_importance.html')
+    pio.write_html(fig2, f'{DRIVE_MODEL_DIR}optuna_importance.html')
     
     print("✅ Interactive plots kaydedildi: optuna_history.html, optuna_importance.html")
 except:
@@ -492,12 +514,12 @@ results = {
     ]
 }
 
-with open('optuna_results.json', 'w') as f:
+with open(f'{DRIVE_MODEL_DIR}optuna_results.json', 'w') as f:
     json.dump(results, f, indent=2)
 
 print("✅ Dosyalar kaydedildi:")
-print("- optuna_results.json")
-print("- optuna_results.png")
+print(f"- {DRIVE_MODEL_DIR}optuna_results.json")
+print(f"- {DRIVE_MODEL_DIR}optuna_results.png")
 print("- optuna_history.html (interaktif)")
 print("- optuna_importance.html (interaktif)")
 

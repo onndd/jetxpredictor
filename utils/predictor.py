@@ -22,6 +22,13 @@ from category_definitions import (
 )
 from utils.custom_losses import CUSTOM_OBJECTS
 
+# TensorFlow import'ı ekle (Lambda katmanları için)
+try:
+    import tensorflow as tf
+except ImportError:
+    tf = None
+    logging.warning("TensorFlow not available. Lambda layer support will be limited.")
+
 # Logging ayarla
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,6 +60,9 @@ class JetXPredictor:
         self.regressor = None
         self.classifier = None
         
+        # Window sizes - model_info.json'dan okunacak veya default değer kullanılacak
+        self.window_sizes = None  # load_model() fonksiyonunda ayarlanacak
+        
         # CatBoost kullanılıyorsa dosya yollarını güncelle
         if model_type == 'catboost':
             self.model_path = "models/catboost_regressor.cbm"
@@ -64,33 +74,38 @@ class JetXPredictor:
             self.load_model()
     
     def load_model(self):
-        """Modeli ve scaler'ı yükler"""
+        """Modeli ve scaler'ı yükler - Gelişmiş Lambda desteği ile"""
         try:
-            if self.model_type == 'neural_network':
-                # TensorFlow/Keras modeli için
+            # Model info JSON'u yükle (varsa)
+            info_path = self.model_path.replace('.h5', '_info.json').replace('.cbm', '_info.json')
+            if not os.path.exists(info_path):
+                # Alternatif yolları dene
+                model_dir = os.path.dirname(self.model_path)
+                info_path = os.path.join(model_dir, 'model_info.json')
+            
+            if os.path.exists(info_path):
                 try:
-                    from tensorflow import keras
-                    
-                    # Custom objects kullanarak model yükle
-                    self.model = keras.models.load_model(self.model_path, custom_objects=CUSTOM_OBJECTS)
-                    logger.info(f"✅ Neural Network modeli yüklendi: {self.model_path}")
-                except ImportError:
-                    # PyTorch veya sklearn modeli için
-                    import joblib
-                    self.model = joblib.load(self.model_path)
-                    logger.info(f"✅ Model yüklendi: {self.model_path}")
+                    import json
+                    with open(info_path, 'r') as f:
+                        info = json.load(f)
+                        self.window_sizes = info.get('window_sizes', [1000, 500, 200, 50])
+                        logger.info(f"✅ Model info yüklendi: {info_path}")
+                        logger.info(f"📊 Window sizes: {self.window_sizes}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Model info okunamadı: {e}")
+                    self.window_sizes = [1000, 500, 200, 50]  # Default fallback
+            else:
+                # JSON yoksa default değerler
+                self.window_sizes = [1000, 500, 200, 50]
+                logger.warning(f"⚠️ Model info bulunamadı, default window sizes kullanılıyor: {self.window_sizes}")
+            
+            if self.model_type == 'neural_network':
+                # TensorFlow/Keras modeli için - Gelişmiş yükleme
+                self.model = self._load_neural_network_model()
                     
             elif self.model_type == 'catboost':
                 # CatBoost modelleri için
-                from catboost import CatBoostRegressor, CatBoostClassifier
-                
-                self.regressor = CatBoostRegressor()
-                self.regressor.load_model(self.model_path)
-                logger.info(f"✅ CatBoost Regressor yüklendi: {self.model_path}")
-                
-                self.classifier = CatBoostClassifier()
-                self.classifier.load_model(self.classifier_path)
-                logger.info(f"✅ CatBoost Classifier yüklendi: {self.classifier_path}")
+                self._load_catboost_models()
             
             # Scaler'ı yükle
             if os.path.exists(self.scaler_path):
@@ -102,6 +117,131 @@ class JetXPredictor:
         except Exception as e:
             logger.error(f"⚠️ Model yükleme hatası: {e}")
             logger.info("Model henüz eğitilmemiş olabilir. Önce Google Colab'da eğitin.")
+    
+    def _load_neural_network_model(self):
+        """Neural Network modelini gelişmiş Lambda desteği ile yükler"""
+        from tensorflow import keras
+        from tensorflow.keras import backend as K
+        from tensorflow.keras.layers import Layer
+        from tensorflow.keras.utils import register_keras_serializable
+        
+        # Custom Lambda Layer
+        @register_keras_serializable()
+        class SafeLambdaLayer(Layer):
+            def __init__(self, function, **kwargs):
+                super().__init__(**kwargs)
+                self.function = function
+            
+            def call(self, inputs):
+                return self.function(inputs)
+            
+            def get_config(self):
+                config = super().get_config()
+                config.update({'function': self.function})
+                return config
+        
+        # Lambda fonksiyonları
+        def safe_sum_axis1(x):
+            return K.sum(x, axis=1)
+        
+        def safe_mean_axis1(x):
+            return K.mean(x, axis=1)
+        
+        # Gelişmiş custom objects
+        custom_objects = {
+            'SafeLambdaLayer': SafeLambdaLayer,
+            'lambda': lambda x: K.sum(x, axis=1),
+            'safe_sum_axis1': safe_sum_axis1,
+            'safe_mean_axis1': safe_mean_axis1,
+            'tf': tf,
+            'K': K,
+        }
+        
+        # Custom losses ekle
+        custom_objects.update(CUSTOM_OBJECTS)
+        
+        # 3 aşamalı yükleme stratejisi
+        model_loaded = False
+        model = None
+        
+        # 1. Deneme: Normal yükleme
+        try:
+            logger.info(f"🔄 Loading NN model (Attempt 1: Normal)...")
+            model = keras.models.load_model(self.model_path, compile=False)
+            logger.info(f"✅ Neural Network modeli yüklendi (Normal): {self.model_path}")
+            model_loaded = True
+        except Exception as e:
+            logger.warning(f"⚠️ Normal load failed: {str(e)[:100]}...")
+        
+        # 2. Deneme: Custom objects ile
+        if not model_loaded:
+            try:
+                logger.info(f"🔄 Loading NN model (Attempt 2: Custom Objects)...")
+                model = keras.models.load_model(
+                    self.model_path, 
+                    compile=False,
+                    custom_objects=custom_objects
+                )
+                logger.info(f"✅ Neural Network modeli yüklendi (Custom Objects): {self.model_path}")
+                model_loaded = True
+            except Exception as e:
+                logger.warning(f"⚠️ Custom objects load failed: {str(e)[:100]}...")
+        
+        # 3. Deneme: Lambda rebuild
+        if not model_loaded:
+            try:
+                logger.info(f"🔄 Loading NN model (Attempt 3: Lambda Rebuild)...")
+                model = self._load_model_with_lambda_rebuild(self.model_path, custom_objects)
+                logger.info(f"✅ Neural Network modeli yüklendi (Lambda Rebuild): {self.model_path}")
+                model_loaded = True
+            except Exception as e:
+                logger.error(f"❌ Lambda rebuild failed: {str(e)[:100]}...")
+        
+        if not model_loaded:
+            raise RuntimeError(f"Failed to load NN model after 3 attempts: {self.model_path}")
+        
+        return model
+    
+    def _load_model_with_lambda_rebuild(self, model_path: str, custom_objects: dict):
+        """Modeli Lambda katmanlarını yeniden oluşturarak yükler"""
+        from tensorflow.keras import models
+        
+        # JSON + weights yükle
+        json_path = model_path.replace('.h5', '.json')
+        weights_path = model_path.replace('.h5', '_weights.h5')
+        
+        if os.path.exists(json_path) and os.path.exists(weights_path):
+            with open(json_path, 'r') as f:
+                model_json = f.read()
+            
+            model = models.model_from_json(model_json, custom_objects=custom_objects)
+            model.load_weights(weights_path)
+            return model
+        
+        # Son çare: weights-only yükle
+        logger.warning("⚠️ Attempting weights-only loading...")
+        model = models.load_model(model_path, compile=False, by_name=True, skip_mismatch=True)
+        return model
+    
+    def _load_catboost_models(self):
+        """CatBoost modellerini yükler"""
+        from catboost import CatBoostRegressor, CatBoostClassifier
+        
+        try:
+            self.regressor = CatBoostRegressor()
+            self.regressor.load_model(self.model_path)
+            logger.info(f"✅ CatBoost Regressor yüklendi: {self.model_path}")
+        except Exception as e:
+            logger.error(f"❌ CatBoost Regressor yüklenemedi: {e}")
+            raise
+        
+        try:
+            self.classifier = CatBoostClassifier()
+            self.classifier.load_model(self.classifier_path)
+            logger.info(f"✅ CatBoost Classifier yüklendi: {self.classifier_path}")
+        except Exception as e:
+            logger.error(f"❌ CatBoost Classifier yüklenemedi: {e}")
+            raise
     
     def extract_features_from_history(self, history: List[float]) -> Dict:
         """
@@ -123,36 +263,28 @@ class JetXPredictor:
         if self.scaler is not None:
             feature_values = self.scaler.transform(feature_values)
         
-        # Sequence'leri hazırla (4 farklı pencere) - Neural Network için
-        # Log10 transformation uygula (training ile tutarlı)
-        seq_50 = None
-        seq_200 = None
-        seq_500 = None
-        seq_1000 = None
+        # Dinamik olarak sequence'leri hazırla
+        # Model hangi window_sizes ile eğitildiyse onları kullan
+        sequences = {}
         
-        if len(history) >= 50:
-            seq_50 = np.array(history[-50:]).reshape(1, 50, 1)
-            seq_50 = np.log10(seq_50 + 1e-8)
-            
-        if len(history) >= 200:
-            seq_200 = np.array(history[-200:]).reshape(1, 200, 1)
-            seq_200 = np.log10(seq_200 + 1e-8)
-            
-        if len(history) >= 500:
-            seq_500 = np.array(history[-500:]).reshape(1, 500, 1)
-            seq_500 = np.log10(seq_500 + 1e-8)
-            
-        if len(history) >= 1000:
-            seq_1000 = np.array(history[-1000:]).reshape(1, 1000, 1)
-            seq_1000 = np.log10(seq_1000 + 1e-8)
+        if self.window_sizes is None:
+            # Fallback: Default değerler
+            self.window_sizes = [1000, 500, 200, 50]
         
-        return {
-            'features': feature_values,
-            'seq_50': seq_50,
-            'seq_200': seq_200,
-            'seq_500': seq_500,
-            'seq_1000': seq_1000
-        }
+        # Her window size için sequence oluştur
+        for window_size in self.window_sizes:
+            if len(history) >= window_size:
+                seq = np.array(history[-window_size:]).reshape(1, window_size, 1)
+                seq = np.log10(seq + 1e-8)
+                sequences[f'seq_{window_size}'] = seq
+            else:
+                sequences[f'seq_{window_size}'] = None
+        
+        # Sonucu dictionary olarak döndür
+        result = {'features': feature_values}
+        result.update(sequences)
+        
+        return result
     
     def predict(
         self,
@@ -189,10 +321,14 @@ class JetXPredictor:
                 'recommendation': 'BEKLE'
             }
         
-        # Minimum veri kontrolü
-        if len(history) < 1000:
+        # Minimum veri kontrolü - en büyük window size kadar veri gerekli
+        if self.window_sizes is None:
+            self.window_sizes = [1000, 500, 200, 50]  # Fallback
+        
+        min_required = max(self.window_sizes)
+        if len(history) < min_required:
             return {
-                'error': f'En az 1000 geçmiş veri gerekli (mevcut: {len(history)})',
+                'error': f'En az {min_required} geçmiş veri gerekli (mevcut: {len(history)})',
                 'predicted_value': None,
                 'confidence': 0.0,
                 'above_threshold': None,
@@ -237,18 +373,14 @@ class JetXPredictor:
         # Özellikleri ve sequence'leri çıkar
         model_inputs = self.extract_features_from_history(history)
         
-        # Sequence kontrolü - Eğer herhangi biri None ise hata döndür
-        required_sequences = ['seq_50', 'seq_200', 'seq_500', 'seq_1000']
+        # Dinamik sequence kontrolü - model'in window_sizes'ına göre
+        required_sequences = [f'seq_{ws}' for ws in self.window_sizes]
         missing_sequences = [seq for seq in required_sequences if model_inputs.get(seq) is None]
         
         if missing_sequences:
-            min_required_data = {
-                'seq_50': 50,
-                'seq_200': 200,
-                'seq_500': 500,
-                'seq_1000': 1000
-            }
-            max_missing = max(min_required_data[seq] for seq in missing_sequences)
+            # En büyük eksik window size'ı bul
+            missing_sizes = [int(seq.split('_')[1]) for seq in missing_sequences]
+            max_missing = max(missing_sizes)
             return {
                 'error': f'Yetersiz veri: En az {max_missing} geçmiş veri gerekli (mevcut: {len(history)})',
                 'predicted_value': None,
@@ -259,14 +391,10 @@ class JetXPredictor:
                 'pattern_risk': 0.0
             }
         
-        # Model inputları hazırla (5 girdi: features + 4 sequence)
-        input_data = [
-            model_inputs['features'],
-            model_inputs['seq_50'],
-            model_inputs['seq_200'],
-            model_inputs['seq_500'],
-            model_inputs['seq_1000']
-        ]
+        # Model inputları hazırla (dinamik olarak window_sizes'a göre)
+        input_data = [model_inputs['features']]
+        for window_size in self.window_sizes:
+            input_data.append(model_inputs[f'seq_{window_size}'])
         
         # Tahmin yap (3 çıktı: regression, classification, threshold)
         predictions = self.model.predict(input_data, verbose=0)
