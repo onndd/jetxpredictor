@@ -78,6 +78,14 @@ model_paths = {
         'regressor': 'models/xgboost_regressor.json',
         'classifier': 'models/xgboost_classifier.json',
         'scaler': 'models/xgboost_scaler.pkl'
+    },
+    'autogluon': {
+        'model': 'models/autogluon_model',
+        'scaler': 'models/autogluon_scaler.pkl'
+    },
+    'tabnet': {
+        'model': 'models/tabnet_high_x.pkl',
+        'scaler': 'models/tabnet_scaler.pkl'
     }
 }
 
@@ -139,6 +147,39 @@ try:
 except Exception as e:
     print(f"⚠️ XGBoost modelleri yüklenemedi: {e}")
 
+# AutoGluon
+try:
+    if os.path.exists(model_paths['autogluon']['model']):
+        from autogluon.tabular import TabularPredictor
+        
+        loaded_models['autogluon'] = {
+            'predictor': TabularPredictor.load(model_paths['autogluon']['model']),
+            'scaler': joblib.load(model_paths['autogluon']['scaler']) if os.path.exists(model_paths['autogluon']['scaler']) else None
+        }
+        print("✅ AutoGluon modeli yüklendi")
+    else:
+        print("⚠️ AutoGluon modeli bulunamadı, atlanıyor")
+except Exception as e:
+    print(f"⚠️ AutoGluon modeli yüklenemedi: {e}")
+
+# TabNet (Yüksek X Specialist)
+try:
+    if os.path.exists(model_paths['tabnet']['model']):
+        from pytorch_tabnet.tab_model import TabNetClassifier
+        
+        tabnet_model = TabNetClassifier()
+        tabnet_model.load_model(model_paths['tabnet']['model'])
+        
+        loaded_models['tabnet'] = {
+            'model': tabnet_model,
+            'scaler': joblib.load(model_paths['tabnet']['scaler']) if os.path.exists(model_paths['tabnet']['scaler']) else None
+        }
+        print("✅ TabNet modeli yüklendi (Yüksek X Specialist)")
+    else:
+        print("⚠️ TabNet modeli bulunamadı, atlanıyor")
+except Exception as e:
+    print(f"⚠️ TabNet modeli yüklenemedi: {e}")
+
 if len(loaded_models) == 0:
     print("\n❌ HATA: Hiçbir base model yüklenemedi!")
     print("Önce base modelleri Google Colab'da eğitin.")
@@ -156,6 +197,8 @@ X_features = []
 X_progressive = []
 X_ultra = []
 X_xgboost = []
+X_autogluon = []
+X_tabnet = []
 y_true = []
 
 from tqdm.auto import tqdm
@@ -231,11 +274,45 @@ for i in tqdm(range(window_size, len(all_values)-1), desc='Tahminler'):
     else:
         predictions.append(0.5)
     
+    # AutoGluon prediction
+    if 'autogluon' in loaded_models:
+        try:
+            feature_df = pd.DataFrame([feature_values])
+            if loaded_models['autogluon']['scaler'] is not None:
+                feature_df = loaded_models['autogluon']['scaler'].transform(feature_df)
+            
+            pred_proba = loaded_models['autogluon']['predictor'].predict_proba(feature_df)
+            threshold_prob = float(pred_proba.iloc[0, 1])  # 1.5 üstü probability
+            predictions.append(threshold_prob)
+        except:
+            predictions.append(0.5)
+    else:
+        predictions.append(0.5)
+    
+    # TabNet prediction (yüksek X specialist)
+    if 'tabnet' in loaded_models:
+        try:
+            if loaded_models['tabnet']['scaler'] is not None:
+                scaled_features = loaded_models['tabnet']['scaler'].transform(feature_values.reshape(1, -1))
+            else:
+                scaled_features = feature_values.reshape(1, -1)
+            
+            pred_proba = loaded_models['tabnet']['model'].predict_proba(scaled_features)
+            # Yüksek X olasılığı (kategori 2 ve 3'ün toplamı: 10x+)
+            high_x_prob = float(pred_proba[0][2] + pred_proba[0][3])
+            predictions.append(high_x_prob)
+        except:
+            predictions.append(0.5)
+    else:
+        predictions.append(0.5)
+    
     # Kaydet
     X_features.append(feature_values)
     X_progressive.append(predictions[0])
     X_ultra.append(predictions[1])
     X_xgboost.append(predictions[2])
+    X_autogluon.append(predictions[3])
+    X_tabnet.append(predictions[4])
     
     # Target: 1.5 eşik
     y_true.append(1 if target >= 1.5 else 0)
@@ -245,6 +322,8 @@ X_features = np.array(X_features)
 X_progressive = np.array(X_progressive).reshape(-1, 1)
 X_ultra = np.array(X_ultra).reshape(-1, 1)
 X_xgboost = np.array(X_xgboost).reshape(-1, 1)
+X_autogluon = np.array(X_autogluon).reshape(-1, 1)
+X_tabnet = np.array(X_tabnet).reshape(-1, 1)
 y_true = np.array(y_true)
 
 print(f"\n✅ {len(y_true)} tahmin toplandı")
@@ -256,12 +335,12 @@ print(f"1.5 üstü: {(y_true == 1).sum()} ({(y_true == 1).sum() / len(y_true) * 
 # =============================================================================
 print("\n📊 Meta-model input oluşturuluyor...")
 
-# Meta-model input: [progressive_prob, ultra_prob, xgboost_prob]
-# Opsiyonel: Features da eklenebilir ama genelde base predictions yeterli
-X_meta = np.concatenate([X_progressive, X_ultra, X_xgboost], axis=1)
+# Meta-model input: [progressive_prob, ultra_prob, xgboost_prob, autogluon_prob, tabnet_high_x_prob]
+# 5 modelin birleşimi: 3 mevcut model + AutoGluon + TabNet (yüksek X specialist)
+X_meta = np.concatenate([X_progressive, X_ultra, X_xgboost, X_autogluon, X_tabnet], axis=1)
 
 print(f"Meta-model input shape: {X_meta.shape}")
-print(f"Features: Progressive prob, Ultra prob, XGBoost prob")
+print(f"Features: Progressive prob, Ultra prob, XGBoost prob, AutoGluon prob, TabNet high X prob")
 
 # Train/Test split
 X_train, X_test, y_train, y_test = train_test_split(
@@ -349,7 +428,7 @@ print(classification_report(y_test, y_pred, target_names=['1.5 Altı', '1.5 Üst
 
 # Feature Importance
 print(f"\n🎯 MODEL FEATURE IMPORTANCE:")
-feature_names = ['Progressive Prob', 'Ultra Prob', 'XGBoost Prob']
+feature_names = ['Progressive Prob', 'Ultra Prob', 'XGBoost Prob', 'AutoGluon Prob', 'TabNet High X Prob']
 importance = meta_model.feature_importances_
 
 for name, imp in zip(feature_names, importance):

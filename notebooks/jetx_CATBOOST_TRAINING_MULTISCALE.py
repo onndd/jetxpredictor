@@ -104,7 +104,9 @@ conn = sqlite3.connect('jetx_data.db')
 data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
 conn.close()
 
+# String verileri float'a çevir
 all_values = data['value'].values
+all_values = np.array([float(val) for val in all_values])
 print(f"✅ {len(all_values):,} veri yüklendi")
 print(f"Aralık: {all_values.min():.2f}x - {all_values.max():.2f}x")
 

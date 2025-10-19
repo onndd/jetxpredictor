@@ -32,3 +32,8 @@ nolds>=0.5.2  # DFA, Hurst exponent (advanced features)
 # Opsiyonel: Model export/import
 # onnx>=1.14.0
 # onnxruntime>=1.16.0
+
+# YENİ: AutoGluon ve TabNet Modelleri
+autogluon>=0.8.0  # AutoML framework
+pytorch-tabnet>=4.0.0  # TabNet attention-based model
+torch>=2.0.0  # PyTorch (TabNet için gerekli)
