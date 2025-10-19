@@ -96,8 +96,8 @@ print(f"\n⚡ Bu dengesizlik 10x class weight ile çözülecek!")
 # FEATURE ENGINEERING
 # =============================================================================
 print("\n🔧 Feature extraction başlıyor...")
-window_size = 500
-X_f, X_50, X_200, X_500 = [], [], [], []
+window_size = 1000  # DÜZELTME: 500 → 1000 (diğer modellerle tutarlı)
+X_f, X_50, X_200, X_500, X_1000 = [], [], [], [], []  # DÜZELTME: X_1000 eklendi
 y_reg, y_cls, y_thr = [], [], []
 
 for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
@@ -109,6 +109,7 @@ for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
     X_50.append(all_values[i-50:i])
     X_200.append(all_values[i-200:i])
     X_500.append(all_values[i-500:i])
+    X_1000.append(all_values[i-1000:i])  # DÜZELTME: X_1000 sequence eklendi
     
     y_reg.append(target)
     cat = CategoryDefinitions.get_category_numeric(target)
@@ -142,10 +143,10 @@ idx = np.arange(len(X_f))
 y_cls_binary = (y_reg >= 1.5).astype(int)  # Stratify için binary class
 tr_idx, te_idx = train_test_split(idx, test_size=0.2, shuffle=True, stratify=y_cls_binary, random_state=42)
 
-X_f_tr, X_50_tr, X_200_tr, X_500_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx]
+X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx], X_1000[tr_idx]  # DÜZELTME: X_1000_tr eklendi
 y_reg_tr, y_cls_tr, y_thr_tr = y_reg[tr_idx], y_cls[tr_idx], y_thr[tr_idx]
 
-X_f_te, X_50_te, X_200_te, X_500_te = X_f[te_idx], X_50[te_idx], X_200[te_idx], X_500[te_idx]
+X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te = X_f[te_idx], X_50[te_idx], X_200[te_idx], X_500[te_idx], X_1000[te_idx]  # DÜZELTME: X_1000_te eklendi
 y_reg_te, y_cls_te, y_thr_te = y_reg[te_idx], y_cls[te_idx], y_thr[te_idx]
 
 # Shape düzeltmesi: (N,) -> (N, 1) binary classification için
@@ -165,6 +166,7 @@ inp_f = layers.Input((n_f,), name='features')
 inp_50 = layers.Input((50, 1), name='seq50')
 inp_200 = layers.Input((200, 1), name='seq200')
 inp_500 = layers.Input((500, 1), name='seq500')
+inp_1000 = layers.Input((1000, 1), name='seq1000')  # DÜZELTME: X_1000 input eklendi
 
 # N-BEATS (ULTRA DERİN)
 def ultra_nbeats(x, units, blocks, name):
@@ -192,7 +194,13 @@ nb_l = ultra_nbeats(nb_l, 512, 12, 'l')  # 256->512, 9->12
 nb_l = layers.Dense(512, activation='relu')(nb_l)
 nb_l = layers.Dropout(0.2)(nb_l)
 
-nb_all = layers.Concatenate()([nb_s, nb_m, nb_l])
+# En uzun sequence (1000) - DÜZELTME: X_1000 eklendi
+nb_xl = layers.Flatten()(inp_1000)
+nb_xl = ultra_nbeats(nb_xl, 512, 12, 'xl')  # 256->512, 9->12
+nb_xl = layers.Dense(512, activation='relu')(nb_xl)
+nb_xl = layers.Dropout(0.2)(nb_xl)
+
+nb_all = layers.Concatenate()([nb_s, nb_m, nb_l, nb_xl])  # DÜZELTME: nb_xl eklendi
 
 # TCN (ULTRA DERİN)
 def ultra_tcn_block(x, filters, dilation, name):
@@ -244,7 +252,7 @@ thr_branch = layers.Dropout(0.2)(thr_branch)
 thr_branch = layers.Dense(32, activation='relu')(thr_branch)
 out_thr = layers.Dense(1, activation='sigmoid', name='threshold')(thr_branch)
 
-model = models.Model([inp_f, inp_50, inp_200, inp_500], [out_reg, out_cls, out_thr])
+model = models.Model([inp_f, inp_50, inp_200, inp_500, inp_1000], [out_reg, out_cls, out_thr])  # DÜZELTME: inp_1000 eklendi
 print(f"✅ ULTRA DEEP Model: {model.count_params():,} parametre (eski: ~2M)")
 
 # =============================================================================
@@ -312,18 +320,18 @@ def create_weighted_binary_crossentropy(weight_0, weight_1):
     
     return loss
 
-# CLASS WEIGHTS - 3.5X (DENGELI) - Loss penalties ile uyumlu
+# CLASS WEIGHTS - LAZY LEARNING ÖNLEME (yeterince yüksek)
 # y_thr_tr shape (N, 1) olduğu için flatten etmeliyiz
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
-TARGET_MULTIPLIER = 3.5  # DÜZELTİLDİ: 7.0 → 3.5 (loss penalties ile uyumlu, dengeli)
+TARGET_MULTIPLIER = 20.0  # DÜZELTİLDİ: 3.5 → 20.0 (lazy learning'i kesin önler)
 w0 = (len(y_thr_tr) / (2 * c0)) * TARGET_MULTIPLIER
 w1 = len(y_thr_tr) / (2 * c1)
 
-print(f"\n🎯 CLASS WEIGHTS (DÜZELTME):")
-print(f"1.5 altı (0): {w0:.2f}x (DÜZELTİLDİ: 7.0x → 3.5x)")
+print(f"\n🎯 CLASS WEIGHTS (LAZY LEARNING ÖNLEME):")
+print(f"1.5 altı (0): {w0:.2f}x (LAZY LEARNING'I KESIN ÖNLER)")
 print(f"1.5 üstü (1): {w1:.2f}x")
-print(f"\n✅ Loss penalties (2.0x, 1.5x, 2.5x) ile UYUMLU!")
+print(f"\n✅ Loss penalties ile UYUMLU!")
 print(f"⚡ Dengeli öğrenme: Class weight + penalties birlikte çalışıyor")
 
 # LEARNING RATE SCHEDULE - Düşürüldü ve öne çekildi
@@ -374,7 +382,7 @@ class UltraMetricsCallback(callbacks.Callback):
         
     def on_epoch_end(self, epoch, logs=None):
         if epoch % 5 == 0:
-            p = self.model.predict([X_f_tr[:1000], X_50_tr[:1000], X_200_tr[:1000], X_500_tr[:1000]], verbose=0)[2].flatten()
+            p = self.model.predict([X_f_tr[:1000], X_50_tr[:1000], X_200_tr[:1000], X_500_tr[:1000], X_1000_tr[:1000]], verbose=0)[2].flatten()  # DÜZELTME: X_1000_tr eklendi
             pb = (p >= 0.5).astype(int)
             tb = y_thr_tr[:1000].flatten().astype(int)
             
@@ -447,7 +455,7 @@ print(f"💡 Model 5 dakikada bitiyorsa bir sorun var!")
 print("="*70 + "\n")
 
 hist = model.fit(
-    [X_f_tr, X_50_tr, X_200_tr, X_500_tr],
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],  # DÜZELTME: X_1000_tr eklendi
     {
         'regression': y_reg_tr, 
         'classification': y_cls_tr, 
@@ -470,7 +478,7 @@ print("\n" + "="*70)
 print("📊 TEST SETİ DEĞERLENDİRMESİ")
 print("="*70)
 
-pred = model.predict([X_f_te, X_50_te, X_200_te, X_500_te], verbose=0)
+pred = model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)  # DÜZELTME: X_1000_te eklendi
 p_reg = pred[0].flatten()
 p_cls = pred[1]
 p_thr = pred[2].flatten()

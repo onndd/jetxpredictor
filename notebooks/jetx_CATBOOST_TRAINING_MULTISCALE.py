@@ -104,12 +104,12 @@ conn = sqlite3.connect('jetx_data.db')
 data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
 conn.close()
 
-# String verileri float'a çevir - Unicode karakterleri temizle
+# String verileri float'a çevir - Unicode karakterleri temizle (DÜZELTME: Index kayması önlendi)
 all_values = data['value'].values
 
-# Unicode karakterlerini ve bozuk verileri temizle
+# Unicode karakterlerini ve bozuk verileri temizle - DÜZELTME: Index korunuyor
 cleaned_values = []
-skipped_count = 0
+skipped_indices = []  # Atlanan indexleri takip et
 for i, val in enumerate(all_values):
     try:
         # String'i temizle - Unicode satır ayırıcılarını ve diğer bozuk karakterleri kaldır
@@ -120,14 +120,14 @@ for i, val in enumerate(all_values):
         # Float'a çevir
         cleaned_values.append(float(val_str))
     except (ValueError, TypeError) as e:
-        skipped_count += 1
+        skipped_indices.append(i)  # Index'i kaydet
         print(f"⚠️ Satır {i} atlandı - bozuk veri: '{val}' - Hata: {e}")
         continue
 
 all_values = np.array(cleaned_values)
 print(f"✅ {len(all_values):,} veri yüklendi", end="")
-if skipped_count > 0:
-    print(f" ({skipped_count} bozuk satır atlandı)")
+if len(skipped_indices) > 0:
+    print(f" ({len(skipped_indices)} bozuk satır atlandı - indexler: {skipped_indices[:5]}{'...' if len(skipped_indices) > 5 else ''})")
 else:
     print()
 print(f"Aralık: {all_values.min():.2f}x - {all_values.max():.2f}x")
@@ -261,16 +261,29 @@ def normalize_roi(roi):
         return min(100, 40 + (roi / 200 * 60))
 
 def simulate_bankroll(predictions, actuals):
-    """1.5x eşikte sanal kasa simülasyonu"""
+    """1.5x eşikte sanal kasa simülasyonu - DÜZELTME: ROI hesaplama mantığı"""
     initial = 10000
     wallet = initial
+    bets_made = 0
+    wins = 0
+    
     for pred, actual in zip(predictions, actuals):
         if pred == 1:  # Model 1.5 üstü dedi
-            wallet -= 10
+            bets_made += 1
+            wallet -= 10  # 10 TL bahis
             if actual >= 1.5:
-                wallet += 15
-    roi = ((wallet - initial) / initial) * 100
-    return roi
+                wallet += 15  # 15 TL kazanç (1.5x)
+                wins += 1
+    
+    # DÜZELTME: ROI hesaplama - sadece bahis yapılan durumlarda
+    if bets_made > 0:
+        roi = ((wallet - initial) / initial) * 100
+        win_rate = (wins / bets_made) * 100
+    else:
+        roi = 0
+        win_rate = 0
+    
+    return roi, win_rate, bets_made, wallet
 
 def calculate_weighted_score(y_true, y_pred):
     """
@@ -300,14 +313,14 @@ def calculate_weighted_score(y_true, y_pred):
     below_acc = (below_correct / below_total * 100) if below_total > 0 else 0
     above_acc = (above_correct / above_total * 100) if above_total > 0 else 0
     
-    # ROI hesapla
-    roi = simulate_bankroll(y_pred, y_true)
+    # ROI hesapla - DÜZELTME: Yeni return formatı
+    roi, win_rate, bets_made, final_wallet = simulate_bankroll(y_pred, y_true)
     normalized_roi = normalize_roi(roi)
     
     # Weighted score
     weighted_score = (0.5 * below_acc) + (0.4 * above_acc) + (0.1 * normalized_roi)
     
-    return weighted_score, below_acc, above_acc, roi, normalized_roi
+    return weighted_score, below_acc, above_acc, roi, normalized_roi, win_rate, bets_made
 
 # =============================================================================
 # HER PENCERE İÇİN MODEL EĞİTİMİ

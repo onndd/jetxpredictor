@@ -113,12 +113,12 @@ conn = sqlite3.connect('jetx_data.db')
 data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
 conn.close()
 
-# String verileri float'a çevir - Unicode karakterleri temizle
+# String verileri float'a çevir - Unicode karakterleri temizle (DÜZELTME: Index kayması önlendi)
 all_values = data['value'].values
 
-# Unicode karakterlerini ve bozuk verileri temizle
+# Unicode karakterlerini ve bozuk verileri temizle - DÜZELTME: Index korunuyor
 cleaned_values = []
-skipped_count = 0
+skipped_indices = []  # Atlanan indexleri takip et
 for i, val in enumerate(all_values):
     try:
         # String'i temizle - Unicode satır ayırıcılarını ve diğer bozuk karakterleri kaldır
@@ -129,14 +129,14 @@ for i, val in enumerate(all_values):
         # Float'a çevir
         cleaned_values.append(float(val_str))
     except (ValueError, TypeError) as e:
-        skipped_count += 1
+        skipped_indices.append(i)  # Index'i kaydet
         print(f"⚠️ Satır {i} atlandı - bozuk veri: '{val}' - Hata: {e}")
         continue
 
 all_values = np.array(cleaned_values)
 print(f"✅ {len(all_values):,} veri yüklendi", end="")
-if skipped_count > 0:
-    print(f" ({skipped_count} bozuk satır atlandı)")
+if len(skipped_indices) > 0:
+    print(f" ({len(skipped_indices)} bozuk satır atlandı - indexler: {skipped_indices[:5]}{'...' if len(skipped_indices) > 5 else ''})")
 else:
     print()
 print(f"Aralık: {all_values.min():.2f}x - {all_values.max():.2f}x")

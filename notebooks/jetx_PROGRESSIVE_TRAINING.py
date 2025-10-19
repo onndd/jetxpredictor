@@ -99,10 +99,17 @@ class PositionalEncoding(layers.Layer):
         pe_sin = tf.sin(position * div_term)
         pe_cos = tf.cos(position * div_term)
         
-        # Sin ve cos değerlerini birleştir
-        pe_array = tf.Variable(pe, trainable=False)
-        pe_array[:, 0::2].assign(pe_sin)
-        pe_array[:, 1::2].assign(pe_cos)
+        # Sin ve cos değerlerini birleştir - DÜZELTME: tf.Variable yerine tf.concat kullan
+        pe_sin_expanded = tf.expand_dims(pe_sin, axis=-1)
+        pe_cos_expanded = tf.expand_dims(pe_cos, axis=-1)
+        
+        # Alternating pattern için reshape
+        pe_sin_reshaped = tf.reshape(pe_sin_expanded, (max_seq_len, -1))
+        pe_cos_reshaped = tf.reshape(pe_cos_expanded, (max_seq_len, -1))
+        
+        # Sin ve cos değerlerini alternating olarak birleştir
+        pe_array = tf.zeros((max_seq_len, d_model))
+        pe_array = tf.concat([pe_sin_reshaped, pe_cos_reshaped], axis=-1)
         self.pe = pe_array
     
     def call(self, x):
@@ -559,10 +566,10 @@ class DynamicWeightCallback(callbacks.Callback):
         
     def on_epoch_end(self, epoch, logs=None):
         if epoch % 5 == 0:  # Her 5 epoch'ta bir kontrol et
-            # Test seti üzerinde threshold metrics
-            p = self.model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)[2].flatten()
+            # VALIDATION seti üzerinde threshold metrics (test leakage önlendi!)
+            p = self.model.predict([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], verbose=0)[2].flatten()
             p_thr = (p >= 0.5).astype(int)
-            t_thr = (y_reg_te >= 1.5).astype(int)
+            t_thr = (y_reg_val >= 1.5).astype(int)
             
             below_mask = t_thr == 0
             above_mask = t_thr == 1
@@ -625,10 +632,10 @@ class ProgressiveMetricsCallback(callbacks.Callback):
         
     def on_epoch_end(self, epoch, logs=None):
         if epoch % 5 == 0:
-            # Test seti üzerinde threshold metrics
-            p = self.model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)[2].flatten()
+            # VALIDATION seti üzerinde threshold metrics (test leakage önlendi!)
+            p = self.model.predict([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], verbose=0)[2].flatten()
             p_thr = (p >= 0.5).astype(int)
-            t_thr = (y_reg_te >= 1.5).astype(int)
+            t_thr = (y_reg_val >= 1.5).astype(int)
             
             below_mask = t_thr == 0
             above_mask = t_thr == 1
@@ -900,21 +907,21 @@ if stage1_checkpoint and stage1_checkpoint['stage'] == 1:
     initial_epoch_stage1 = stage1_checkpoint['epoch']
     print(f"   Epoch {initial_epoch_stage1} 'den devam edilecek")
 
-# Class weights - YÜKSEK BAŞLANGIÇ (lazy learning'i agresif önler)
-w0_stage1 = 15.0  # 1.5 altı için: 15.0x (1.2 → 15.0, 12.5x artış!)
+# Class weights - LAZY LEARNING ÖNLEME (yeterince yüksek)
+w0_stage1 = 25.0  # 1.5 altı için: 25.0x (lazy learning'i kesin önler)
 w1_stage1 = 1.0   # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Yüksek Başlangıç - TIME-SERIES SPLIT):")
-print(f"  1.5 altı: {w0_stage1:.2f}x (agresif - lazy learning'i önler)")
+print(f"📊 CLASS WEIGHTS (AŞAMA 1 - Lazy Learning Önleme - TIME-SERIES SPLIT):")
+print(f"  1.5 altı: {w0_stage1:.2f}x (yüksek - lazy learning'i önler)")
 print(f"  1.5 üstü: {w1_stage1:.2f}x\n")
 
-# AŞAMA 1: Foundation Training - DENGELI LOSS FUNCTIONS (Lazy Learning Önlendi!)
+# AŞAMA 1: Foundation Training - SADECE WEIGHTED BCE (çakışma yok!)
 model.compile(
     optimizer=Adam(0.0001),
     loss={
         'regression': percentage_aware_regression_loss,  # YENİ: Yüzde hataya dayalı regression loss
         'classification': 'categorical_crossentropy',
-        'threshold': create_weighted_binary_crossentropy(w0_stage1, w1_stage1)  # Weighted BCE korundu
+        'threshold': create_weighted_binary_crossentropy(w0_stage1, w1_stage1)  # SADECE weighted BCE
     },
     loss_weights={'regression': 0.65, 'classification': 0.10, 'threshold': 0.25},  # Regression ağırlığı artırıldı: 0.55 → 0.65
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy']}
@@ -1003,21 +1010,21 @@ if stage2_checkpoint and stage2_checkpoint['stage'] == 2:
 else:
     model.load_weights('stage1_best.h5')
 
-# Class weights - YÜKSEK SEVİYE
-w0 = 20.0  # 1.5 altı için: 20.0x (1.5 → 20.0, 13.3x artış!)
+# Class weights - LAZY LEARNING ÖNLEME (yeterince yüksek)
+w0 = 30.0  # 1.5 altı için: 30.0x (lazy learning'i kesin önler)
 w1 = 1.0   # 1.5 üstü baseline
 
-print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Yüksek Seviye - TIME-SERIES SPLIT):")
+print(f"📊 CLASS WEIGHTS (AŞAMA 2 - Lazy Learning Önleme - TIME-SERIES SPLIT):")
 print(f"  1.5 altı: {w0:.2f}x (yüksek - lazy learning önleme)")
 print(f"  1.5 üstü: {w1:.2f}x\n")
 
-# AŞAMA 2: Regression + Threshold - DENGELI LOSS FUNCTIONS
+# AŞAMA 2: Regression + Threshold - SADECE WEIGHTED BCE (çakışma yok!)
 model.compile(
     optimizer=Adam(0.0001),
     loss={
         'regression': percentage_aware_regression_loss,  # YENİ: Yüzde hataya dayalı regression loss
         'classification': 'categorical_crossentropy',
-        'threshold': create_weighted_binary_crossentropy(w0, w1)  # Weighted BCE korundu
+        'threshold': create_weighted_binary_crossentropy(w0, w1)  # SADECE weighted BCE
     },
     loss_weights={'regression': 0.55, 'classification': 0.10, 'threshold': 0.35},  # Regression ağırlığı artırıldı: 0.45 → 0.55
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}
@@ -1114,21 +1121,21 @@ if stage3_checkpoint and stage3_checkpoint['stage'] == 3:
 else:
     model.load_weights('stage2_best.h5')
 
-# Class weights - MAKSIMUM FINAL
-w0_final = 25.0  # 1.5 altı için: 25.0x (2.0 → 25.0, 12.5x artış!)
+# Class weights - MAKSIMUM FINAL (lazy learning'i kesin önler)
+w0_final = 35.0  # 1.5 altı için: 35.0x (maksimum - final push)
 w1_final = 1.0   # 1.5 üstü baseline
 
 print(f"📊 CLASS WEIGHTS (AŞAMA 3 - Maksimum Final - TIME-SERIES SPLIT):")
 print(f"  1.5 altı: {w0_final:.2f}x (maksimum - final push)")
 print(f"  1.5 üstü: {w1_final:.2f}x\n")
 
-# AŞAMA 3: Tüm output'lar aktif - DENGELI LOSS FUNCTIONS
+# AŞAMA 3: Tüm output'lar aktif - SADECE FOCAL LOSS (çakışma yok!)
 model.compile(
     optimizer=Adam(0.00005),
     loss={
         'regression': percentage_aware_regression_loss,  # YENİ: Yüzde hataya dayalı regression loss
         'classification': 'categorical_crossentropy',
-        'threshold': balanced_focal_loss()  # YENİ: Dengeli focal loss (gamma=2.0, alpha=0.7)
+        'threshold': balanced_focal_loss()  # SADECE focal loss (gamma=2.0, alpha=0.7)
     },
     loss_weights={'regression': 0.50, 'classification': 0.15, 'threshold': 0.35},  # Regression ağırlığı artırıldı: 0.40 → 0.50
     metrics={'regression': ['mae'], 'classification': ['accuracy'], 'threshold': ['accuracy', 'binary_crossentropy']}

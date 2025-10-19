@@ -247,9 +247,10 @@ for i in tqdm(range(window_size, len(all_values)-1), desc='Tahminler'):
             seq_50 = np.log10(np.array(history[-50:]).reshape(1, 50, 1) + 1e-8)
             seq_200 = np.log10(np.array(history[-200:]).reshape(1, 200, 1) + 1e-8)
             seq_500 = np.log10(np.array(history[-500:]).reshape(1, 500, 1) + 1e-8)
+            seq_1000 = np.log10(np.array(history[-1000:]).reshape(1, 1000, 1) + 1e-8)  # DÜZELTME: seq_1000 eklendi
             
             pred = loaded_models['ultra']['model'].predict(
-                [scaled_features, seq_50, seq_200, seq_500, seq_500],  # Ultra 1000 yok
+                [scaled_features, seq_50, seq_200, seq_500, seq_1000],  # DÜZELTME: seq_1000 eklendi (Ultra model artık 5 input bekliyor)
                 verbose=0
             )
             
