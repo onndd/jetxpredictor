@@ -104,10 +104,32 @@ conn = sqlite3.connect('jetx_data.db')
 data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
 conn.close()
 
-# String verileri float'a çevir
+# String verileri float'a çevir - Unicode karakterleri temizle
 all_values = data['value'].values
-all_values = np.array([float(val) for val in all_values])
-print(f"✅ {len(all_values):,} veri yüklendi")
+
+# Unicode karakterlerini ve bozuk verileri temizle
+cleaned_values = []
+skipped_count = 0
+for i, val in enumerate(all_values):
+    try:
+        # String'i temizle - Unicode satır ayırıcılarını ve diğer bozuk karakterleri kaldır
+        val_str = str(val).replace('\u2028', '').replace('\u2029', '').strip()
+        # Birden fazla sayı varsa (örn: "2.29 1.29") ilkini al
+        if ' ' in val_str:
+            val_str = val_str.split()[0]
+        # Float'a çevir
+        cleaned_values.append(float(val_str))
+    except (ValueError, TypeError) as e:
+        skipped_count += 1
+        print(f"⚠️ Satır {i} atlandı - bozuk veri: '{val}' - Hata: {e}")
+        continue
+
+all_values = np.array(cleaned_values)
+print(f"✅ {len(all_values):,} veri yüklendi", end="")
+if skipped_count > 0:
+    print(f" ({skipped_count} bozuk satır atlandı)")
+else:
+    print()
 print(f"Aralık: {all_values.min():.2f}x - {all_values.max():.2f}x")
 
 below = (all_values < 1.5).sum()
@@ -131,7 +153,7 @@ train_data, val_data, test_data = split_data_preserving_order(
 # MULTI-SCALE FEATURE ENGINEERING
 # =============================================================================
 print("\n🔧 MULTI-SCALE FEATURE EXTRACTION...")
-print("📌 Her pencere boyutu için feature engineering")
+print("� Her pencere boyutu için feature engineering")
 
 window_sizes = [500, 250, 100, 50, 20]
 

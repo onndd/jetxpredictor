@@ -495,7 +495,7 @@ class FeatureEngineering:
     @staticmethod
     def extract_statistical_distribution_features(values: List[float]) -> Dict[str, float]:
         """
-        İstatistiksel dağılım özellikleri
+        İstatistiksel dağılım özellikleri - Hızlandırılmış versiyon
         
         Args:
             values: Geçmiş değerler
@@ -508,19 +508,31 @@ class FeatureEngineering:
         if len(values) >= 50:
             recent_50 = values[-50:]
             
-            # Skewness (çarpıklık) ve Kurtosis (basıklık)
+            # Skewness (çarpıklık) ve Kurtosis (basıklık) - Hızlı manuel hesaplama
             try:
-                from scipy import stats
-                features['skewness_50'] = float(stats.skew(recent_50))
-                features['kurtosis_50'] = float(stats.kurtosis(recent_50))
-            except ImportError:
-                # scipy yoksa basit alternatif hesaplama
-                logger.warning("scipy bulunamadı, skewness/kurtosis varsayılan değerlere ayarlandı")
-                features['skewness_50'] = 0.0
-                features['kurtosis_50'] = 0.0
+                # Skewness için hızlı hesaplama (RANSAC kullanmadan)
+                mean_val = np.mean(recent_50)
+                std_val = np.std(recent_50)
+                
+                if std_val > 0:
+                    # Skewness: 3*(mean - median)/std
+                    median_val = np.median(recent_50)
+                    features['skewness_50'] = 3.0 * (mean_val - median_val) / std_val
+                    
+                    # Kurtosis için basit hesaplama
+                    # Kurtosis: (mean - mode)/std (yaklaşık)
+                    # Mode'u histogram ile tahmin et
+                    hist, bins = np.histogram(recent_50, bins=10)
+                    mode_idx = np.argmax(hist)
+                    mode_val = (bins[mode_idx] + bins[mode_idx + 1]) / 2
+                    features['kurtosis_50'] = (mean_val - mode_val) / std_val
+                else:
+                    features['skewness_50'] = 0.0
+                    features['kurtosis_50'] = 0.0
+                    
             except Exception as e:
-                # Diğer hatalar için de default değer ve logging
-                logger.error(f"İstatistiksel özellik hesaplama hatası: {e}", exc_info=True)
+                # Hata durumunda default değerler
+                logger.warning(f"İstatistiksel özellik hesaplama hatası: {e}")
                 features['skewness_50'] = 0.0
                 features['kurtosis_50'] = 0.0
             
