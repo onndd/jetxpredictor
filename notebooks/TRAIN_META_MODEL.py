@@ -46,6 +46,19 @@ sys.path.append(os.getcwd())
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
 
+# CUSTOM_OBJECTS tanımı - Meta model yükleme için gerekli
+from utils.custom_losses import (
+    balanced_threshold_killer_loss,
+    balanced_focal_loss,
+    percentage_aware_regression_loss
+)
+
+CUSTOM_OBJECTS = {
+    'balanced_threshold_killer_loss': balanced_threshold_killer_loss,
+    'balanced_focal_loss': balanced_focal_loss,
+    'percentage_aware_regression_loss': percentage_aware_regression_loss
+}
+
 print("✅ Proje yüklendi")
 
 # =============================================================================
@@ -95,7 +108,6 @@ loaded_models = {}
 # Progressive
 try:
     from tensorflow import keras
-    from utils.custom_losses import CUSTOM_OBJECTS
     
     if os.path.exists(model_paths['progressive']['model']):
         loaded_models['progressive'] = {
@@ -113,6 +125,8 @@ except Exception as e:
 
 # Ultra Aggressive
 try:
+    from tensorflow import keras
+    
     if os.path.exists(model_paths['ultra']['model']):
         loaded_models['ultra'] = {
             'model': keras.models.load_model(
@@ -247,16 +261,18 @@ for i in tqdm(range(window_size, len(all_values)-1), desc='Tahminler'):
             seq_50 = np.log10(np.array(history[-50:]).reshape(1, 50, 1) + 1e-8)
             seq_200 = np.log10(np.array(history[-200:]).reshape(1, 200, 1) + 1e-8)
             seq_500 = np.log10(np.array(history[-500:]).reshape(1, 500, 1) + 1e-8)
-            seq_1000 = np.log10(np.array(history[-1000:]).reshape(1, 1000, 1) + 1e-8)  # DÜZELTME: seq_1000 eklendi
+            seq_1000 = np.log10(np.array(history[-1000:]).reshape(1, 1000, 1) + 1e-8)
             
             pred = loaded_models['ultra']['model'].predict(
-                [scaled_features, seq_50, seq_200, seq_500, seq_1000],  # DÜZELTME: seq_1000 eklendi (Ultra model artık 5 input bekliyor)
+                [scaled_features, seq_50, seq_200, seq_500, seq_1000],
                 verbose=0
             )
             
+            # Threshold output (3. output)
             threshold_prob = float(pred[2][0][0])
             predictions.append(threshold_prob)
-        except:
+        except Exception as e:
+            print(f"⚠️ Ultra prediction hatası: {e}")
             predictions.append(0.5)
     else:
         predictions.append(0.5)
@@ -343,12 +359,21 @@ X_meta = np.concatenate([X_progressive, X_ultra, X_xgboost, X_autogluon, X_tabne
 print(f"Meta-model input shape: {X_meta.shape}")
 print(f"Features: Progressive prob, Ultra prob, XGBoost prob, AutoGluon prob, TabNet high X prob")
 
-# Train/Test split
-X_train, X_test, y_train, y_test = train_test_split(
-    X_meta, y_true, test_size=0.2, shuffle=False
-)
+# KRONOLOJİK SPLIT - TEST DATA LEAKAGE ÖNLENDİ
+# Model test verisini eğitimde GÖRMEYECEK
+print(f"\n⚠️ UYARI: Shuffle KAPALI - Meta model kronolojik split kullanıyor!")
 
-print(f"\nTrain: {len(X_train)}, Test: {len(X_test)}")
+test_size = int(len(X_meta) * 0.2)
+train_end = len(X_meta) - test_size
+
+X_train = X_meta[:train_end]
+X_test = X_meta[train_end:]
+y_train = y_true[:train_end]
+y_test = y_true[train_end:]
+
+print(f"\n✅ Kronolojik Split Tamamlandı:")
+print(f"Train: {len(X_train):,} (ilk %80)")
+print(f"Test: {len(X_test):,} (son %20 - modelin görmediği veri)")
 
 # =============================================================================
 # META-MODEL TRAINING (XGBoost)

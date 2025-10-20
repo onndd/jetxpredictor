@@ -166,6 +166,15 @@ if 'threshold_strategy' not in st.session_state:
 with st.sidebar:
     st.title("🎮 Kontrol Paneli")
     
+    # Eksik model uyarısı (sidebar'da)
+    if MISSING_MODEL_FILES:
+        st.error(f"⚠️ {len(MISSING_MODEL_FILES)} model dosyası eksik!")
+        with st.expander("📋 Eksik Dosyalar"):
+            for name, path in MISSING_MODEL_FILES:
+                st.write(f"❌ **{name}**")
+                st.code(path, language="text")
+        st.divider()
+    
     # Gelişmiş Özellikler
     if ADVANCED_FEATURES_AVAILABLE:
         st.subheader("🚀 Gelişmiş Özellikler")

@@ -85,7 +85,8 @@ y_reg, y_thr = [], []
 print("🔧 Features extraction...")
 from tqdm.auto import tqdm
 
-for i in tqdm(range(window_size, min(len(all_values)-1, window_size+5000)), desc='Features'):
+# TÜM VERİYİ KULLAN (data limitation kaldırıldı)
+for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
     hist = all_values[:i].tolist()
     target = all_values[i]
     
@@ -327,15 +328,21 @@ def objective(trial: optuna.Trial) -> float:
             }
             print(f"\n🎉 NEW BEST TRIAL! Accuracy: {val_acc*100:.2f}%")
         
-        # Cleanup
+        # Cleanup - GPU belleği tam temizleme
         K.clear_session()
         del model
+        tf.keras.backend.clear_session()
+        import gc
+        gc.collect()
         
         return val_acc
         
     except Exception as e:
         print(f"\n❌ Trial failed: {e}")
         K.clear_session()
+        tf.keras.backend.clear_session()
+        import gc
+        gc.collect()
         return 0.0
 
 
