@@ -1131,9 +1131,9 @@ SEQUENCE_LENGTHS = {
     'extra_long': 1000  # Yeni: 1000 veri penceresi
 }
 
-# Risk yönetimi eşikleri
+# Risk yönetimi eşikleri (konservatif yaklaşım - threshold yükseltildi)
 CONFIDENCE_THRESHOLDS = {
-    'aggressive': 0.50,
-    'normal': 0.65,
-    'rolling': 0.80
+    'aggressive': 0.55,  # +0.05
+    'normal': 0.75,     # +0.10
+    'rolling': 0.85     # +0.05
 }

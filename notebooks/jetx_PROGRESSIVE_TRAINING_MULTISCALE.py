@@ -384,38 +384,46 @@ class DetailedMetricsCallback(callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         # Tahminler yap
         preds = self.model.predict(self.X_val, verbose=0)
-        threshold_preds = preds[2].flatten()  # threshold output (sigmoid)
+        threshold_preds = preds[2].flatten()
         
-        # Below/Above accuracy hesapla
-        below_mask = self.y_val < 1.5
-        above_mask = self.y_val >= 1.5
+        # Confusion Matrix hesapla
+        y_true = (self.y_val >= 1.5).astype(int)
+        y_pred = (threshold_preds >= 0.5).astype(int)
         
-        below_correct = sum(1 for pred, actual in zip(threshold_preds[below_mask], self.y_val[below_mask]) 
-                          if pred < 0.5 and actual < 1.5)
-        below_total = below_mask.sum()
-        below_acc = (below_correct / below_total * 100) if below_total > 0 else 0
+        TN = np.sum((y_true == 0) & (y_pred == 0))
+        FP = np.sum((y_true == 0) & (y_pred == 1))
+        FN = np.sum((y_true == 1) & (y_pred == 0))
+        TP = np.sum((y_true == 1) & (y_pred == 1))
         
-        above_correct = sum(1 for pred, actual in zip(threshold_preds[above_mask], self.y_val[above_mask]) 
-                          if pred >= 0.5 and actual >= 1.5)
-        above_total = above_mask.sum()
-        above_acc = (above_correct / above_total * 100) if above_total > 0 else 0
+        # 1. BALANCED ACCURACY
+        below_acc = (TN / (TN + FP) * 100) if (TN + FP) > 0 else 0
+        above_acc = (TP / (TP + FN) * 100) if (TP + FN) > 0 else 0
+        balanced_acc = (below_acc + above_acc) / 2
         
-        # Threshold accuracy
-        thr_true = (self.y_val >= 1.5).astype(int)
-        thr_pred = (threshold_preds >= 0.5).astype(int)
-        thr_acc = accuracy_score(thr_true, thr_pred) * 100
+        # 2. F1 SCORE
+        precision = (TP / (TP + FP)) if (TP + FP) > 0 else 0
+        recall = (TP / (TP + FN)) if (TP + FN) > 0 else 0
+        f1_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
         
-        # ROI ve Win Rate hesapla
+        # 3. MONEY LOSS RISK
+        money_loss_risk = (FP / (TN + FP)) if (TN + FP) > 0 else 1.0
+        
+        # 4. THRESHOLD ACCURACY (yanıltıcı metrik!)
+        thr_acc = accuracy_score(y_true, y_pred) * 100
+        
+        # 5. ROI
         roi, win_rate, wins, total_bets = self.simulate_bankroll(threshold_preds, self.y_val)
         
-        # Renkli çıktı
+        # Detaylı çıktı - YENİ BALANCED METRİKLER
         print(f"\n{'='*80}")
-        print(f"📊 EPOCH {epoch+1} DETAYLI METRİKLER")
-        print(f"{'='*80}")
-        print(f"🔴 1.5 Altı Doğruluk:  {below_acc:6.2f}%  ({below_correct}/{below_total})")
-        print(f"🟢 1.5 Üstü Doğruluk:  {above_acc:6.2f}%  ({above_correct}/{above_total})")
-        print(f"🎯 Threshold Accuracy: {thr_acc:6.2f}%")
-        print(f"💰 ROI (Sanal Kasa):   {roi:+7.2f}%")
+        print(f"📊 EPOCH {epoch+1} - BALANCED METRİKLER")
+        print(f"⚖️  Balanced Acc:       {balanced_acc:6.2f}% (Her sınıf eşit önemli)")
+        print(f"🔴 1.5 Altı Doğruluk:  {below_acc:6.2f}%  (TN: {TN}, FP: {FP})")
+        print(f"🟢 1.5 Üstü Doğruluk:  {above_acc:6.2f}%  (TP: {TP}, FN: {FN})")
+        print(f"🎯 F1 Score:           {f1_score*100:6.2f}% (Prec: {precision*100:.1f}% | Rec: {recall*100:.1f}%)")
+        print(f"💰 Money Loss Risk:    {money_loss_risk*100:6.2f}% (Target: <25%)")
+        print(f"⚠️  Threshold Acc:      {thr_acc:6.2f}% (YANILTICI - dengesiz veri!)")
+        print(f"💵 ROI:                {roi:+7.2f}%")
         print(f"📈 Win Rate:           {win_rate:6.2f}%  ({wins}/{total_bets})")
         print(f"📉 Loss:               val_loss={logs.get('val_loss', 0):.4f}")
         print(f"{'='*80}\n")
@@ -425,9 +433,10 @@ class DetailedMetricsCallback(callbacks.Callback):
 # =============================================================================
 class WeightedModelCheckpoint(callbacks.Callback):
     """
-    Weighted model selection based on:
-    - 50% Below 15 accuracy
-    - 40% Above 15 accuracy  
+    Weighted model selection based on BALANCED metrics:
+    - 40% Balanced Accuracy (dengeli doğruluk)
+    - 30% F1 Score (precision-recall dengesi)
+    - 20% Money Loss Risk minimization (para kaybı riski)
     - 10% ROI (normalized)
     """
     def __init__(self, filepath, X_val, y_val):
@@ -438,12 +447,10 @@ class WeightedModelCheckpoint(callbacks.Callback):
         self.best_score = -1
     
     def normalize_roi(self, roi):
-        """Kademeli lineer normalizasyon (Seçenek 2)"""
+        """Kademeli lineer normalizasyon"""
         if roi < 0:
-            # Negatif ROI: 0-40 arası
             return max(0, (roi + 100) / 100 * 40)
         else:
-            # Pozitif ROI: 40-100 arası
             return min(100, 40 + (roi / 200 * 60))
     
     def simulate_bankroll(self, predictions, actuals):
@@ -451,7 +458,7 @@ class WeightedModelCheckpoint(callbacks.Callback):
         initial = 10000
         wallet = initial
         for pred, actual in zip(predictions, actuals):
-            if pred >= 0.5:  # Model 1.5 üstü dedi
+            if pred >= 0.5:
                 wallet -= 10
                 if actual >= 1.5:
                     wallet += 15
@@ -459,44 +466,56 @@ class WeightedModelCheckpoint(callbacks.Callback):
         return roi
     
     def on_epoch_end(self, epoch, logs=None):
-        # Tahminler yap (threshold output kullan)
+        # Tahminler yap
         preds = self.model.predict(self.X_val, verbose=0)
-        threshold_preds = preds[2].flatten()  # threshold output (sigmoid)
+        threshold_preds = preds[2].flatten()
         
-        # Below/Above accuracy hesapla
-        below_mask = self.y_val < 1.5
-        above_mask = self.y_val >= 1.5
+        # Confusion Matrix hesapla
+        y_true = (self.y_val >= 1.5).astype(int)
+        y_pred = (threshold_preds >= 0.5).astype(int)
         
-        below_correct = 0
-        below_total = 0
-        for pred, actual in zip(threshold_preds[below_mask], self.y_val[below_mask]):
-            below_total += 1
-            if pred < 0.5 and actual < 1.5:  # Doğru tahmin (1.5 altı)
-                below_correct += 1
+        TN = np.sum((y_true == 0) & (y_pred == 0))  # True Negative (1.5 altı doğru)
+        FP = np.sum((y_true == 0) & (y_pred == 1))  # False Positive (1.5 altı → üstü tahmin = PARA KAYBI)
+        FN = np.sum((y_true == 1) & (y_pred == 0))  # False Negative (1.5 üstü → altı tahmin = fırsat kaçırma)
+        TP = np.sum((y_true == 1) & (y_pred == 1))  # True Positive (1.5 üstü doğru)
         
-        above_correct = 0
-        above_total = 0
-        for pred, actual in zip(threshold_preds[above_mask], self.y_val[above_mask]):
-            above_total += 1
-            if pred >= 0.5 and actual >= 1.5:  # Doğru tahmin (1.5 üstü)
-                above_correct += 1
+        # 1. BALANCED ACCURACY (dengeli doğruluk - her sınıf eşit önemli)
+        below_acc = (TN / (TN + FP) * 100) if (TN + FP) > 0 else 0
+        above_acc = (TP / (TP + FN) * 100) if (TP + FN) > 0 else 0
+        balanced_acc = (below_acc + above_acc) / 2
         
-        below_acc = (below_correct / below_total * 100) if below_total > 0 else 0
-        above_acc = (above_correct / above_total * 100) if above_total > 0 else 0
+        # 2. F1 SCORE (precision-recall dengesi)
+        precision = (TP / (TP + FP)) if (TP + FP) > 0 else 0
+        recall = (TP / (TP + FN)) if (TP + FN) > 0 else 0
+        f1_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
+        f1_score_percent = f1_score * 100
         
-        # ROI hesapla
+        # 3. MONEY LOSS RISK (para kaybı riski - minimize edilmeli)
+        money_loss_risk = (FP / (TN + FP)) if (TN + FP) > 0 else 1.0
+        money_loss_risk_percent = money_loss_risk * 100
+        money_loss_score = (1 - money_loss_risk) * 100  # Yüksek skor = düşük risk
+        
+        # 4. ROI
         roi = self.simulate_bankroll(threshold_preds, self.y_val)
         normalized_roi = self.normalize_roi(roi)
         
-        # Weighted score
-        weighted_score = (0.4 * below_acc) + (0.5 * above_acc) + (0.1 * normalized_roi)
+        # WEIGHTED SCORE (yeni formül)
+        weighted_score = (
+            0.40 * balanced_acc +           # Dengeli doğruluk
+            0.30 * f1_score_percent +       # Precision-recall dengesi
+            0.20 * money_loss_score +       # Para kaybı riski minimize
+            0.10 * normalized_roi           # ROI
+        )
         
         # En iyi modeli kaydet
         if weighted_score > self.best_score:
             self.best_score = weighted_score
             self.model.save(self.filepath)
-            print(f"\n✨ Yeni en iyi model! Weighted Score: {weighted_score:.2f}")
-            print(f"   Below 15: {below_acc:.1f}% | Above 15: {above_acc:.1f}% | ROI: {roi:+.1f}% (Normalized: {normalized_roi:.1f})")
+            print(f"\n✨ YENİ EN İYİ MODEL! Weighted Score: {weighted_score:.2f}")
+            print(f"   📊 Balanced Acc: {balanced_acc:.1f}% (Below: {below_acc:.1f}% + Above: {above_acc:.1f}%)")
+            print(f"   🎯 F1 Score: {f1_score_percent:.1f}% (Precision: {precision*100:.1f}% | Recall: {recall*100:.1f}%)")
+            print(f"   💰 Money Loss Risk: {money_loss_risk_percent:.1f}% (Target: <25%)")
+            print(f"   💵 ROI: {roi:+.1f}%")
 
 # =============================================================================
 # HER PENCERE İÇİN MODEL EĞİTİMİ
@@ -506,10 +525,12 @@ print("🔥 MULTI-SCALE MODEL EĞİTİMİ BAŞLIYOR")
 print("="*80)
 print(f"Window boyutları: {window_sizes}")
 print(f"Her window için ayrı model eğitilecek")
-print(f"📊 Model Seçim Kriteri: Weighted Score")
-print(f"   - 50% Below 15 Accuracy")
-print(f"   - 40% Above 15 Accuracy")
-print(f"   - 10% ROI (Normalized)")
+print(f"📊 Model Seçim Kriteri: BALANCED Weighted Score")
+print(f"   - 40% Balanced Accuracy (her sınıf eşit önemli)")
+print(f"   - 30% F1 Score (precision-recall dengesi)")
+print(f"   - 20% Money Loss Risk Minimization (para kaybı riski)")
+print(f"   - 10% ROI (normalized)")
+print(f"⚠️  Threshold Accuracy artık KULLANILMIYOR (yanıltıcı metrik!)")
 print("="*80 + "\n")
 
 trained_models = {}
@@ -531,20 +552,13 @@ for window_size in window_sizes:
     model = build_model_for_window(window_size, X_f_tr.shape[1])
     print(f"✅ Model oluşturuldu: {model.count_params():,} parametre")
     
-    # Class weights - DENGELI SISTEM
+    # Class weights - DENGELI SISTEM (1.5 üstü ödülü düşürüldü)
     # w0: Para kaybı cezası (1.5 altını yanlış tahmin etme)
     # w1: Fırsat kaçırma cezası (1.5 üstünü tahmin edememe)
-    # w0 her zaman w1'den yüksek olmalı (para kaybı > fırsat kaçırma)
-    if window_size <= 50:
-        w0, w1 = 8.0, 3.0  # Küçük pencere: Agresif
-    elif window_size <= 100:
-        w0, w1 = 8.0, 3.0  # Orta pencere: Dengeli
-    elif window_size <= 250:
-        w0, w1 = 6.0, 2.5  # Büyük pencere
-    else:  # 500
-        w0, w1 = 5.0, 2.0  # En büyük: En dengeli
+    # TÜM PENCERELER İÇİN SABİT DENGELI AĞIRLIKLAR
+    w0, w1 = 2.5, 1.5  # Model daha konservatif - 1.5 üstü ödülü düşürüldü
     
-    print(f"📊 CLASS WEIGHTS (Window {window_size}):")
+    print(f"📊 CLASS WEIGHTS (Tüm Pencereler İçin Dengeli):")
     print(f"  1.5 altı (para kaybı cezası): {w0:.1f}x")
     print(f"  1.5 üstü (fırsat kaçırma cezası): {w1:.1f}x")
     print(f"  Oran (w0/w1): {w0/w1:.2f}x")
@@ -559,8 +573,8 @@ for window_size in window_sizes:
         },
         loss_weights={
             'regression': 0.50,
-            'classification': 0.15,
-            'threshold': 0.35
+            'classification': 0.25,
+            'threshold': 0.25
         },
         metrics={
             'regression': ['mae'],
@@ -711,13 +725,13 @@ for window_size in window_sizes:
     ensemble_predictions_reg.append(p_reg)
     ensemble_predictions_thr.append(p_thr)
 
-# Weighted Ensemble: Window 100'e en yüksek ağırlık (en dengeli model)
+# Weighted Ensemble: Dengeli dağılım (konservatif yaklaşım)
 window_weights = {
-    20: 0.15,
+    20: 0.10,
     50: 0.15,
-    100: 0.40,  # En dengeli - en yüksek ağırlık
-    250: 0.15,
-    500: 0.15
+    100: 0.30,
+    250: 0.25,
+    500: 0.20
 }
 
 print(f"\n🎯 WEIGHTED ENSEMBLE STRATEJISI:")

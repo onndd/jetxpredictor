@@ -287,40 +287,48 @@ def simulate_bankroll(predictions, actuals):
 
 def calculate_weighted_score(y_true, y_pred):
     """
-    Weighted score hesaplama:
-    - 50% Below 15 accuracy
-    - 40% Above 15 accuracy  
+    BALANCED Weighted score hesaplama:
+    - 40% Balanced Accuracy (her sınıf eşit önemli)
+    - 30% F1 Score (precision-recall dengesi)
+    - 20% Money Loss Risk minimization (para kaybı riski)
     - 10% ROI (normalized)
     """
-    # Below/Above accuracy hesapla
-    below_mask = y_true < 1.5
-    above_mask = y_true >= 1.5
+    # Confusion Matrix hesapla
+    y_true_binary = (y_true >= 1.5).astype(int)
     
-    below_correct = 0
-    below_total = 0
-    for pred, actual in zip(y_pred[below_mask], y_true[below_mask]):
-        below_total += 1
-        if pred == 0 and actual < 1.5:  # Doğru tahmin (1.5 altı)
-            below_correct += 1
+    TN = np.sum((y_true_binary == 0) & (y_pred == 0))
+    FP = np.sum((y_true_binary == 0) & (y_pred == 1))
+    FN = np.sum((y_true_binary == 1) & (y_pred == 0))
+    TP = np.sum((y_true_binary == 1) & (y_pred == 1))
     
-    above_correct = 0
-    above_total = 0
-    for pred, actual in zip(y_pred[above_mask], y_true[above_mask]):
-        above_total += 1
-        if pred == 1 and actual >= 1.5:  # Doğru tahmin (1.5 üstü)
-            above_correct += 1
+    # 1. BALANCED ACCURACY
+    below_acc = (TN / (TN + FP) * 100) if (TN + FP) > 0 else 0
+    above_acc = (TP / (TP + FN) * 100) if (TP + FN) > 0 else 0
+    balanced_acc = (below_acc + above_acc) / 2
     
-    below_acc = (below_correct / below_total * 100) if below_total > 0 else 0
-    above_acc = (above_correct / above_total * 100) if above_total > 0 else 0
+    # 2. F1 SCORE
+    precision = (TP / (TP + FP)) if (TP + FP) > 0 else 0
+    recall = (TP / (TP + FN)) if (TP + FN) > 0 else 0
+    f1_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
+    f1_score_percent = f1_score * 100
     
-    # ROI hesapla - DÜZELTME: Yeni return formatı
+    # 3. MONEY LOSS RISK
+    money_loss_risk = (FP / (TN + FP)) if (TN + FP) > 0 else 1.0
+    money_loss_score = (1 - money_loss_risk) * 100
+    
+    # 4. ROI
     roi, win_rate, bets_made, final_wallet = simulate_bankroll(y_pred, y_true)
     normalized_roi = normalize_roi(roi)
     
-    # Weighted score
-    weighted_score = (0.5 * below_acc) + (0.4 * above_acc) + (0.1 * normalized_roi)
+    # WEIGHTED SCORE (yeni formül)
+    weighted_score = (
+        0.40 * balanced_acc +
+        0.30 * f1_score_percent +
+        0.20 * money_loss_score +
+        0.10 * normalized_roi
+    )
     
-    return weighted_score, below_acc, above_acc, roi, normalized_roi, win_rate, bets_made
+    return weighted_score, balanced_acc, below_acc, above_acc, f1_score_percent, money_loss_risk * 100, roi, win_rate, bets_made
 
 # =============================================================================
 # HER PENCERE İÇİN MODEL EĞİTİMİ
@@ -330,10 +338,12 @@ print("🔥 MULTI-SCALE MODEL EĞİTİMİ BAŞLIYOR")
 print("="*80)
 print(f"Window boyutları: {window_sizes}")
 print(f"Her window için ayrı Regressor + Classifier eğitilecek")
-print(f"📊 Model Seçim Kriteri: Weighted Score")
-print(f"   - 50% Below 15 Accuracy")
-print(f"   - 40% Above 15 Accuracy")
-print(f"   - 10% ROI (Normalized)")
+print(f"📊 Model Seçim Kriteri: BALANCED Weighted Score")
+print(f"   - 40% Balanced Accuracy (her sınıf eşit önemli)")
+print(f"   - 30% F1 Score (precision-recall dengesi)")
+print(f"   - 20% Money Loss Risk Minimization (para kaybı riski)")
+print(f"   - 10% ROI (normalized)")
+print(f"⚠️  Threshold Accuracy artık KULLANILMIYOR (yanıltıcı metrik!)")
 print("="*80 + "\n")
 
 trained_models = {}
@@ -449,28 +459,21 @@ for window_size in window_sizes:
     
     # Validation setinde Weighted Score hesapla
     y_cls_pred_val = classifier.predict(X_val)
-    weighted_score, below_acc_val, above_acc_val, roi_val, normalized_roi_val = calculate_weighted_score(
+    weighted_score, balanced_acc_val, below_acc_val, above_acc_val, f1_score_val, money_loss_risk_val, roi_val, win_rate_val, bets_made_val = calculate_weighted_score(
         y_reg_val, y_cls_pred_val
     )
     
-    # Sanal kasa simülasyonu detayları
-    wins_val = 0
-    total_bets_val = 0
-    for pred, actual in zip(y_cls_pred_val, y_reg_val):
-        if pred == 1:
-            total_bets_val += 1
-            if actual >= 1.5:
-                wins_val += 1
-    win_rate_val = (wins_val / total_bets_val * 100) if total_bets_val > 0 else 0
-    
     print(f"\n{'='*80}")
-    print(f"✨ VALIDATION DETAYLI METRİKLER")
+    print(f"✨ VALIDATION BALANCED METRİKLER")
     print(f"{'='*80}")
     print(f"📊 Weighted Score:     {weighted_score:6.2f}")
+    print(f"⚖️  Balanced Acc:       {balanced_acc_val:6.2f}% (Her sınıf eşit önemli)")
     print(f"🔴 Below 1.5 Acc:      {below_acc_val:6.1f}%")
     print(f"🟢 Above 1.5 Acc:      {above_acc_val:6.1f}%")
-    print(f"💰 ROI:                {roi_val:+7.2f}%  (Normalized: {normalized_roi_val:6.1f})")
-    print(f"📈 Win Rate:           {win_rate_val:6.2f}%  ({wins_val}/{total_bets_val})")
+    print(f"🎯 F1 Score:           {f1_score_val:6.2f}%")
+    print(f"💰 Money Loss Risk:    {money_loss_risk_val:6.2f}% (Target: <25%)")
+    print(f"💵 ROI:                {roi_val:+7.2f}%")
+    print(f"📈 Win Rate:           {win_rate_val:6.2f}%  ({int(win_rate_val*bets_made_val/100)}/{bets_made_val})")
     print(f"{'='*80}\n")
     
     window_time = time.time() - window_start_time
