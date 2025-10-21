@@ -386,9 +386,9 @@ class DetailedMetricsCallback(callbacks.Callback):
         preds = self.model.predict(self.X_val, verbose=0)
         threshold_preds = preds[2].flatten()
         
-        # Confusion Matrix hesapla
+        # Confusion Matrix hesapla (KONSERVATIF THRESHOLD)
         y_true = (self.y_val >= 1.5).astype(int)
-        y_pred = (threshold_preds >= 0.5).astype(int)
+        y_pred = (threshold_preds >= 0.65).astype(int)
         
         TN = np.sum((y_true == 0) & (y_pred == 0))
         FP = np.sum((y_true == 0) & (y_pred == 1))
@@ -458,7 +458,7 @@ class WeightedModelCheckpoint(callbacks.Callback):
         initial = 10000
         wallet = initial
         for pred, actual in zip(predictions, actuals):
-            if pred >= 0.5:
+            if pred >= 0.65:  # Model 1.5 üstü dedi (KONSERVATIF) ⚠️
                 wallet -= 10
                 if actual >= 1.5:
                     wallet += 15
@@ -470,9 +470,9 @@ class WeightedModelCheckpoint(callbacks.Callback):
         preds = self.model.predict(self.X_val, verbose=0)
         threshold_preds = preds[2].flatten()
         
-        # Confusion Matrix hesapla
+        # Confusion Matrix hesapla (KONSERVATIF THRESHOLD)
         y_true = (self.y_val >= 1.5).astype(int)
-        y_pred = (threshold_preds >= 0.5).astype(int)
+        y_pred = (threshold_preds >= 0.65).astype(int)
         
         TN = np.sum((y_true == 0) & (y_pred == 0))  # True Negative (1.5 altı doğru)
         FP = np.sum((y_true == 0) & (y_pred == 1))  # False Positive (1.5 altı → üstü tahmin = PARA KAYBI)
@@ -556,12 +556,12 @@ for window_size in window_sizes:
     # w0: Para kaybı cezası (1.5 altını yanlış tahmin etme)
     # w1: Fırsat kaçırma cezası (1.5 üstünü tahmin edememe)
     # TÜM PENCERELER İÇİN SABİT DENGELI AĞIRLIKLAR
-    w0, w1 = 2.5, 1.5  # Model daha konservatif - 1.5 üstü ödülü düşürüldü
+    w0, w1 = 10.0, 1.0  # PARA KAYBI 10X DAHA AĞIR CEZA!
     
-    print(f"📊 CLASS WEIGHTS (Tüm Pencereler İçin Dengeli):")
-    print(f"  1.5 altı (para kaybı cezası): {w0:.1f}x")
+    print(f"📊 CLASS WEIGHTS (Konservatif - Para Kaybı Öncelikli):")
+    print(f"  1.5 altı (para kaybı cezası): {w0:.1f}x ⚠️ ÇOK YÜKSEK!")
     print(f"  1.5 üstü (fırsat kaçırma cezası): {w1:.1f}x")
-    print(f"  Oran (w0/w1): {w0/w1:.2f}x")
+    print(f"  Oran (w0/w1): {w0/w1:.1f}x (ESKİ: 1.67x)")
     
     # Compile
     model.compile(
@@ -666,7 +666,7 @@ for window_size in window_sizes:
     mae = mean_absolute_error(y_reg_test, p_reg)
     
     thr_true = (y_reg_test >= 1.5).astype(int)
-    thr_pred = (p_thr >= 0.5).astype(int)
+    thr_pred = (p_thr >= 0.65).astype(int)  # KONSERVATIF THRESHOLD ⚠️
     thr_acc = accuracy_score(thr_true, thr_pred)
     
     below_mask = thr_true == 0
@@ -748,7 +748,7 @@ mae_ensemble = mean_absolute_error(y_reg_test, ensemble_reg)
 rmse_ensemble = np.sqrt(mean_squared_error(y_reg_test, ensemble_reg))
 
 thr_true = (y_reg_test >= 1.5).astype(int)
-thr_pred_ensemble = (ensemble_thr >= 0.5).astype(int)
+thr_pred_ensemble = (ensemble_thr >= 0.65).astype(int)  # KONSERVATIF THRESHOLD ⚠️
 thr_acc_ensemble = accuracy_score(thr_true, thr_pred_ensemble)
 
 below_mask = thr_true == 0
