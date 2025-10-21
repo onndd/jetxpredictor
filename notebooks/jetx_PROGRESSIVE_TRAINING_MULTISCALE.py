@@ -489,7 +489,7 @@ class WeightedModelCheckpoint(callbacks.Callback):
         normalized_roi = self.normalize_roi(roi)
         
         # Weighted score
-        weighted_score = (0.5 * below_acc) + (0.4 * above_acc) + (0.1 * normalized_roi)
+        weighted_score = (0.4 * below_acc) + (0.5 * above_acc) + (0.1 * normalized_roi)
         
         # En iyi modeli kaydet
         if weighted_score > self.best_score:
@@ -531,23 +531,23 @@ for window_size in window_sizes:
     model = build_model_for_window(window_size, X_f_tr.shape[1])
     print(f"✅ Model oluşturuldu: {model.count_params():,} parametre")
     
-    # Class weights - window boyutuna göre ayarla
-    # Küçük pencereler daha agresif (daha yüksek weight)
-    # Büyük pencereler daha dengeli (daha düşük weight)
+    # Class weights - DENGELI SISTEM
+    # w0: Para kaybı cezası (1.5 altını yanlış tahmin etme)
+    # w1: Fırsat kaçırma cezası (1.5 üstünü tahmin edememe)
+    # w0 her zaman w1'den yüksek olmalı (para kaybı > fırsat kaçırma)
     if window_size <= 50:
-        w0 = 25.0  # Çok agresif
+        w0, w1 = 8.0, 3.0  # Küçük pencere: Agresif
     elif window_size <= 100:
-        w0 = 20.0  # Agresif
+        w0, w1 = 8.0, 3.0  # Orta pencere: Dengeli
     elif window_size <= 250:
-        w0 = 15.0  # Orta
-    else:
-        w0 = 10.0  # Dengeli
-    
-    w1 = 1.0
+        w0, w1 = 6.0, 2.5  # Büyük pencere
+    else:  # 500
+        w0, w1 = 5.0, 2.0  # En büyük: En dengeli
     
     print(f"📊 CLASS WEIGHTS (Window {window_size}):")
-    print(f"  1.5 altı: {w0:.1f}x")
-    print(f"  1.5 üstü: {w1:.1f}x")
+    print(f"  1.5 altı (para kaybı cezası): {w0:.1f}x")
+    print(f"  1.5 üstü (fırsat kaçırma cezası): {w1:.1f}x")
+    print(f"  Oran (w0/w1): {w0/w1:.2f}x")
     
     # Compile
     model.compile(
@@ -711,9 +711,23 @@ for window_size in window_sizes:
     ensemble_predictions_reg.append(p_reg)
     ensemble_predictions_thr.append(p_thr)
 
-# Ensemble: Basit ortalama
-ensemble_reg = np.mean(ensemble_predictions_reg, axis=0)
-ensemble_thr = np.mean(ensemble_predictions_thr, axis=0)
+# Weighted Ensemble: Window 100'e en yüksek ağırlık (en dengeli model)
+window_weights = {
+    20: 0.15,
+    50: 0.15,
+    100: 0.40,  # En dengeli - en yüksek ağırlık
+    250: 0.15,
+    500: 0.15
+}
+
+print(f"\n🎯 WEIGHTED ENSEMBLE STRATEJISI:")
+for ws, weight in window_weights.items():
+    print(f"  Window {ws}: {weight*100:.0f}% ağırlık")
+
+# Weighted average
+weights_list = [window_weights[ws] for ws in window_sizes]
+ensemble_reg = np.average(ensemble_predictions_reg, axis=0, weights=weights_list)
+ensemble_thr = np.average(ensemble_predictions_thr, axis=0, weights=weights_list)
 
 # Metrics
 mae_ensemble = mean_absolute_error(y_reg_test, ensemble_reg)
