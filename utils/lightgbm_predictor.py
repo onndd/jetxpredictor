@@ -415,3 +415,4 @@ class LightGBMPredictor:
             'model_path': self.model_path,
             'scaler_path': self.scaler_path
         }
+

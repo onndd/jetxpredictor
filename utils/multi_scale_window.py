@@ -365,33 +365,32 @@ class MultiScaleEnsemble:
 
 def split_data_preserving_order(
     data: np.ndarray,
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.1
+    train_ratio: float = 0.70,
+    val_ratio: float = 0.15
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Veriyi train/val/test olarak böl (KRONOLOJIK SIRAYI KORUYARAK)
     
     Args:
         data: Input data
-        train_ratio: Train oranı
-        val_ratio: Validation oranı (train'den alınır)
+        train_ratio: Train oranı (total veri üzerinden)
+        val_ratio: Validation oranı (total veri üzerinden)
         
     Returns:
         (train, val, test) tuple
     """
     n = len(data)
     
-    # Test: Son %20
-    test_size = int(n * (1 - train_ratio))
-    test_data = data[-test_size:]
+    # Train: İlk %70
+    train_size = int(n * train_ratio)
+    train_data = data[:train_size]
     
-    # Train + Val: İlk %80
-    train_val_data = data[:-test_size]
+    # Val: Sonraki %15
+    val_size = int(n * val_ratio)
+    val_data = data[train_size:train_size + val_size]
     
-    # Val: Train'in son %10'u
-    val_size = int(len(train_val_data) * val_ratio)
-    val_data = train_val_data[-val_size:]
-    train_data = train_val_data[:-val_size]
+    # Test: Geri kalan %15
+    test_data = data[train_size + val_size:]
     
     logger.info("\n" + "="*70)
     logger.info("TIME-SERIES SPLIT (Kronolojik)")

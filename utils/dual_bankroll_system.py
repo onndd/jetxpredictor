@@ -188,7 +188,8 @@ class DualBankrollSystem:
                 total_bets += 1
                 
                 # Çıkış noktası: Tahmin × exit_multiplier
-                exit_point = model_pred_value * exit_multiplier
+                # ÖNEMLİ: Minimum 1.5x olmalı (kar eşiği)
+                exit_point = max(1.5, model_pred_value * exit_multiplier)
                 exit_points.append(exit_point)
                 
                 # Gerçek değer çıkış noktasından büyük veya eşitse kazandık

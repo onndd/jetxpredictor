@@ -524,3 +524,4 @@ class LightweightModelManager:
             logger.info("Model registry kaydedildi")
         except Exception as e:
             logger.error(f"Model registry kaydetme hatası: {str(e)}")
+

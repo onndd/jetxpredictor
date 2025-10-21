@@ -264,34 +264,33 @@ print(f"  1.5 üstü (class 1): {class_weights[1]:.1f}x")
 print(f"  Toplam 1.5 altı: {below_count:,} örnek")
 print(f"  Toplam 1.5 üstü: {above_count:,} örnek\n")
 
-# CatBoost parametreleri - OPTIMIZE EDİLDİ + EARLY STOPPING KALDIRILDI
+# CatBoost parametreleri - OPTIMIZE EDİLDİ (Focal Loss KULLANILIYOR)
 classifier_params = {
-    'iterations': 1500,           # 500 → 1500 (3x artış)
-    'depth': 9,                   # 7 → 9 (daha derin ağaçlar)
-    'learning_rate': 0.03,        # 0.05 → 0.03 (daha stabil)
-    'l2_leaf_reg': 5,             # YENİ: Overfitting önleme
-    'bootstrap_type': 'Bernoulli',  # YENİ: subsample için gerekli
-    'subsample': 0.8,             # YENİ: Stochastic gradient
-    'loss_function': CatBoostFocalLoss(),  # Logloss -> Focal Loss
+    'iterations': 1500,
+    'depth': 9,
+    'learning_rate': 0.03,
+    'l2_leaf_reg': 5,
+    'bootstrap_type': 'Bernoulli',
+    'subsample': 0.8,
+    'loss_function': CatBoostFocalLoss(),  # ✅ FOCAL LOSS KULLANILIYOR
     'eval_metric': 'Accuracy',
-    'class_weights': class_weights, # Manuel sınıf ağırlıklarını etkinleştir
-    # auto_class_weights='Balanced', # Focal Loss ile birlikte kullanılmaz
-    'verbose': 100,               # 50 → 100 (daha az log)
+    'class_weights': class_weights,  # Manuel class weights
+    'verbose': 100,
     'random_state': 42,
-    **catboost_gpu_config  # GPU konfigürasyonunu ekle
+    **catboost_gpu_config
 }
 classifier = CatBoostClassifier(**classifier_params)
 
 print("📊 Model Parametreleri (Optimize):")
-print(f"  iterations: 1500 (500 → 1500)")
-print(f"  depth: 9 (7 → 9)")
-print(f"  learning_rate: 0.03 (0.05 → 0.03)")
-print(f"  l2_leaf_reg: 5 (YENİ)")
-print(f"  bootstrap_type: Bernoulli (YENİ - subsample için)")
-print(f"  subsample: 0.8 (YENİ)")
-print(f"  loss_function: Focal Loss (Dengesiz Veri İçin)")
-print(f"  auto_class_weights: Devre Dışı (Focal Loss kullanılıyor)")
-print(f"  early_stopping_rounds: Yok (Tüm 1500 iterasyon tamamlanacak) ✅\n")
+print(f"  iterations: 1500")
+print(f"  depth: 9")
+print(f"  learning_rate: 0.03")
+print(f"  l2_leaf_reg: 5 (L2 regularization)")
+print(f"  bootstrap_type: Bernoulli")
+print(f"  subsample: 0.8")
+print(f"  loss_function: CatBoostFocalLoss() ✅ (Dengesiz veri için)")
+print(f"  class_weights: {class_weights} (Manuel)")
+print(f"  early_stopping_rounds: Yok (Tüm 1500 iterasyon) ✅\n")
 
 # Hatalı Virtual Bankroll Callback kaldırıldı.
 # Eğitim sonunda zaten daha kapsamlı bir simülasyon yapılıyor.

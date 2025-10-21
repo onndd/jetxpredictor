@@ -85,32 +85,33 @@ class PositionalEncoding(layers.Layer):
     """
     Positional Encoding for Transformer
     Time series için zamansal bilgi ekler
+    TensorFlow 2.x uyumlu - build() metodunda oluşturulur
     """
     def __init__(self, max_seq_len=1000, d_model=256, **kwargs):
         super().__init__(**kwargs)
         self.max_seq_len = max_seq_len
         self.d_model = d_model
+        self.pe = None
         
-        # Positional encoding matrix oluştur
-        position = tf.range(max_seq_len, dtype=tf.float32)[:, tf.newaxis]
-        div_term = tf.exp(tf.range(0, d_model, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / d_model))
+    def build(self, input_shape):
+        # Positional encoding matrix'i build'de oluştur
+        position = tf.range(self.max_seq_len, dtype=tf.float32)[:, tf.newaxis]
+        div_term = tf.exp(tf.range(0, self.d_model, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / self.d_model))
         
-        pe = tf.zeros((max_seq_len, d_model))
         pe_sin = tf.sin(position * div_term)
         pe_cos = tf.cos(position * div_term)
         
-        # Sin ve cos değerlerini birleştir - DÜZELTME: tf.Variable yerine tf.concat kullan
-        pe_sin_expanded = tf.expand_dims(pe_sin, axis=-1)
-        pe_cos_expanded = tf.expand_dims(pe_cos, axis=-1)
+        # Alternating sin/cos pattern oluştur
+        pe_list = []
+        for i in range(self.d_model):
+            if i % 2 == 0:
+                pe_list.append(pe_sin[:, i // 2:i // 2 + 1])
+            else:
+                pe_list.append(pe_cos[:, i // 2:i // 2 + 1])
         
-        # Alternating pattern için reshape
-        pe_sin_reshaped = tf.reshape(pe_sin_expanded, (max_seq_len, -1))
-        pe_cos_reshaped = tf.reshape(pe_cos_expanded, (max_seq_len, -1))
-        
-        # Sin ve cos değerlerini alternating olarak birleştir
-        pe_array = tf.zeros((max_seq_len, d_model))
-        pe_array = tf.concat([pe_sin_reshaped, pe_cos_reshaped], axis=-1)
-        self.pe = pe_array
+        pe = tf.concat(pe_list, axis=1)
+        self.pe = tf.constant(pe, dtype=tf.float32)
+        super().build(input_shape)
     
     def call(self, x):
         seq_len = tf.shape(x)[1]
@@ -321,60 +322,58 @@ X_500 = np.log10(X_500 + 1e-8)
 X_1000 = np.log10(X_1000 + 1e-8)  # YENİ: 1000'lik pencere normalizasyonu
 
 # =============================================================================
-# TIME-SERIES SPLIT (KRONOLOJIK) - SHUFFLE YOK!
+# TIME-SERIES SPLIT (KRONOLOJIK) - SABİT SAYILAR
 # =============================================================================
 print("\n📊 TIME-SERIES SPLIT (Kronolojik Bölme)...")
 print("⚠️  UYARI: Shuffle devre dışı - Zaman serisi yapısı korunuyor!")
 
-# Test seti: Son 1000 kayıt
-test_size = 1000
-train_end = len(X_f) - test_size
+# Sabit split sayıları
+test_size = 1500
+val_size = 1000
+total_samples = len(X_f)
+train_size = total_samples - test_size - val_size
 
-# Train/Test split (kronolojik)
-X_f_train = X_f[:train_end]
-X_50_train = X_50[:train_end]
-X_200_train = X_200[:train_end]
-X_500_train = X_500[:train_end]
-X_1000_train = X_1000[:train_end]
-y_reg_train = y_reg[:train_end]
-y_cls_train = y_cls[:train_end]
-y_thr_train = y_thr[:train_end]
+print(f"📊 Veri Dağılımı (Sabit Sayılar):")
+print(f"  Train: {train_size:,} sample")
+print(f"  Validation: {val_size:,} sample")
+print(f"  Test: {test_size:,} sample")
+print(f"  Toplam: {total_samples:,} sample\n")
 
-X_f_te = X_f[train_end:]
-X_50_te = X_50[train_end:]
-X_200_te = X_200[train_end:]
-X_500_te = X_500[train_end:]
-X_1000_te = X_1000[train_end:]
-y_reg_te = y_reg[train_end:]
-y_cls_te = y_cls[train_end:]
-y_thr_te = y_thr[train_end:]
+# Kronolojik split: Train -> Val -> Test
+train_end = train_size
+val_end = train_size + val_size
 
-# Validation split (eğitim setinin son %20'si, kronolojik)
-val_size = int(len(X_f_train) * 0.2)
-val_start = len(X_f_train) - val_size
+# Train set
+X_f_tr = X_f[:train_end]
+X_50_tr = X_50[:train_end]
+X_200_tr = X_200[:train_end]
+X_500_tr = X_500[:train_end]
+X_1000_tr = X_1000[:train_end]
+y_reg_tr = y_reg[:train_end]
+y_cls_tr = y_cls[:train_end]
+y_thr_tr = y_thr[:train_end]
 
-X_f_tr = X_f_train[:val_start]
-X_50_tr = X_50_train[:val_start]
-X_200_tr = X_200_train[:val_start]
-X_500_tr = X_500_train[:val_start]
-X_1000_tr = X_1000_train[:val_start]
-y_reg_tr = y_reg_train[:val_start]
-y_cls_tr = y_cls_train[:val_start]
-y_thr_tr = y_thr_train[:val_start]
+# Validation set
+X_f_val = X_f[train_end:val_end]
+X_50_val = X_50[train_end:val_end]
+X_200_val = X_200[train_end:val_end]
+X_500_val = X_500[train_end:val_end]
+X_1000_val = X_1000[train_end:val_end]
+y_reg_val = y_reg[train_end:val_end]
+y_cls_val = y_cls[train_end:val_end]
+y_thr_val = y_thr[train_end:val_end]
 
-X_f_val = X_f_train[val_start:]
-X_50_val = X_50_train[val_start:]
-X_200_val = X_200_train[val_start:]
-X_500_val = X_500_train[val_start:]
-X_1000_val = X_1000_train[val_start:]
-y_reg_val = y_reg_train[val_start:]
-y_cls_val = y_cls_train[val_start:]
-y_thr_val = y_thr_train[val_start:]
+# Test set
+X_f_te = X_f[val_end:]
+X_50_te = X_50[val_end:]
+X_200_te = X_200[val_end:]
+X_500_te = X_500[val_end:]
+X_1000_te = X_1000[val_end:]
+y_reg_te = y_reg[val_end:]
+y_cls_te = y_cls[val_end:]
+y_thr_te = y_thr[val_end:]
 
-print(f"✅ Train: {len(X_f_tr):,}")
-print(f"✅ Validation: {len(X_f_val):,} (eğitim setinin son %20'si)")
-print(f"✅ Test: {len(X_f_te):,} (tüm verinin son {test_size} kaydı)")
-print(f"📊 Toplam: {len(X_f_tr) + len(X_f_val) + len(X_f_te):,}")
+print(f"✅ Veri split tamamlandı")
 
 # =============================================================================
 # CUSTOM LOSS FUNCTIONS

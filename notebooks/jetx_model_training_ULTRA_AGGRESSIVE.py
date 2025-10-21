@@ -96,8 +96,8 @@ print(f"\n⚡ Bu dengesizlik 10x class weight ile çözülecek!")
 # FEATURE ENGINEERING
 # =============================================================================
 print("\n🔧 Feature extraction başlıyor...")
-window_size = 1000  # DÜZELTME: 500 → 1000 (diğer modellerle tutarlı)
-X_f, X_50, X_200, X_500, X_1000 = [], [], [], [], []  # DÜZELTME: X_1000 eklendi
+window_size = 1000  # Diğer modellerle tutarlı
+X_f, X_50, X_200, X_500, X_1000 = [], [], [], [], []
 y_reg, y_cls, y_thr = [], [], []
 
 for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
@@ -109,7 +109,7 @@ for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
     X_50.append(all_values[i-50:i])
     X_200.append(all_values[i-200:i])
     X_500.append(all_values[i-500:i])
-    X_1000.append(all_values[i-1000:i])  # DÜZELTME: X_1000 sequence eklendi
+    X_1000.append(all_values[i-1000:i])
     
     y_reg.append(target)
     cat = CategoryDefinitions.get_category_numeric(target)
@@ -122,6 +122,7 @@ X_f = np.array(X_f)
 X_50 = np.array(X_50).reshape(-1, 50, 1)
 X_200 = np.array(X_200).reshape(-1, 200, 1)
 X_500 = np.array(X_500).reshape(-1, 500, 1)
+X_1000 = np.array(X_1000).reshape(-1, 1000, 1)
 y_reg = np.array(y_reg)
 y_cls = np.array(y_cls)
 y_thr = np.array(y_thr)
@@ -138,23 +139,65 @@ X_f = scaler.fit_transform(X_f)
 X_50 = np.log10(X_50 + 1e-8)
 X_200 = np.log10(X_200 + 1e-8)
 X_500 = np.log10(X_500 + 1e-8)
+X_1000 = np.log10(X_1000 + 1e-8)
 
-idx = np.arange(len(X_f))
-y_cls_binary = (y_reg >= 1.5).astype(int)  # Stratify için binary class
-tr_idx, te_idx = train_test_split(idx, test_size=0.2, shuffle=True, stratify=y_cls_binary, random_state=42)
+# KRONOLOJİK SPLIT - TEST DATA LEAKAGE ÖNLENDİ
+# SABİT SAYILAR: Test=1500, Val=1000, Train=Geri kalan
+print(f"⚠️  UYARI: Shuffle KAPALI - Zaman serisi yapısı korunuyor!")
+print(f"⚠️  Test verisi modelin eğitiminde kullanılmayacak!")
 
-X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx], X_1000[tr_idx]  # DÜZELTME: X_1000_tr eklendi
-y_reg_tr, y_cls_tr, y_thr_tr = y_reg[tr_idx], y_cls[tr_idx], y_thr[tr_idx]
+# Sabit split sayıları
+test_size = 1500
+val_size = 1000
+total_samples = len(X_f)
+train_size = total_samples - test_size - val_size
 
-X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te = X_f[te_idx], X_50[te_idx], X_200[te_idx], X_500[te_idx], X_1000[te_idx]  # DÜZELTME: X_1000_te eklendi
-y_reg_te, y_cls_te, y_thr_te = y_reg[te_idx], y_cls[te_idx], y_thr[te_idx]
+print(f"📊 Veri Dağılımı (Sabit Sayılar):")
+print(f"  Train: {train_size:,} sample")
+print(f"  Validation: {val_size:,} sample")
+print(f"  Test: {test_size:,} sample")
+print(f"  Toplam: {total_samples:,} sample\n")
+
+# Kronolojik split: Train -> Val -> Test
+train_end = train_size
+val_end = train_size + val_size
+
+# Train set
+X_f_tr = X_f[:train_end]
+X_50_tr = X_50[:train_end]
+X_200_tr = X_200[:train_end]
+X_500_tr = X_500[:train_end]
+X_1000_tr = X_1000[:train_end]
+y_reg_tr = y_reg[:train_end]
+y_cls_tr = y_cls[:train_end]
+y_thr_tr = y_thr[:train_end]
+
+# Validation set
+X_f_val = X_f[train_end:val_end]
+X_50_val = X_50[train_end:val_end]
+X_200_val = X_200[train_end:val_end]
+X_500_val = X_500[train_end:val_end]
+X_1000_val = X_1000[train_end:val_end]
+y_reg_val = y_reg[train_end:val_end]
+y_cls_val = y_cls[train_end:val_end]
+y_thr_val = y_thr[train_end:val_end]
+
+# Test set
+X_f_te = X_f[val_end:]
+X_50_te = X_50[val_end:]
+X_200_te = X_200[val_end:]
+X_500_te = X_500[val_end:]
+X_1000_te = X_1000[val_end:]
+y_reg_te = y_reg[val_end:]
+y_cls_te = y_cls[val_end:]
+y_thr_te = y_thr[val_end:]
 
 # Shape düzeltmesi: (N,) -> (N, 1) binary classification için
 y_thr_tr = y_thr_tr.reshape(-1, 1)
+y_thr_val = y_thr_val.reshape(-1, 1)
 y_thr_te = y_thr_te.reshape(-1, 1)
 
-print(f"Train: {len(X_f_tr)}, Test: {len(X_f_te)}")
-print(f"✅ Veri hazır")
+print(f"✅ Veri hazır ve split tamamlandı")
 
 # =============================================================================
 # ULTRA DEEP MODEL - 2-3X DERİNLİK
@@ -320,19 +363,19 @@ def create_weighted_binary_crossentropy(weight_0, weight_1):
     
     return loss
 
-# CLASS WEIGHTS - LAZY LEARNING ÖNLEME (yeterince yüksek)
+# CLASS WEIGHTS - OPTİMİZE EDİLDİ (overfitting önlendi)
 # y_thr_tr shape (N, 1) olduğu için flatten etmeliyiz
 c0 = (y_thr_tr.flatten() == 0).sum()
 c1 = (y_thr_tr.flatten() == 1).sum()
-TARGET_MULTIPLIER = 20.0  # DÜZELTİLDİ: 3.5 → 20.0 (lazy learning'i kesin önler)
+TARGET_MULTIPLIER = 7.0  # OPTİMİZE: 20.0 → 7.0 (dengeli, overfitting önlenir)
 w0 = (len(y_thr_tr) / (2 * c0)) * TARGET_MULTIPLIER
 w1 = len(y_thr_tr) / (2 * c1)
 
-print(f"\n🎯 CLASS WEIGHTS (LAZY LEARNING ÖNLEME):")
-print(f"1.5 altı (0): {w0:.2f}x (LAZY LEARNING'I KESIN ÖNLER)")
+print(f"\n🎯 CLASS WEIGHTS (OPTİMİZE - Overfitting Önlendi):")
+print(f"1.5 altı (0): {w0:.2f}x (dengeli, lazy learning önler)")
 print(f"1.5 üstü (1): {w1:.2f}x")
 print(f"\n✅ Loss penalties ile UYUMLU!")
-print(f"⚡ Dengeli öğrenme: Class weight + penalties birlikte çalışıyor")
+print(f"⚡ Dengeli öğrenme: Moderate class weight + balanced penalties")
 
 # LEARNING RATE SCHEDULE - Düşürüldü ve öne çekildi
 initial_lr = 0.00005  # 2. Tur: 0.0001 → 0.00005 (50% azalma, daha hassas)
@@ -346,18 +389,18 @@ def lr_schedule(epoch, lr):
     else:
         return initial_lr * 0.05
 
-# COMPILE - DENGELI LOSS FUNCTIONS (Lazy Learning Önlendi!)
+# COMPILE - DENGELI LOSS FUNCTIONS
 model.compile(
     optimizer=Adam(initial_lr),
     loss={
-        'regression': balanced_threshold_killer_loss,  # YENİ: Dengeli, tutarlı cezalar
+        'regression': balanced_threshold_killer_loss,
         'classification': 'categorical_crossentropy',
-        'threshold': balanced_focal_loss()  # YENİ: Dengeli focal loss
+        'threshold': balanced_focal_loss()
     },
     loss_weights={
         'regression': 0.25,
         'classification': 0.15,
-        'threshold': 0.60  # Threshold vurgusu
+        'threshold': 0.60
     },
     metrics={
         'regression': ['mae'],
@@ -417,7 +460,7 @@ cb = [
     ),
     callbacks.EarlyStopping(
         monitor='val_threshold_accuracy',
-        patience=100,  # 40 -> 100
+        patience=50,  # OPTİMİZE: 100 → 50 (gereksiz uzun eğitim önlendi)
         mode='max',
         restore_best_weights=True,
         verbose=1
@@ -426,17 +469,17 @@ cb = [
     callbacks.ReduceLROnPlateau(
         monitor='val_loss',
         factor=0.5,
-        patience=10,  # Düşürüldü: 20 → 10 (daha hızlı tepki)
+        patience=10,
         min_lr=1e-8,
         verbose=1
     ),
     ultra_metrics
 ]
 
-print("✅ Ultra callbacks hazır:")
-print(f"- Patience: 100 epoch (eski: 40)")
-print(f"- LR schedule: 0.0001 -> 0.000005 (düşürüldü ve öne çekildi)")
-print(f"- ReduceLR patience: 10 (düşürüldü)")
+print("✅ Ultra callbacks hazır (optimize):")
+print(f"- Patience: 50 epoch (optimize edildi)")
+print(f"- LR schedule: 0.00005 -> 0.0000025")
+print(f"- ReduceLR patience: 10")
 print(f"- Custom metrics tracking")
 
 # =============================================================================
@@ -454,16 +497,25 @@ print(f"\n⏱️ BEKLENEN SÜRE: 3-5 saat (GPU ile)")
 print(f"💡 Model 5 dakikada bitiyorsa bir sorun var!")
 print("="*70 + "\n")
 
+# MANUEL VALIDATION SET - Kronolojik olarak ayrıldı
 hist = model.fit(
-    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],  # DÜZELTME: X_1000_tr eklendi
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {
         'regression': y_reg_tr, 
         'classification': y_cls_tr, 
         'threshold': y_thr_tr
     },
-    epochs=1000,  # 300 -> 1000
-    batch_size=4,  # 16 -> 4
-    validation_split=0.2,
+    validation_data=(
+        [X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val],
+        {
+            'regression': y_reg_val,
+            'classification': y_cls_val,
+            'threshold': y_thr_val
+        }
+    ),
+    epochs=1000,
+    batch_size=4,
+    shuffle=False,  # KRİTİK: Zaman serisi yapısı korunuyor!
     callbacks=cb,
     verbose=1
 )

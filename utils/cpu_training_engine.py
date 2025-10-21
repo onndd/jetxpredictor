@@ -537,3 +537,4 @@ class CPUTrainingEngine:
                     wallet += 15
         
         return ((wallet - initial) / initial) * 100
+

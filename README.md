@@ -1,456 +1,50 @@
-# 🚀 JetX Predictor - AI Tahmin Sistemi
+# JetX Predictor
 
-**Gelişmiş makine öğrenimi teknolojileriyle JetX çarpan tahmini**
+## Proje Mimarisi
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![TensorFlow](https://img.shields.io/badge/TensorFlow-2.14+-orange.svg)](https://www.tensorflow.org/)
-[![CatBoost](https://img.shields.io/badge/CatBoost-1.2+-green.svg)](https://catboost.ai/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)](https://streamlit.io/)
-[![License](https://img.shields.io/badge/License-Educational-yellow.svg)](#)
-
-## 📋 İçindekiler
-
-- [Genel Bakış](#-genel-bakış)
-- [Özellikler](#-özellikler)
-- [Kurulum](#-kurulum)
-- [Kullanım](#-kullanım)
-- [Model Eğitimi](#-model-eğitimi)
-- [Proje Yapısı](#-proje-yapısı)
-- [Teknik Detaylar](#-teknik-detaylar)
-- [Risk Yönetimi](#-risk-yönetimi)
-- [Katkıda Bulunma](#-katkıda-bulunma)
-- [Feragatname](#️-feragatname)
-
-## 🎯 Genel Bakış
-
-JetX Predictor, gelişmiş makine öğrenimi algoritmaları kullanarak JetX oyununda bir sonraki çarpan değerini tahmin etmeye çalışan deneysel bir AI sistemidir. Sistem, geçmiş oyun verilerindeki pattern'leri analiz ederek gelecek tahmininde bulunur.
-
-### Ana Hedef
-**1.5x kritik eşiği** doğru tahmin etmek:
-- ✅ **1.5x ve üstü** = Kazanç (Güvenli bölge)
-- ❌ **1.5x altı** = Kayıp (Riskli bölge)
-
-### Temel Özellikler
-- 🤖 **Hybrid Model Sistemi**: Neural Network + CatBoost
-- 🎯 **Ensemble Predictor**: Birden fazla modeli birleştirerek güvenilirlik artırma
-- 📊 **Adaptive Threshold**: Güven skoruna göre dinamik eşik ayarlama
-- 🔬 **Backtesting**: Geçmiş verilerle performans testi
-- 🛡️ **Risk Yönetimi**: Üç farklı mod (Rolling, Normal, Aggressive)
-- 📈 **Gerçek Zamanlı Analiz**: Canlı tahmin ve görselleştirme
-
-## ✨ Özellikler
-
-### Model Özellikleri
-
-#### 1. Progressive Neural Network
-- Multi-input architecture (features + 4 time sequences)
-- Multi-output prediction (regression, classification, threshold)
-- Custom loss functions (Focal Loss, Threshold Killer Loss)
-- Advanced feature engineering (150+ özellik)
-- Time-series split validation
-- Class imbalance handling
-
-#### 2. CatBoost Models
-- Gradient boosting regressor (değer tahmini)
-- Binary classifier (1.5x eşik tahmini)
-- Auto class weighting
-- GPU acceleration support
-- Fast inference (<1ms)
-
-#### 3. Ensemble Predictor
-Birden fazla modeli birleştirerek daha güvenilir tahminler:
-- **Weighted Strategy**: Model güvenilirliklerine göre ağırlıklı ortalama
-- **Unanimous Strategy**: Tüm modeller aynı yönde tahmin yapmalı
-- **Confidence-Based**: Yüksek güvenli modele daha fazla ağırlık
-- **Majority Strategy**: Basit çoğunluk oylaması
-
-#### 4. Adaptive Threshold System
-Güven skoruna ve performansa göre dinamik threshold ayarlama:
-- Confidence-based: Güven skoruna göre (0.90+ → 1.5x, 0.50- → bahse girme)
-- Performance-based: Geçmiş performansa göre (kazanma oranı bazlı)
-- Hybrid: Her ikisinin kombinasyonu
-
-### Özellik Mühendisliği
-
-**Temel Özellikler:**
-- Hareketli ortalamalar (25, 50, 100, 200, 500 pencere)
-- 1.5x eşik analizi (oran, frekans, kritik bölge)
-- Büyük çarpan mesafeleri (10x, 20x, 50x, 100x, 200x)
-- Ardışık pattern'ler (yükseliş/düşüş streak)
-- Volatilite metrikleri
-
-**Gelişmiş Özellikler:**
-- İstatistiksel dağılım (skewness, kurtosis, percentiles)
-- Multi-timeframe momentum (kısa/orta/uzun vadeli trend)
-- Recovery pattern detection
-- Anomaly detection (Z-score, MAD)
-- 15 farklı kategori seti (çok boyutlu analiz)
-
-**Frequency Domain Analysis:**
-- Wavelet Transform (time-frequency localization)
-- Fourier Transform (periyodik pattern detection)
-- Autocorrelation (lag-based patterns)
-
-**Advanced Time Series:**
-- DFA (Detrended Fluctuation Analysis)
-- Hurst Exponent (trend persistence)
-
-### Risk Yönetimi
-
-#### Tahmin Modları
-
-**🛡️ Rolling Mod (Konservatif)**
-- Minimum güven: %80
-- Önerilen çıkış: 1.5x
-- Sermaye koruma odaklı
-- En güvenli mod
-
-**🎯 Normal Mod (Dengeli)**
-- Minimum güven: %65
-- Dengeli risk/getiri
-- Standart kullanım için ideal
-
-**⚡ Agresif Mod (Riskli)**
-- Minimum güven: %50
-- Yüksek risk, yüksek getiri
-- Sadece deneyimli kullanıcılar için
-
-#### Risk Kontrolleri
-- Ardışık kayıp limiti (3 kayıp → uyarı)
-- Kritik bölge filtreleme (1.45-1.55x)
-- Güven skoru bazlı karar verme
-- Performans bazlı uyarılar
-
-### Backtesting & Analiz
-
-**Backtesting Engine:**
-- Historical data üzerinde performans testi
-- ROI, kazanma oranı, Sharpe ratio hesaplama
-- Maximum drawdown analizi
-- Equity curve görselleştirme
-
-**Model Karşılaştırma:**
-- Farklı modellerin performans analizi
-- Confusion matrix ve metrikler
-- Feature importance analizi
-
-## 🚀 Kurulum
-
-### Gereksinimler
-
-- Python 3.9 veya üzeri
-- pip (Python package manager)
-- GPU (opsiyonel, CatBoost ve TensorFlow için)
-
-### Adım 1: Repository'yi Klonlayın
-
-```bash
-git clone https://github.com/onndd/jetxpredictor.git
-cd jetxpredictor
-```
-
-### Adım 2: Sanal Ortam Oluşturun (Önerilen)
-
-```bash
-python -m venv venv
-
-# macOS/Linux
-source venv/bin/activate
-
-# Windows
-venv\Scripts\activate
-```
-
-### Adım 3: Bağımlılıkları Yükleyin
-
-```bash
-pip install -r requirements.txt
-```
-
-### Adım 4: Veritabanını Oluşturun
-
-```bash
-python -c "from utils.database import DatabaseManager; db = DatabaseManager(); print('✅ Veritabanı oluşturuldu')"
-```
-
-## 📊 Kullanım
-
-### Streamlit Uygulamasını Başlatın
-
-```bash
-streamlit run app.py
-```
-
-Uygulama `http://localhost:8501` adresinde açılacaktır.
-
-### Ana Özellikler
-
-#### 1. Tahmin Yapma
-- Mod seçimi (Rolling/Normal/Aggressive)
-- Tahmin butonu ile yeni tahmin
-- Güven skoru ve risk seviyesi gösterimi
-- Dinamik threshold önerisi (aktifse)
-
-#### 2. Veri Analizi
-- Son N el grafiği (50-200 arası)
-- İstatistiksel metrikler
-- 1.5x eşik analizi
-
-#### 3. Veri Girişi
-- Manuel oyun sonucu ekleme
-- Otomatik tahmin değerlendirme
-- Geçmiş takibi
-
-#### 4. Model Karşılaştırma (Gelişmiş)
-- Farklı modellerin performans karşılaştırması
-- Confusion matrix
-- ROI ve kazanma oranı analizi
-
-### Gelişmiş Özellikler
-
-#### Ensemble Predictor Kullanımı
-
-Sidebar'dan etkinleştirin:
-1. ✅ "Ensemble Predictor" checkbox'ını işaretleyin
-2. Oylama stratejisi seçin:
-   - Weighted (Önerilen): CatBoost %60, NN %40
-   - Unanimous: Her iki model de aynı tahminde
-   - Confidence: En güvenli modele öncelik
-   - Majority: Basit çoğunluk
-
-#### Adaptive Threshold Kullanımı
-
-Sidebar'dan etkinleştirin:
-1. ✅ "Dinamik Threshold" checkbox'ını işaretleyin
-2. Strateji seçin:
-   - Hybrid (Önerilen): Güven + Performans
-   - Confidence: Sadece güven skoru
-   - Performance: Geçmiş performans
-
-#### Backtesting
-
-1. "Backtesting" bölümünü açın
-2. Parametreleri ayarlayın:
-   - Test veri sayısı (50-500)
-   - Başlangıç sermayesi
-   - Bahis tutarı
-3. "Backtest Çalıştır" butonuna tıklayın
-4. Sonuçları inceleyin (ROI, kazanma oranı, equity curve)
-
-## 🎓 Model Eğitimi
-
-### Google Colab'da Eğitim (Önerilen)
-
-Modeller Google Colab'da eğitilir (ücretsiz GPU/TPU):
-
-#### 1. CatBoost Model Eğitimi
-
-```bash
-# notebooks/jetx_CATBOOST_TRAINING.py dosyasını Colab'a yükleyin
-```
-
-Colab notebook özellikleri:
-- Otomatik veri yükleme (jetx_data.db)
-- GPU accelerated training
-- Time-series split validation
-- Model kaydetme ve indirme
-- Performans raporlama
-
-#### 2. Progressive Neural Network Eğitimi
-
-```bash
-# notebooks/JetX_PROGRESSIVE_TRAINING_Colab.ipynb dosyasını açın
-```
-
-Eğitim özellikleri:
-- 3 aşamalı progressive training
-- Custom loss functions (Focal Loss)
-- Class imbalance handling
-- Virtual bankroll callback
-- Early stopping
-
-### Eğitilmiş Modelleri İndirme
-
-Colab'da eğitim tamamlandıktan sonra:
-
-1. **Model dosyalarını indirin:**
-   - `catboost_regressor.cbm`
-   - `catboost_classifier.cbm`
-   - `catboost_scaler.pkl`
-   - `jetx_progressive_transformer.h5` (NN için)
-   - `scaler_progressive_transformer.pkl` (NN için)
-
-2. **`models/` klasörüne kopyalayın:**
-   ```bash
-   cp ~/Downloads/catboost*.* models/
-   cp ~/Downloads/*progressive*.* models/
-   ```
-
-3. **Uygulamayı yeniden başlatın:**
-   ```bash
-   streamlit run app.py
-   ```
-
-## 📁 Proje Yapısı
+### Ana Uygulama Yapısı
 
 ```
 jetxpredictor/
-├── app.py                          # Ana Streamlit uygulaması
-├── category_definitions.py         # Kategori tanımları ve feature engineering
-├── requirements.txt                # Python bağımlılıkları
-├── README.md                       # Bu dosya
+├── app.py                          # Streamlit ana UI
+├── category_definitions.py         # Kategori tanımları ve feature extraction
+├── requirements.txt                # Python dependencies
 │
 ├── config/
-│   └── config.yaml                 # Konfigürasyon ayarları
+│   ├── config.yaml                # Ana konfigürasyon
+│   └── cpu_models_config.yaml     # CPU model ayarları
 │
 ├── data/
-│   └── jetx_data.db               # SQLite veritabanı
+│   ├── jetx_data.db              # SQLite veritabanı
+│   └── cache/                     # Önbellek dizini
 │
-├── models/                         # Eğitilmiş modeller (Colab'dan)
-│   ├── catboost_regressor.cbm
-│   ├── catboost_classifier.cbm
-│   ├── catboost_scaler.pkl
-│   ├── jetx_progressive_transformer.h5
-│   └── scaler_progressive_transformer.pkl
+├── models/                         # Eğitilmiş modeller
+│   ├── progressive_multiscale/    # Multi-scale NN modelleri
+│   └── cpu/                       # CPU ağırlıklı modeller
 │
-├── notebooks/                      # Model eğitim scriptleri (Colab)
-│   ├── jetx_CATBOOST_TRAINING.py
-│   ├── jetx_PROGRESSIVE_TRAINING.py
+├── notebooks/                      # Google Colab eğitim scriptleri
 │   ├── JetX_PROGRESSIVE_TRAINING_Colab.ipynb
+│   ├── jetx_PROGRESSIVE_TRAINING_MULTISCALE.py
+│   ├── jetx_CATBOOST_TRAINING_MULTISCALE.py
 │   ├── OPTUNA_HYPERPARAMETER_SEARCH.py
 │   └── TRAIN_META_MODEL.py
 │
 ├── pages/                          # Streamlit sayfaları
 │   ├── 1_📊_Analiz.py
-│   └── 2_🔬_Model_Karsilastirma.py
+│   ├── 2_🔬_Model_Karsilastirma.py
+│   └── cpu/                       # CPU model sayfaları
 │
-└── utils/                          # Yardımcı modüller
-    ├── __init__.py
-    ├── predictor.py               # Tahmin motoru (NN + CatBoost)
+└── utils/                          # Core utility modülleri
+    ├── predictor.py               # Ana tahmin motoru
+    ├── ensemble_predictor.py      # Ensemble sistemi
+    ├── risk_manager.py            # Risk yönetimi
     ├── database.py                # Veritabanı yönetimi
-    ├── risk_manager.py            # Risk yönetimi ve karar verme
-    ├── ensemble_predictor.py      # Ensemble tahmin sistemi
-    ├── adaptive_threshold.py      # Dinamik threshold yönetimi
-    ├── backtesting.py             # Backtesting motoru
-    ├── ensemble_manager.py        # Ensemble model yönetimi
-    ├── config_loader.py           # Konfigürasyon yükleyici
-    ├── custom_losses.py           # Özel loss fonksiyonları
-    ├── focal_loss.py              # Focal loss implementasyonu
-    ├── balanced_batch_generator.py # Dengeli batch üretimi
-    ├── data_augmentation.py       # Veri augmentation
-    ├── adaptive_weight_scheduler.py # Dinamik weight scheduler
-    ├── lr_schedulers.py           # Learning rate schedulers
-    ├── attention_layers.py        # Attention mekanizmaları
-    ├── advanced_bankroll.py       # Gelişmiş bankroll yönetimi
-    ├── dual_bankroll_system.py    # Dual bankroll sistemi
-    └── virtual_bankroll_callback.py # Virtual bankroll callback
+    └── ...                        # Diğer utility modülleri
 ```
 
-## 🔧 Teknik Detaylar
+## Veritabanı Şeması
 
-### Model Mimarileri
-
-#### Progressive Neural Network
-
-```python
-# Multi-input architecture
-inputs = {
-    'features': Dense features (150+ özellik),
-    'seq_50': LSTM(50 timesteps),
-    'seq_200': LSTM(200 timesteps),
-    'seq_500': LSTM(500 timesteps),
-    'seq_1000': LSTM(1000 timesteps)
-}
-
-# Multi-output
-outputs = {
-    'regression': Değer tahmini (continuous),
-    'classification': Kategori tahmini (3 class),
-    'threshold': 1.5x eşik tahmini (binary)
-}
-
-# Custom losses
-losses = {
-    'regression': MAE,
-    'classification': Categorical Crossentropy,
-    'threshold': Focal Loss + Threshold Killer Loss
-}
-```
-
-#### CatBoost Models
-
-**Regressor:**
-```python
-CatBoostRegressor(
-    iterations=1500,
-    depth=10,
-    learning_rate=0.03,
-    loss_function='MAE',
-    task_type='GPU'
-)
-```
-
-**Classifier:**
-```python
-CatBoostClassifier(
-    iterations=1500,
-    depth=9,
-    learning_rate=0.03,
-    loss_function='Logloss',
-    auto_class_weights='Balanced',
-    task_type='GPU'
-)
-```
-
-### Feature Engineering
-
-**150+ özellik çıkarımı:**
-
-1. **Temel İstatistikler** (25 özellik)
-   - Mean, std, min, max, median (5 pencere)
-
-2. **Threshold Özellikleri** (10 özellik)
-   - 1.5x altı/üstü oranları
-   - Kritik bölge analizi
-
-3. **Distance Features** (5 özellik)
-   - 10x, 20x, 50x, 100x, 200x'ten mesafe
-
-4. **Streak Features** (5 özellik)
-   - Ardışık yükseliş/düşüş
-   - Kategori tekrarı
-
-5. **Volatility** (10 özellik)
-   - Farklı pencerelerde std, range, değişim
-
-6. **Statistical Distribution** (10 özellik)
-   - Skewness, kurtosis, percentiles, IQR
-
-7. **Multi-timeframe Momentum** (20 özellik)
-   - Kısa/orta/uzun vadeli momentum
-   - Trend strength, acceleration
-
-8. **Recovery Patterns** (10 özellik)
-   - Volatilite normalizasyonu
-   - Post-big-multiplier stability
-   - Trend reversal
-
-9. **Anomaly Detection** (10 özellik)
-   - Z-score, MAD score
-   - Outlier detection
-
-10. **15 Kategori Setleri** (15 özellik)
-    - Çok boyutlu kategorizasyon
-
-11. **Advanced Analysis** (30+ özellik)
-    - Wavelet transform
-    - Fourier transform
-    - Autocorrelation
-    - DFA, Hurst exponent
-
-### Veritabanı Şeması
-
-**jetx_results:**
+### jetx_results Tablosu
 ```sql
 CREATE TABLE jetx_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -459,7 +53,7 @@ CREATE TABLE jetx_results (
 );
 ```
 
-**predictions:**
+### predictions Tablosu
 ```sql
 CREATE TABLE predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -473,17 +67,400 @@ CREATE TABLE predictions (
 );
 ```
 
-### Konfigürasyon
+## Core Utils Modülleri
 
-[`config/config.yaml`](config/config.yaml) dosyasında özelleştirilebilir:
+### Tahmin Motorları
+- **predictor.py** - Ana tahmin motoru (Neural Network + CatBoost hybrid)
+- **ensemble_predictor.py** - Multi-model ensemble sistemi (weighted, unanimous, confidence, majority voting)
+- **consensus_predictor.py** - Consensus based prediction
+- **all_models_predictor.py** - Tüm model tahminlerini birleştirme
 
+### Model Öğrenimi
+- **cpu_training_engine.py** - CPU üzerinde model eğitim motoru
+- **lightweight_model_manager.py** - Hafif model yönetim sistemi
+- **autogluon_predictor.py** - AutoGluon AutoML entegrasyonu
+- **tabnet_predictor.py** - TabNet attention-based predictor
+- **lightgbm_predictor.py** - LightGBM gradient boosting
+- **catboost_ensemble.py** - CatBoost ensemble wrapper
+
+### Feature Engineering
+- **multi_scale_window.py** - Multi-scale window extraction (500, 250, 100, 50, 20 pencere boyutları)
+- **data_augmentation.py** - Sequence ve feature augmentation
+- **balanced_batch_generator.py** - Class-balanced batch generation
+
+### Custom Loss Functions
+- **custom_losses.py** - Percentage-aware regression, threshold killer, balanced focal loss
+- **focal_loss.py** - CatBoost ve Keras focal loss implementasyonları
+- **adaptive_threshold.py** - Dinamik threshold yönetimi (confidence, performance, hybrid)
+
+### Risk & Bankroll Yönetimi
+- **risk_manager.py** - Risk analizi ve karar verme (rolling, normal, aggressive modları)
+- **advanced_bankroll.py** - Kelly criterion, bet sizing, stop-loss
+- **dual_bankroll_system.py** - İki ayrı kasa simülasyonu (1.5x threshold & %80 exit)
+
+### Backtesting & Monitoring
+- **backtesting.py** - Historical performance testing (fixed, kelly, confidence-based stratejiler)
+- **ensemble_monitor.py** - Ensemble performans izleme ve logging
+- **psychological_analyzer.py** - Pattern analizi (bait-and-switch, heating/cooling detection)
+- **anomaly_streak_detector.py** - Streak ve anomali tespiti
+
+### Deep Learning Components
+- **attention_layers.py** - Positional encoding, multi-head attention, temporal attention, transformer encoder
+- **lr_schedulers.py** - Cosine annealing, one-cycle, exponential/polynomial decay schedulers
+- **adaptive_weight_scheduler.py** - Dinamik loss weight ayarlama (Keras callback)
+- **virtual_bankroll_callback.py** - Training sırasında sanal kasa simülasyonu
+
+### Database & Configuration
+- **database.py** - SQLite veritabanı yönetimi (CRUD, stats, backup)
+- **database_setup.py** - Veritabanı kurulum ve initialization
+- **config_loader.py** - YAML konfigürasyon yükleme (singleton pattern)
+- **gpu_config.py** - TensorFlow ve CatBoost GPU konfigürasyonu
+
+### Ensemble & Stacking
+- **ensemble_manager.py** - Stacking ensemble (meta-learner)
+- **consensus_predictor.py** - NN + CatBoost consensus voting
+
+## Model Pipeline Akışı
+
+```
+Veri Girişi (database.py)
+    ↓
+SQLite Database (jetx_results table)
+    ↓
+Feature Extraction (category_definitions.py)
+    ├─ 150+ statistical features
+    ├─ Multi-scale windows
+    ├─ Wavelet & Fourier transforms
+    └─ Psychological patterns
+    ↓
+Tahmin Motorları
+    ├─ Progressive NN (multi-input/multi-output)
+    ├─ CatBoost (regressor + classifier)
+    ├─ AutoGluon (50+ model ensemble)
+    └─ TabNet (attention mechanism)
+    ↓
+Ensemble Predictor (ensemble_predictor.py)
+    ├─ Weighted voting (CatBoost 60%, NN 40%)
+    ├─ Unanimous strategy
+    ├─ Confidence-based
+    └─ Majority voting
+    ↓
+Risk Analizi (risk_manager.py)
+    ├─ Confidence threshold check
+    ├─ Consecutive loss tracking
+    ├─ Warning level assessment
+    └─ Betting suggestion
+    ↓
+Adaptive Threshold (adaptive_threshold.py)
+    ├─ Confidence-based (0.90+ → 1.5x)
+    ├─ Performance-based (win rate)
+    └─ Hybrid (combined approach)
+    ↓
+Streamlit UI (app.py)
+    ├─ Prediction visualization
+    ├─ Real-time charts
+    ├─ Backtesting interface
+    └─ Performance metrics
+```
+
+## Multi-Scale Architecture
+
+### Window Sizes
+```python
+window_sizes = [500, 250, 100, 50, 20]
+```
+
+### Her Window İçin
+- Ayrı model eğitimi
+- LSTM derinliği window size'a göre adapte
+- Attention mechanism (büyük windowlar için)
+- Time-series split validation
+- Kronolojik sıra korunması (shuffle=False)
+
+### Ensemble Stratejisi
+- Her model tahmin yapar
+- Weighted averaging (basit ortalama veya ağırlıklı)
+- Final prediction = ensemble çıktısı
+
+## Feature Engineering Pipeline
+
+### Temel İstatistikler
+- Hareketli ortalamalar (5 farklı pencere)
+- Min, max, median, std, variance
+- Percentiles (25th, 75th, 90th)
+
+### Threshold Özellikleri
+- 1.5x altı/üstü oranları
+- Son N elde kritik bölge frekansı
+- Threshold'dan uzaklık
+
+### Distance Features
+- 10x, 20x, 50x, 100x, 200x'ten son geçiş mesafesi
+
+### Streak Features
+- Ardışık yükseliş/düşüş
+- Maksimum streak uzunluğu
+- Pattern tekrarı
+
+### Volatility
+- Multi-timeframe std
+- Range, coefficient of variation
+- Bollinger bands
+
+### Advanced Analysis
+- **Wavelet Transform**: Time-frequency localization
+- **Fourier Transform**: Periyodik pattern detection
+- **Autocorrelation**: Lag-based patterns
+- **DFA (Detrended Fluctuation Analysis)**
+- **Hurst Exponent**: Trend persistence
+
+### Psychological Patterns
+- Bait-and-switch detection
+- False confidence patterns
+- Heating up / Cooling down
+- Gambler's fallacy score
+- Manipulation detection
+
+## Model Mimarileri
+
+### Progressive Neural Network
+
+```python
+# Multi-input
+inputs = {
+    'features': Input(150+),        # Dense features
+    'seq_50': Input(50, 1),         # LSTM 50 timesteps
+    'seq_200': Input(200, 1),       # LSTM 200 timesteps
+    'seq_500': Input(500, 1),       # LSTM 500 timesteps
+    'seq_1000': Input(1000, 1)      # LSTM 1000 timesteps
+}
+
+# Multi-output
+outputs = {
+    'regression': Dense(1),          # Değer tahmini
+    'classification': Dense(3),      # 3-class kategorization
+    'threshold': Dense(1, sigmoid)   # 1.5x binary prediction
+}
+
+# Loss weights
+loss_weights = {
+    'regression': 0.50,
+    'classification': 0.15,
+    'threshold': 0.35
+}
+```
+
+### CatBoost Models
+
+#### Regressor
+```python
+CatBoostRegressor(
+    iterations=1500,
+    depth=10,
+    learning_rate=0.03,
+    loss_function='MAE',
+    task_type='GPU'
+)
+```
+
+#### Classifier
+```python
+CatBoostClassifier(
+    iterations=1500,
+    depth=9,
+    learning_rate=0.03,
+    loss_function='Logloss',
+    auto_class_weights='Balanced',
+    task_type='GPU'
+)
+```
+
+### AutoGluon
+```python
+TabularPredictor.fit(
+    time_limit=3600,
+    presets='best_quality',
+    eval_metric='roc_auc',
+    # 50+ model ensemble (LightGBM, CatBoost, XGBoost, Neural Network, etc.)
+)
+```
+
+### TabNet
+```python
+TabNetClassifier(
+    n_d=64,
+    n_a=64,
+    n_steps=5,
+    gamma=1.5,
+    n_independent=2,
+    n_shared=2,
+    # Attention mechanism ile yüksek çarpan tespiti
+)
+```
+
+## Training Pipeline (Google Colab)
+
+### 1. Progressive NN Training
+```
+notebooks/jetx_PROGRESSIVE_TRAINING_MULTISCALE.py
+├─ Multi-scale window extraction
+├─ Feature engineering (150+ features)
+├─ 5 ayrı model eğitimi (her window size için)
+├─ Custom callbacks
+│   ├─ DetailedMetricsCallback (below/above accuracy)
+│   ├─ WeightedModelCheckpoint (50% below, 40% above, 10% ROI)
+│   └─ VirtualBankrollCallback
+├─ Early stopping (patience=20)
+└─ Model kaydetme (H5 + PKL)
+```
+
+### 2. CatBoost Training
+```
+notebooks/jetx_CATBOOST_TRAINING_MULTISCALE.py
+├─ Regressor training (değer tahmini)
+├─ Classifier training (1.5x threshold)
+├─ Auto class weighting
+├─ GPU acceleration
+└─ Model kaydetme (CBM + PKL)
+```
+
+### 3. AutoGluon Training
+```python
+AutoGluonPredictor.train(
+    time_limit=3600,
+    presets='best_quality'
+)
+# → 50+ model otomatik denenir, en iyisi seçilir
+```
+
+### 4. TabNet Training
+```python
+TabNetHighXPredictor.train(
+    max_epochs=200,
+    patience=20,
+    batch_size=256
+)
+# → Attention ile yüksek çarpan uzmanlaşması
+```
+
+## Prediction Strategies
+
+### Ensemble Voting Strategies
+
+#### Weighted
+```python
+final_prediction = (
+    0.60 * catboost_prediction +
+    0.40 * nn_prediction
+)
+```
+
+#### Unanimous
+```python
+if catboost_pred == nn_pred:
+    final_prediction = catboost_pred
+else:
+    skip_bet = True
+```
+
+#### Confidence
+```python
+if catboost_confidence > nn_confidence:
+    final_prediction = catboost_prediction
+else:
+    final_prediction = nn_prediction
+```
+
+#### Majority
+```python
+final_prediction = mode([
+    catboost_pred,
+    nn_pred,
+    autogluon_pred,
+    tabnet_pred
+])
+```
+
+## Risk Management Modes
+
+### Rolling Mode (Konservatif)
+```python
+confidence_threshold = 0.80
+suggested_multiplier = 1.5
+risk_level = 'LOW'
+```
+
+### Normal Mode (Dengeli)
+```python
+confidence_threshold = 0.65
+suggested_multiplier = dynamic
+risk_level = 'MEDIUM'
+```
+
+### Aggressive Mode (Riskli)
+```python
+confidence_threshold = 0.50
+suggested_multiplier = predicted * 0.80
+risk_level = 'HIGH'
+```
+
+## Backtesting Strategies
+
+### Fixed Betting
+```python
+bet_size = constant (örn: 10 TL)
+```
+
+### Kelly Criterion
+```python
+bet_size = bankroll * (
+    (win_prob * win_multiplier - loss_prob) / 
+    win_multiplier
+)
+```
+
+### Confidence-Based
+```python
+if confidence >= 0.8:
+    bet_size = base_bet * 2
+elif confidence >= 0.6:
+    bet_size = base_bet
+else:
+    skip_bet = True
+```
+
+## Performance Metrics
+
+### Model Evaluation
+- MAE (Mean Absolute Error)
+- RMSE (Root Mean Square Error)
+- Threshold Accuracy (1.5x binary)
+- Below 1.5 Accuracy
+- Above 1.5 Accuracy
+- Confusion Matrix
+
+### Backtesting Metrics
+- ROI (Return on Investment)
+- Win Rate
+- Sharpe Ratio
+- Maximum Drawdown
+- Profit Factor
+- Equity Curve
+
+### Risk Metrics
+- Para Kaybı Riski (False Positive Rate)
+- Ardışık Kayıp Streaks
+- Confidence Distribution
+- Betting Frequency
+
+## Konfigürasyon Yapısı
+
+### config/config.yaml
 ```yaml
-# Model ayarları
 model:
   path: "models/jetx_model.h5"
   scaler_path: "models/scaler.pkl"
 
-# Tahmin ayarları
 prediction:
   critical_threshold: 1.5
   confidence_thresholds:
@@ -492,7 +469,10 @@ prediction:
     rolling: 0.80
   max_consecutive_losses: 3
 
-# Risk yönetimi
+database:
+  path: "data/jetx_data.db"
+  backup_dir: "data/backups"
+
 ui:
   alerts:
     sound_enabled: true
@@ -500,130 +480,126 @@ ui:
     loss_streak_alert: true
 ```
 
-## 🛡️ Risk Yönetimi
+## Veri Akışı
 
-### Kritik Kurallar
+### Veri Girişi
+```
+Manuel Giriş (Streamlit UI) → database.add_result() → SQLite
+```
 
-**Asla Unutmayın:**
-1. ⚠️ Bu sistem %100 doğru **DEĞİLDİR**
-2. 💰 Para kaybedebilirsiniz
-3. 🎯 1.5x kritik eşiktir (altı = kayıp, üstü = kazanç)
-4. 🛡️ Rolling modu en güvenlidir (%80+ güven)
-5. 📊 Düşük güvende **OYNAMAYIN**
-6. ⚡ 3 ardışık yanlış tahmin → **DUR**
+### Tahmin Yapma
+```
+database.get_recent_results(500) → 
+predictor.predict(history) →
+{
+    'predicted_value': float,
+    'confidence': float,
+    'above_threshold': bool,
+    'category': str,
+    'warnings': list
+}
+```
 
-### Güvenlik Önlemleri
+### Risk Değerlendirme
+```
+risk_manager.should_play(prediction) →
+{
+    'should_play': bool,
+    'risk_level': str,
+    'reasons': list
+}
+```
 
-**Maximum Bet Limits:**
-- Günlük max: Sermayenin %20'si
-- El başı max: Sermayenin %2'si
+### Tahmin Kaydı
+```
+database.add_prediction(
+    predicted_value,
+    confidence,
+    above_threshold,
+    mode
+)
+```
 
-**Stop-Loss:**
-- Günlük %10 kayıp → Dur
-- 5 ardışık kayıp → Dur
+### Sonuç Güncelleme
+```
+database.update_prediction_result(
+    prediction_id,
+    actual_value,
+    was_correct
+)
+```
 
-**Cool-down Period:**
-- Her kayıptan sonra 2 el bekle
-- Büyük kayıp (>%5) → 5 el bekle
+## Class Definitions
 
-### Performans Metrikleri
+### CategoryDefinitions
+```python
+CRITICAL_THRESHOLD = 1.5
 
-**Hedef Performans:**
-- ✅ 1.5x eşik doğruluğu: **%75+**
-- ✅ Rolling mod doğruluğu: **%85+**
-- ✅ Para kaybı riski: **<%20**
-- ✅ ROI: **+3-5%**
+CATEGORIES = {
+    'CRASH': [1.00, 1.49],
+    'SAFE': [1.50, 2.99],
+    'JACKPOT': [3.00, float('inf')]
+}
 
-## 🤝 Katkıda Bulunma
+@staticmethod
+def float) -> int:
+    # 0: CRASH, 1: SAFE, 2: JACKPOT
+```
 
-Katkılarınızı bekliyoruz! Lütfen şu alanlarda yardımcı olabilirsiniz:
+### FeatureEngineering
+```python
+@staticmethod
+def extract_all_features(history: List[float]) -> Dict:
+    # 150+ features extraction
+    # Returns: OrderedDict of features
+```
 
-1. **Model İyileştirmeleri**
-   - Yeni özellik önerileri
-   - Hyperparameter tuning
-   - Yeni model mimarileri
+## Kurulum
 
-2. **Risk Yönetimi**
-   - Daha iyi risk filtreleme algoritmaları
-   - Bankroll yönetimi stratejileri
+### Gereksinimler
+```bash
+pip install -r requirements.txt
+```
 
-3. **UI/UX Geliştirmeleri**
-   - Daha iyi görselleştirmeler
-   - Yeni analiz araçları
+### Veritabanı Kurulumu
+```python
+from utils.database import DatabaseManager
+db = DatabaseManager()
+# Otomatik tablo oluşturma
+```
 
-4. **Dokümantasyon**
-   - Tutorial'lar
-   - Video anlatımları
-   - Örnek kullanım senaryoları
+### Streamlit Başlatma
+```bash
+streamlit run app.py
+```
 
-### Katkı Süreci
+## Model Eğitimi (Google Colab)
 
-1. Fork edin
-2. Feature branch oluşturun (`git checkout -b feature/amazing-feature`)
-3. Commit edin (`git commit -m 'feat: add amazing feature'`)
-4. Push edin (`git push origin feature/amazing-feature`)
-5. Pull Request açın
+### Progressive NN
+```bash
+python notebooks/jetx_PROGRESSIVE_TRAINING_MULTISCALE.py
+```
 
-## ⚖️ Feragatname
+### CatBoost
+```bash
+python notebooks/jetx_CATBOOST_TRAINING_MULTISCALE.py
+```
 
-**ÖNEMLİ: LÜTFEN DİKKATLE OKUYUN**
-
-Bu yazılım **eğitim ve araştırma amaçlıdır**. 
-
-### Sorumluluk Reddi
-
-- ❌ **HİÇBİR GARANTİ VERİLMEZ**: Bu sistem %100 doğru değildir ve para kaybedebilirsiniz.
-- ❌ **YASAL SORUMLULUK**: Yazılımı kullanarak oluşabilecek kayıplardan geliştirici sorumlu değildir.
-- ❌ **KUMAR BAĞIMLILIĞI**: Kumar ciddi bir sorundur. Yardım için: [Kumar Bağımlılığı Danışma Hattı]
-
-### Kullanım Koşulları
-
-✅ **Yapabilirsiniz:**
-- Kişisel eğitim ve araştırma amaçlı kullanım
-- Akademik çalışmalarda referans verme
-- Açık kaynak katkıları
-
-❌ **Yapamazsınız:**
-- Ticari amaçlı kullanım (izin olmadan)
-- Garantili kazanç vaat etme
-- Başkalarını maddi zarara uğratma
-
-### Etik Kullanım
-
-- 🎓 Sadece kaybetmeyi göze alabileceğiniz parayla oynayın
-- 🛡️ Sorumlu oyun ilkelerine uyun
-- 📊 Sistemin sınırlamalarını bilin
-- ⚠️ Risk yönetimi kurallarına uyun
-
-### İletişim ve Destek
-
-- 📧 GitHub Issues: Teknik sorular ve bug raporları
-- 💬 Discussions: Genel sorular ve tartışmalar
-- 📚 Wiki: Detaylı dokümantasyon
-
----
-
-## 📄 Lisans
-
-Bu proje eğitim ve araştırma amaçlıdır. Ticari kullanım için lütfen iletişime geçin.
-
----
-
-## 🙏 Teşekkürler
-
-- TensorFlow ve Keras ekibi
-- CatBoost geliştiricileri
-- Streamlit ekibi
-- Açık kaynak topluluğu
-
----
-
-**Son Güncelleme:** 12 Ekim 2025
-
-**Versiyon:** 2.0
-
-**Geliştirici:** [onndd](https://github.com/onndd)
+### Model İndirme
+```
+models/ klasörüne kopyala:
+├── progressive_multiscale/
+│   ├── model_window_*.h5
+│   ├── scaler_window_*.pkl
+│   └── model_info.json
+├── catboost_regressor.cbm
+├── catboost_classifier.cbm
+└── catboost_scaler.pkl
+```
 
 ---
 
-**⚠️ Hatırlatma: Bu bir tahmin sistemidir, garanti değildir. Sorumlu oynayın!**
+**Proje Tipi:** Machine Learning Prediction System  
+**Framework:** TensorFlow, CatBoost, Streamlit  
+**Database:** SQLite  
+**Deployment:** Local / Google Colab Training
