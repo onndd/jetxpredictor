@@ -176,6 +176,19 @@ if 'all_models_predictor' not in st.session_state and ADVANCED_FEATURES_AVAILABL
         logger.warning(f"All Models Predictor yüklenemedi: {e}")
         st.session_state.all_models_predictor = None
 
+# RL Agent
+if 'rl_agent' not in st.session_state and ADVANCED_FEATURES_AVAILABLE:
+    try:
+        from utils.rl_agent import create_rl_agent
+        st.session_state.rl_agent = create_rl_agent(model_path='models/rl_agent_model.h5')
+        if st.session_state.rl_agent.model is None:
+            logger.warning("RL Agent model yüklenemedi, RL özellikleri kullanılamayacak")
+        else:
+            logger.info("RL Agent başlatıldı")
+    except Exception as e:
+        logger.warning(f"RL Agent yüklenemedi: {e}")
+        st.session_state.rl_agent = None
+
 # Model Version Manager
 if 'version_manager' not in st.session_state and ADVANCED_FEATURES_AVAILABLE:
     try:
@@ -472,9 +485,6 @@ main_col1, main_col2 = st.columns([1, 1])
 with main_col1:
     st.subheader("🎯 Tahmin Yap")
     
-    # Tüm modelleri göster seçeneği
-    show_all_models = st.checkbox("📊 Tüm Modellerin Çıktılarını Göster", value=False)
-    
     # Tahmin butonu
     if st.button("🔮 YENİ TAHMİN YAP", type="primary", use_container_width=True):
         with st.spinner("Tahmin yapılıyor..."):
@@ -484,9 +494,9 @@ with main_col1:
             if len(history) < 50:
                 st.warning("⚠️ Tahmin için en az 50 veri gerekli!")
             else:
-                # Tüm modellerden tahmin al (eğer seçiliyse)
+                # Tüm modellerden tahmin al (RL Agent için gerekli)
                 all_predictions = None
-                if show_all_models and st.session_state.all_models_predictor:
+                if st.session_state.all_models_predictor:
                     try:
                         history_array = np.array(history)
                         all_predictions = st.session_state.all_models_predictor.predict_all(history_array)
@@ -494,74 +504,224 @@ with main_col1:
                         logger.error(f"All models prediction hatası: {e}")
                         all_predictions = None
                 
-                # Ana tahmin yap
+                # Ana tahmin yap (geriye dönük uyumluluk için)
                 prediction = st.session_state.predictor.predict(history, mode=mode)
                 st.session_state.last_prediction = prediction
                 
                 # Risk analizi
                 risk_decision = st.session_state.risk_manager.should_play(prediction)
                 
+                # RL Agent kullan (eğer yüklüyse)
+                rl_action = None
+                rl_interpretation = None
+                
+                if st.session_state.rl_agent and st.session_state.rl_agent.model is not None and all_predictions:
+                    try:
+                        # State vector oluştur
+                        state_vector = st.session_state.rl_agent.create_state_vector(
+                            history=history,
+                            model_predictions=all_predictions,
+                            risk_analysis=risk_decision
+                        )
+                        
+                        # Action tahmin et
+                        action, probabilities = st.session_state.rl_agent.predict_action(state_vector)
+                        
+                        # Action'ı interpret et
+                        rl_interpretation = st.session_state.rl_agent.interpret_action(
+                            action=action,
+                            probabilities=probabilities,
+                            model_predictions=all_predictions,
+                            bankroll=None  # Bankroll manager yoksa None
+                        )
+                        
+                        rl_action = rl_interpretation
+                        logger.info(f"RL Agent action: {action} ({rl_interpretation['action_name']})")
+                    except Exception as e:
+                        logger.error(f"RL Agent hatası: {e}")
+                        rl_action = None
+                
                 # Tahmini göster
                 if 'error' in prediction:
                     st.error(f"❌ Hata: {prediction['error']}")
                 else:
-                    # Güven seviyesine göre kart rengi
-                    confidence = prediction['confidence']
-                    if confidence >= 0.8:
-                        card_class = "safe-zone"
-                    elif confidence >= 0.6:
-                        card_class = "warning-zone"
+                    # RL Agent varsa, Ana Eylem Kartı göster
+                    if rl_action:
+                        # Ana Eylem Kartı (RL Agent kararı)
+                        action_name = rl_action['action_name']
+                        should_bet = rl_action['should_bet']
+                        
+                        if should_bet:
+                            card_class = "safe-zone"
+                            action_emoji = "📈"
+                            action_text = "BAHİS YAP"
+                        else:
+                            card_class = "danger-zone"
+                            action_emoji = "⛔"
+                            action_text = "BEKLE (BAHİS YAPMA)"
+                        
+                        # Kart içeriği
+                        card_content = f"""
+                        <div class="prediction-card {card_class}">
+                            <h2>🤖 AJAN AKSİYONU: {action_emoji} {action_text}</h2>
+                        """
+                        
+                        if should_bet:
+                            if rl_action.get('bet_amount'):
+                                card_content += f'<p><strong>Bahis Miktarı:</strong> {rl_action["bet_amount"]:.2f} TL'
+                                if rl_action.get('bet_percentage'):
+                                    card_content += f' (Kasanızın %{rl_action["bet_percentage"]:.1f}\'ü)'
+                                card_content += '</p>'
+                            
+                            if rl_action.get('exit_multiplier'):
+                                card_content += f'<p><strong>Çıkış Noktası (Cash-out):</strong> {rl_action["exit_multiplier"]:.2f}x</p>'
+                        else:
+                            card_content += f'<p><strong>Risk Seviyesi:</strong> {rl_action.get("risk_level", "Yüksek")}</p>'
+                            if rl_action.get('reasoning'):
+                                card_content += f'<p><strong>Gerekçe:</strong> {rl_action["reasoning"][0] if rl_action["reasoning"] else "Modeller arası fikir ayrılığı ve yüksek tuzak riski."}</p>'
+                        
+                        card_content += f'<p><strong>Güven Skoru:</strong> {rl_action["confidence"]:.0%}</p>'
+                        card_content += '</div>'
+                        
+                        st.markdown(card_content, unsafe_allow_html=True)
+                        
+                        # Detaylı Bilgiler (Expander)
+                        with st.expander("▼ Ajanın Değerlendirmesi: Detaylar için Tıkla", expanded=False):
+                            # 1. Tahmin Modeli Çıktıları
+                            st.subheader("1. Tahmin Modeli Çıktıları")
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                if all_predictions:
+                                    if 'progressive_nn' in all_predictions and all_predictions['progressive_nn']:
+                                        pn = all_predictions['progressive_nn']
+                                        st.metric("Progressive NN Tahmini", f"{pn.get('prediction', 0):.2f}x")
+                                        st.metric("Progressive NN Güven", f"{pn.get('confidence', 0):.0%}")
+                                    
+                                    if 'catboost' in all_predictions and all_predictions['catboost']:
+                                        cb = all_predictions['catboost']
+                                        st.metric("CatBoost Tahmini", f"{cb.get('prediction', 0):.2f}x")
+                                        st.metric("CatBoost Güven", f"{cb.get('confidence', 0):.0%}")
+                            
+                            with col2:
+                                if all_predictions:
+                                    if 'tabnet' in all_predictions and all_predictions['tabnet']:
+                                        tn = all_predictions['tabnet']
+                                        st.metric("TabNet (Yüksek X) Riski", f"{100 - tn.get('confidence', 0)*100:.0f}%")
+                                    
+                                    if 'consensus' in all_predictions and all_predictions['consensus']:
+                                        cs = all_predictions['consensus']
+                                        st.metric("Modeller Arası Güven", f"{cs.get('agreement', 0):.0%}")
+                                        st.metric("Toplam Model Sayısı", cs.get('total_models', 0))
+                            
+                            # 2. Risk ve Desen Analizi
+                            st.subheader("2. Risk ve Desen Analizi")
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                # Psikolojik analiz
+                                try:
+                                    from utils.psychological_analyzer import PsychologicalAnalyzer
+                                    psych_analyzer = PsychologicalAnalyzer(threshold=1.5)
+                                    psych_features = psych_analyzer.analyze_psychological_patterns(history)
+                                    manipulation_score = psych_features.get('manipulation_score', 0)
+                                    st.metric("Psikolojik Tuzak Riski", f"{manipulation_score*100:.0f}% {'(Düşük)' if manipulation_score < 0.3 else '(Orta)' if manipulation_score < 0.7 else '(Yüksek)'}")
+                                except:
+                                    st.metric("Psikolojik Tuzak Riski", "N/A")
+                                
+                                # Anomali tespit
+                                try:
+                                    from utils.anomaly_streak_detector import AnomalyStreakDetector
+                                    anomaly_detector = AnomalyStreakDetector(threshold=1.5)
+                                    anomaly_features = anomaly_detector.extract_streak_features(history)
+                                    extreme_risk = anomaly_features.get('extreme_streak_risk', 0)
+                                    st.metric("Anormal Seri Riski", f"{extreme_risk*100:.0f}% {'(Normal)' if extreme_risk < 0.5 else '(Yüksek)'}")
+                                except:
+                                    st.metric("Anormal Seri Riski", "N/A")
+                            
+                            with col2:
+                                # Mevcut seri
+                                if len(history) >= 10:
+                                    recent_10 = history[-10:]
+                                    below_count = sum(1 for v in recent_10 if v < 1.5)
+                                    st.metric("Mevcut Seri (1.5 Altı)", below_count)
+                                
+                                # Volatilite
+                                if len(history) >= 20:
+                                    recent_20 = history[-20:]
+                                    volatility = np.std(recent_20) / (np.mean(recent_20) + 1e-8)
+                                    vol_level = "Düşük" if volatility < 0.3 else "Orta" if volatility < 0.6 else "Yüksek"
+                                    st.metric("Volatilite", vol_level)
+                            
+                            # 3. Finansal Strateji Analizi
+                            st.subheader("3. Finansal Strateji Analizi")
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                # Kelly Criterion
+                                if all_predictions and 'consensus' in all_predictions and all_predictions['consensus']:
+                                    cs = all_predictions['consensus']
+                                    confidence = cs.get('confidence', 0.5)
+                                    prediction = cs.get('prediction', 1.5)
+                                    
+                                    # Basit Kelly calculation
+                                    win_prob = confidence
+                                    win_multiplier = prediction - 1.0
+                                    if win_multiplier > 0:
+                                        kelly_frac = (win_prob * win_multiplier - (1 - win_prob)) / win_multiplier
+                                        kelly_frac = max(0, min(kelly_frac, 0.25)) * 100
+                                    else:
+                                        kelly_frac = 0.0
+                                    
+                                    st.metric("Kelly Criterion Oranı (Optimal Bahis)", f"%{kelly_frac:.1f}")
+                            
+                            with col2:
+                                st.metric("Risk Modu (RiskManager)", mode.upper())
+                            
+                            # RL Action probabilities
+                            if rl_action:
+                                st.subheader("4. RL Agent Action Probabilities")
+                                prob_df = pd.DataFrame({
+                                    'Action': ['BEKLE', 'Konservatif', 'Normal', 'Agresif'],
+                                    'Probability': rl_action.get('probabilities', [0, 0, 0, 0])
+                                })
+                                st.bar_chart(prob_df.set_index('Action'))
+                    
                     else:
-                        card_class = "danger-zone"
-                    
-                    st.markdown(f"""
-                    <div class="prediction-card {card_class}">
-                        <h2>Tahmin Edilen Değer</h2>
-                        <p class="big-font">{prediction['predicted_value']:.2f}x</p>
-                        <p>Güven: {prediction['confidence']:.0%}</p>
-                        <p>{prediction['detailed_category']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Dinamik Threshold uygulanırsa
-                    if ADVANCED_FEATURES_AVAILABLE and st.session_state.use_dynamic_threshold:
-                        from utils.adaptive_threshold import create_threshold_manager
-                        threshold_mgr = create_threshold_manager(
-                            base_threshold=1.5,
-                            strategy=st.session_state.threshold_strategy
-                        )
+                        # RL Agent yoksa, eski UI'ı göster (geriye dönük uyumluluk)
+                        # Güven seviyesine göre kart rengi
+                        confidence = prediction['confidence']
+                        if confidence >= 0.8:
+                            card_class = "safe-zone"
+                        elif confidence >= 0.6:
+                            card_class = "warning-zone"
+                        else:
+                            card_class = "danger-zone"
                         
-                        threshold_decision = threshold_mgr.get_threshold(
-                            confidence=prediction['confidence'],
-                            model_agreement=0.8,  # Default değer (tek model ise)
-                            prediction=prediction['predicted_value']
-                        )
-                        
-                        threshold_text = f"{threshold_decision.threshold}x" if threshold_decision.threshold else "Bahse girme!"
                         st.markdown(f"""
-                        <div class="info-box">
-                            <strong>🎚️ Dinamik Threshold:</strong><br>
-                            Önerilen Threshold: <strong>{threshold_text}</strong><br>
-                            Risk Seviyesi: <strong>{threshold_decision.risk_level}</strong><br>
-                            Gerekçe: {threshold_decision.reasoning}
+                        <div class="prediction-card {card_class}">
+                            <h2>Tahmin Edilen Değer</h2>
+                            <p class="big-font">{prediction['predicted_value']:.2f}x</p>
+                            <p>Güven: {prediction['confidence']:.0%}</p>
+                            <p>{prediction['detailed_category']}</p>
                         </div>
                         """, unsafe_allow_html=True)
-                    
-                    # Karar
-                    st.subheader("🎲 Öneri")
-                    if risk_decision['should_play']:
-                        st.success(f"✅ **OYNA** - Risk: {risk_decision['risk_level']}")
                         
-                        # Bahis önerisi
-                        betting = st.session_state.risk_manager.get_betting_suggestion(prediction)
-                        st.info(f"💡 Önerilen çıkış noktası: **{betting['suggested_multiplier']:.2f}x**")
-                    else:
-                        st.error("❌ **BEKLE** - Şu an oynamayın!")
-                    
-                    # Gerekçeler
-                    with st.expander("📋 Detaylı Analiz"):
-                        for reason in risk_decision['reasons']:
-                            st.write(f"• {reason}")
+                        # Karar
+                        st.subheader("🎲 Öneri")
+                        if risk_decision['should_play']:
+                            st.success(f"✅ **OYNA** - Risk: {risk_decision['risk_level']}")
+                            
+                            # Bahis önerisi
+                            betting = st.session_state.risk_manager.get_betting_suggestion(prediction)
+                            st.info(f"💡 Önerilen çıkış noktası: **{betting['suggested_multiplier']:.2f}x**")
+                        else:
+                            st.error("❌ **BEKLE** - Şu an oynamayın!")
+                        
+                        # Gerekçeler
+                        with st.expander("📋 Detaylı Analiz"):
+                            for reason in risk_decision['reasons']:
+                                st.write(f"• {reason}")
                     
                     # Uyarılar
                     if prediction.get('warnings'):
@@ -569,95 +729,6 @@ with main_col1:
                         for warning in prediction['warnings']:
                             st.warning(warning)
                     
-                    # Tüm Modellerin Çıktıları
-                    if show_all_models and all_predictions:
-                        st.divider()
-                        st.subheader("📊 Tüm Modellerin Tahminleri")
-                        
-                        # Model isimleri ve renkleri
-                        model_names = {
-                            'progressive_nn': '🧠 Progressive NN',
-                            'catboost': '🐱 CatBoost',
-                            'autogluon': '🤖 AutoGluon',
-                            'tabnet': '📊 TabNet',
-                            'consensus': '🤝 Consensus'
-                        }
-                        
-                        model_colors = {
-                            'progressive_nn': '#667eea',
-                            'catboost': '#00d4ff',
-                            'autogluon': '#ff6b6b',
-                            'tabnet': '#4ecdc4',
-                            'consensus': '#ffe66d'
-                        }
-                        
-                        # Her model için kart göster
-                        for model_key, model_pred in all_predictions.items():
-                            if model_pred is None:
-                                continue
-                            
-                            model_name = model_names.get(model_key, model_key)
-                            model_color = model_colors.get(model_key, '#999999')
-                            
-                            with st.expander(f"{model_name} - {model_pred.get('prediction', 0):.2f}x", expanded=(model_key == 'consensus')):
-                                col1, col2, col3 = st.columns(3)
-                                
-                                with col1:
-                                    st.metric("Tahmin", f"{model_pred.get('prediction', 0):.2f}x")
-                                    st.metric("1.5x Üstü", "✅ Evet" if model_pred.get('above_threshold', False) else "❌ Hayır")
-                                
-                                with col2:
-                                    st.metric("Güven", f"{model_pred.get('confidence', 0):.0%}")
-                                    st.metric("Kategori", model_pred.get('category', 'N/A'))
-                                
-                                with col3:
-                                    if 'threshold_prob' in model_pred:
-                                        st.metric("Threshold Prob", f"{model_pred['threshold_prob']:.0%}")
-                                    if 'agreement' in model_pred:
-                                        st.metric("Model Uyumu", f"{model_pred['agreement']:.0%}")
-                                        st.caption(f"{model_pred.get('models_agreed', 0)}/{model_pred.get('total_models', 0)} model aynı fikirde")
-                                
-                                # Consensus için özel bilgi
-                                if model_key == 'consensus':
-                                    st.info(f"🤝 {model_pred.get('models_agreed', 0)} model 1.5x üstü tahmin ediyor")
-                        
-                        # Karşılaştırma grafiği
-                        if len([p for p in all_predictions.values() if p is not None]) > 1:
-                            st.subheader("📈 Model Karşılaştırması")
-                            
-                            fig_comparison = go.Figure()
-                            
-                            for model_key, model_pred in all_predictions.items():
-                                if model_pred is None:
-                                    continue
-                                
-                                model_name = model_names.get(model_key, model_key)
-                                model_color = model_colors.get(model_key, '#999999')
-                                
-                                fig_comparison.add_trace(go.Bar(
-                                    x=[model_name],
-                                    y=[model_pred.get('prediction', 0)],
-                                    name=model_name,
-                                    marker_color=model_color,
-                                    text=[f"{model_pred.get('prediction', 0):.2f}x"],
-                                    textposition='auto'
-                                ))
-                            
-                            fig_comparison.add_hline(
-                                y=1.5,
-                                line_dash="dash",
-                                line_color="red",
-                                annotation_text="1.5x Eşik"
-                            )
-                            
-                            fig_comparison.update_layout(
-                                title="Model Tahmin Karşılaştırması",
-                                yaxis_title="Tahmin Edilen Değer (x)",
-                                height=400,
-                                showlegend=False
-                            )
-                            
-                            st.plotly_chart(fig_comparison, use_container_width=True)
     
     st.divider()
     
