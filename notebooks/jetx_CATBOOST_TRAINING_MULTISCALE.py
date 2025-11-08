@@ -9,7 +9,6 @@ YENİ YAKLAŞIM: Multi-Scale Window Ensemble
 - Final: Tüm modellerin ensemble'ı
 
 AVANTAJLAR:
-- Çok hızlı eğitim (~40-60 dakika, 5 model × ~8-12 dk)
 - Feature importance analizi yapılabilir
 - Daha az bellek kullanımı
 - Class imbalance için native destek
@@ -25,8 +24,6 @@ HEDEFLER:
 - Shuffle: YASAK
 - Augmentation: YASAK
 - Kronolojik sıra: KORUNUYOR
-
-SÜRE: ~40-60 dakika (5 model × ~8-12 dk)
 """
 
 import subprocess

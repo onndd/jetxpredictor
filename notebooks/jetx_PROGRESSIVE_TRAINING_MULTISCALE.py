@@ -18,8 +18,6 @@ HEDEFLER:
 - Shuffle: YASAK
 - Augmentation: YASAK
 - Kronolojik sıra: KORUNUYOR
-
-SÜRE: ~10-12 saat (GPU ile, 5 model × ~2 saat)
 """
 
 import subprocess
@@ -655,7 +653,6 @@ for window_size in window_sizes:
     
     # Eğitim
     print(f"\n🔥 Window {window_size} eğitimi başlıyor...")
-    print(f"⏱️  Tahmini süre: ~2 saat")
     
     hist = model.fit(
         [X_f_tr, X_seq_tr],
