@@ -40,11 +40,9 @@ env/
 *.ipynb_checkpoints/
 
 # Database
-*.db
+# *.db (veritabanı dosyasını GitHub'a yüklemek için yorum satırı yapıldı)
 *.sqlite
 *.sqlite3
-# Özel durum: jetx_data.db dosyası lokalde kalmalı, GitHub'a yüklenmemeli
-jetx_data.db
 
 # Models (büyük dosyalar)
 models/*.h5
