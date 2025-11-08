@@ -597,6 +597,13 @@ models/ klasörüne kopyala:
 └── catboost_scaler.pkl
 ```
 
+## Detaylı Dokümantasyon
+
+Daha detaylı mimari ve model eğitim bilgileri için:
+- **[Architecture and Training Guide](docs/ARCHITECTURE_AND_TRAINING.md)**: Genel yapı, model eğitim süreçleri ve ensemble sistemleri
+- **[Workflow and Systems](docs/WORKFLOW_AND_SYSTEMS.md)**: Google Colab → Lokal döngüsü, sanal kasa sistemleri, model seçim mekanizması
+- **[Quick Start Guide](docs/QUICK_START_GUIDE.md)**: Hızlı başlangıç rehberi
+
 ---
 
 **Proje Tipi:** Machine Learning Prediction System  

@@ -84,13 +84,27 @@ except Exception as e:
     print(f"⚠️ GPU: Kullanılamıyor, CPU modunda çalışacak")
     print(f"   Sebep: {str(e)[:100]}")
 
-# Proje yükle
-if not os.path.exists('jetxpredictor'):
+# Proje yükle ve kök dizini tespit et
+PROJECT_ROOT = None
+
+# Önce mevcut dizini kontrol et
+if os.path.exists('jetx_data.db'):
+    PROJECT_ROOT = os.getcwd()
+    print("\n✅ Proje kök dizini tespit edildi (mevcut dizin)")
+elif os.path.exists('jetxpredictor/jetx_data.db'):
+    PROJECT_ROOT = os.path.join(os.getcwd(), 'jetxpredictor')
+    print(f"\n✅ Proje kök dizini tespit edildi: {PROJECT_ROOT}")
+else:
+    # Yoksa klonla
     print("\n📥 Proje klonlanıyor...")
     subprocess.check_call(["git", "clone", "https://github.com/onndd/jetxpredictor.git"])
+    PROJECT_ROOT = os.path.join(os.getcwd(), 'jetxpredictor')
+    print(f"✅ Proje klonlandı: {PROJECT_ROOT}")
 
-os.chdir('jetxpredictor')
-sys.path.append(os.getcwd())
+# sys.path'e ekle (chdir YAPMA!)
+sys.path.insert(0, PROJECT_ROOT)
+print(f"📂 Çalışma dizini: {os.getcwd()}")
+print(f"📂 Proje kök dizini: {PROJECT_ROOT}")
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.multi_scale_window import split_data_preserving_order
@@ -100,7 +114,8 @@ print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESH
 # VERİ YÜKLEME (SIRA KORUNARAK)
 # =============================================================================
 print("📊 Veri yükleniyor...")
-conn = sqlite3.connect('jetx_data.db')
+db_path = os.path.join(PROJECT_ROOT, 'jetx_data.db')
+conn = sqlite3.connect(db_path)
 data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
 conn.close()
 
@@ -287,11 +302,15 @@ def simulate_bankroll(predictions, actuals):
 
 def calculate_weighted_score(y_true, y_pred):
     """
-    BALANCED Weighted score hesaplama:
-    - 40% Balanced Accuracy (her sınıf eşit önemli)
-    - 30% F1 Score (precision-recall dengesi)
-    - 20% Money Loss Risk minimization (para kaybı riski)
-    - 10% ROI (normalized)
+    PROFIT-FOCUSED Weighted score hesaplama (YENİ!):
+    - 50% ROI (para kazandırma - EN ÖNEMLİ!)
+    - 30% Precision (1.5 üstü dediğinde ne kadar haklı)
+    - 20% Win Rate (kazanan tahmin oranı)
+    
+    ESKI FORMÜL SORUNLARI:
+    - Balanced Accuracy yanıltıcıydı (model hep "1.5 üstü" dediğinde yüksek çıkıyordu)
+    - F1 Score dengesiz veride işe yaramıyordu
+    - ROI sadece %10 ağırlıktaydı (çok az!)
     """
     # Confusion Matrix hesapla
     y_true_binary = (y_true >= 1.5).astype(int)
@@ -301,32 +320,30 @@ def calculate_weighted_score(y_true, y_pred):
     FN = np.sum((y_true_binary == 1) & (y_pred == 0))
     TP = np.sum((y_true_binary == 1) & (y_pred == 1))
     
-    # 1. BALANCED ACCURACY
+    # PRECISION (Model "1.5 üstü" dediğinde ne kadar haklı?)
+    precision = (TP / (TP + FP) * 100) if (TP + FP) > 0 else 0
+    
+    # Sanal kasa simülasyonu
+    roi, win_rate, bets_made, final_wallet = simulate_bankroll(y_pred, y_true)
+    
+    # ROI normalizasyonu
+    normalized_roi = normalize_roi(roi)
+    
+    # YENİ WEIGHTED SCORE - PARA KAZANDIRMAYA ODAKLI!
+    # 50% ROI + 30% Precision + 20% Win Rate
+    weighted_score = (
+        0.50 * normalized_roi +         # Para kazandırma (EN ÖNEMLİ!)
+        0.30 * precision +               # "1.5 üstü" dediğinde ne kadar haklı
+        0.20 * win_rate                  # Kazanan tahmin oranı
+    )
+    
+    # Backward compatibility için eski metrikleri de hesapla
     below_acc = (TN / (TN + FP) * 100) if (TN + FP) > 0 else 0
     above_acc = (TP / (TP + FN) * 100) if (TP + FN) > 0 else 0
     balanced_acc = (below_acc + above_acc) / 2
-    
-    # 2. F1 SCORE
-    precision = (TP / (TP + FP)) if (TP + FP) > 0 else 0
     recall = (TP / (TP + FN)) if (TP + FN) > 0 else 0
-    f1_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
-    f1_score_percent = f1_score * 100
-    
-    # 3. MONEY LOSS RISK
+    f1_score = (2 * (precision/100) * recall / ((precision/100) + recall)) if ((precision/100) + recall) > 0 else f1_score_percent = f1_score * 100
     money_loss_risk = (FP / (TN + FP)) if (TN + FP) > 0 else 1.0
-    money_loss_score = (1 - money_loss_risk) * 100
-    
-    # 4. ROI
-    roi, win_rate, bets_made, final_wallet = simulate_bankroll(y_pred, y_true)
-    normalized_roi = normalize_roi(roi)
-    
-    # WEIGHTED SCORE (yeni formül)
-    weighted_score = (
-        0.40 * balanced_acc +
-        0.30 * f1_score_percent +
-        0.20 * money_loss_score +
-        0.10 * normalized_roi
-    )
     
     return weighted_score, balanced_acc, below_acc, above_acc, f1_score_percent, money_loss_risk * 100, roi, win_rate, bets_made
 
@@ -338,12 +355,15 @@ print("🔥 MULTI-SCALE MODEL EĞİTİMİ BAŞLIYOR")
 print("="*80)
 print(f"Window boyutları: {window_sizes}")
 print(f"Her window için ayrı Regressor + Classifier eğitilecek")
-print(f"📊 Model Seçim Kriteri: BALANCED Weighted Score")
-print(f"   - 40% Balanced Accuracy (her sınıf eşit önemli)")
-print(f"   - 30% F1 Score (precision-recall dengesi)")
-print(f"   - 20% Money Loss Risk Minimization (para kaybı riski)")
-print(f"   - 10% ROI (normalized)")
-print(f"⚠️  Threshold Accuracy artık KULLANILMIYOR (yanıltıcı metrik!)")
+print(f"� Model Seçim Kriteri: PROFIT-FOCUSED Weighted Score (YENİ!)")
+print(f"   - 50% ROI (para kazandırma - EN ÖNEMLİ!)")
+print(f"   - 30% Precision (1.5 üstü dediğinde ne kadar haklı)")
+print(f"   - 20% Win Rate (kazanan tahmin oranı)")
+print(f"")
+print(f"⚠️  ESKİ METRİKLER ARTIK KULLANILMIYOR:")
+print(f"   - Balanced Accuracy (yanıltıcıydı - model hep '1.5 üstü' dediğinde yüksek çıkıyordu)")
+print(f"   - F1 Score (dengesiz veride işe yaramıyordu)")
+print(f"   - Threshold Accuracy (en yanıltıcı metrik)")
 print("="*80 + "\n")
 
 trained_models = {}
@@ -678,22 +698,23 @@ print("\n" + "="*80)
 print("💾 MODELLER KAYDEDİLİYOR")
 print("="*80)
 
-os.makedirs('models/catboost_multiscale', exist_ok=True)
+models_dir = os.path.join(PROJECT_ROOT, 'models/catboost_multiscale')
+os.makedirs(models_dir, exist_ok=True)
 
 # Her window için model kaydet
 for window_size in window_sizes:
     model_dict = trained_models[window_size]
     
     # Regressor
-    reg_path = f'models/catboost_multiscale/regressor_window_{window_size}.cbm'
+    reg_path = os.path.join(PROJECT_ROOT, f'models/catboost_multiscale/regressor_window_{window_size}.cbm')
     model_dict['regressor'].save_model(reg_path)
     
     # Classifier
-    cls_path = f'models/catboost_multiscale/classifier_window_{window_size}.cbm'
+    cls_path = os.path.join(PROJECT_ROOT, f'models/catboost_multiscale/classifier_window_{window_size}.cbm')
     model_dict['classifier'].save_model(cls_path)
     
     # Scaler
-    scaler_path = f'models/catboost_multiscale/scaler_window_{window_size}.pkl'
+    scaler_path = os.path.join(PROJECT_ROOT, f'models/catboost_multiscale/scaler_window_{window_size}.pkl')
     joblib.dump(model_dict['scaler'], scaler_path)
     
     print(f"✅ Window {window_size} kaydedildi")
@@ -739,14 +760,16 @@ info = {
     }
 }
 
-with open('models/catboost_multiscale/model_info.json', 'w') as f:
+info_path = os.path.join(PROJECT_ROOT, 'models/catboost_multiscale/model_info.json')
+with open(info_path, 'w') as f:
     json.dump(info, f, indent=2)
 
 print(f"✅ Model bilgileri kaydedildi")
 
 # ZIP oluştur
 zip_filename = 'jetx_models_catboost_multiscale_v3.0'
-shutil.make_archive(zip_filename, 'zip', 'models/catboost_multiscale')
+catboost_multiscale_dir = os.path.join(PROJECT_ROOT, 'models/catboost_multiscale')
+shutil.make_archive(zip_filename, 'zip', catboost_multiscale_dir)
 
 print(f"\n✅ ZIP dosyası oluşturuldu: {zip_filename}.zip")
 print(f"📦 Boyut: {os.path.getsize(f'{zip_filename}.zip') / (1024*1024):.2f} MB")

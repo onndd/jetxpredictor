@@ -50,6 +50,23 @@ models/*.pkl
 models/*.pth
 models/*.pt
 models/*.onnx
+models/*.cbm
+models/*.zip
+
+# Model directories (keep structure, ignore files)
+models/progressive_multiscale/*.h5
+models/progressive_multiscale/*.pkl
+models/catboost_multiscale/*.cbm
+models/catboost_multiscale/*.pkl
+models/cpu/*.txt
+models/cpu/*.pkl
+models/autogluon_model/
+models/tabnet_high_x.pkl
+models/tabnet_scaler.pkl
+
+# Keep model_info.json files
+!models/*/model_info.json
+!models/model_registry.json
 
 # Cache
 data/cache/
@@ -80,6 +97,12 @@ tmp/
 
 # Data (isteğe bağlı - data klasörünü dahil etmek istiyorsanız bu satırı kaldırın)
 # data/*.db
+
+# AB Test results
+data/ab_test_results.json
+
+# Model registry (local only, can be synced)
+# models/model_registry.json
 
 # Colab scripts (geçici dosyalar)
 colab_scripts/*.pyc

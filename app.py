@@ -28,6 +28,10 @@ try:
     from utils.ensemble_predictor import create_ensemble_predictor, VotingStrategy
     from utils.adaptive_threshold import create_threshold_manager
     from utils.backtesting import create_backtest_engine
+    from utils.all_models_predictor import AllModelsPredictor
+    from utils.model_versioning import get_version_manager
+    from utils.ab_testing import get_ab_test_manager
+    from utils.model_loader import get_model_loader
     ADVANCED_FEATURES_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Gelişmiş özellikler yüklenemedi: {e}")
@@ -162,18 +166,76 @@ if 'voting_strategy' not in st.session_state:
 if 'threshold_strategy' not in st.session_state:
     st.session_state.threshold_strategy = 'hybrid'
 
+# All Models Predictor
+if 'all_models_predictor' not in st.session_state and ADVANCED_FEATURES_AVAILABLE:
+    try:
+        st.session_state.all_models_predictor = AllModelsPredictor()
+        st.session_state.all_models_predictor.load_all_models()
+        logger.info("All Models Predictor başlatıldı")
+    except Exception as e:
+        logger.warning(f"All Models Predictor yüklenemedi: {e}")
+        st.session_state.all_models_predictor = None
+
+# Model Version Manager
+if 'version_manager' not in st.session_state and ADVANCED_FEATURES_AVAILABLE:
+    try:
+        st.session_state.version_manager = get_version_manager()
+    except Exception as e:
+        logger.warning(f"Version Manager yüklenemedi: {e}")
+        st.session_state.version_manager = None
+
+# AB Test Manager
+if 'ab_test_manager' not in st.session_state and ADVANCED_FEATURES_AVAILABLE:
+    try:
+        st.session_state.ab_test_manager = get_ab_test_manager()
+    except Exception as e:
+        logger.warning(f"AB Test Manager yüklenemedi: {e}")
+        st.session_state.ab_test_manager = None
+
+# Model Loader
+if 'model_loader' not in st.session_state and ADVANCED_FEATURES_AVAILABLE:
+    try:
+        st.session_state.model_loader = get_model_loader()
+    except Exception as e:
+        logger.warning(f"Model Loader yüklenemedi: {e}")
+        st.session_state.model_loader = None
+
 # Sidebar
 with st.sidebar:
     st.title("🎮 Kontrol Paneli")
     
-    # Eksik model uyarısı (sidebar'da)
-    if MISSING_MODEL_FILES:
-        st.error(f"⚠️ {len(MISSING_MODEL_FILES)} model dosyası eksik!")
-        with st.expander("📋 Eksik Dosyalar"):
-            for name, path in MISSING_MODEL_FILES:
-                st.write(f"❌ **{name}**")
-                st.code(path, language="text")
+    # Model durumu kontrolü (gelişmiş)
+    if st.session_state.model_loader:
+        model_summary = st.session_state.model_loader.get_model_summary()
+        
+        if model_summary['incomplete_models'] > 0:
+            st.warning(f"⚠️ {model_summary['incomplete_models']} model eksik veya tamamlanmamış")
+            with st.expander("📋 Model Durumu", expanded=False):
+                for model_name, model_info in model_summary['models'].items():
+                    status_icon = "✅" if model_info['complete'] else "❌"
+                    st.write(f"{status_icon} **{model_name}**")
+                    if not model_info['complete']:
+                        st.caption(f"Eksik: {model_info['files_missing']} dosya")
+                        if model_info['missing_files']:
+                            st.code("\n".join(model_info['missing_files'][:3]), language="text")
+        else:
+            st.success(f"✅ Tüm modeller yüklü ({model_summary['complete_models']})")
+        
+        # Model kurulum rehberi
+        if st.button("📖 Kurulum Rehberi"):
+            guide = st.session_state.model_loader.get_installation_guide()
+            st.code(guide, language="text")
+        
         st.divider()
+    else:
+        # Eski sistem (geriye dönük uyumluluk)
+        if MISSING_MODEL_FILES:
+            st.error(f"⚠️ {len(MISSING_MODEL_FILES)} model dosyası eksik!")
+            with st.expander("📋 Eksik Dosyalar"):
+                for name, path in MISSING_MODEL_FILES:
+                    st.write(f"❌ **{name}**")
+                    st.code(path, language="text")
+            st.divider()
     
     # Gelişmiş Özellikler
     if ADVANCED_FEATURES_AVAILABLE:
@@ -221,6 +283,101 @@ with st.sidebar:
                 help="Hybrid: Güven + Performans\nConfidence: Sadece güven skoru\nPerformance: Geçmiş performans"
             )
             st.session_state.threshold_strategy = threshold_strategy
+        
+        st.divider()
+        
+        # Model Versiyonlama
+        if st.session_state.version_manager:
+            st.subheader("📦 Model Versiyonlama")
+            
+            model_names = st.session_state.version_manager.list_all_models()
+            if model_names:
+                selected_model = st.selectbox("Model Seç:", model_names)
+                
+                versions = st.session_state.version_manager.get_all_versions(selected_model)
+                if versions:
+                    version_info = st.selectbox(
+                        "Versiyon Seç:",
+                        options=[v['version'] for v in versions],
+                        format_func=lambda v: f"v{v} {'(Production)' if versions[0].get('is_production', False) else ''}"
+                    )
+                    
+                    if st.button("📊 Versiyon Detayları"):
+                        info = st.session_state.version_manager.get_model_info(selected_model, version_info)
+                        if info:
+                            with st.expander("📋 Versiyon Bilgileri", expanded=True):
+                                st.json({
+                                    'Model ID': info['model_id'],
+                                    'Versiyon': info['version'],
+                                    'Tip': info['model_type'],
+                                    'Production': info['is_production'],
+                                    'Oluşturulma': info['created_at'],
+                                    'Metrikler': info.get('metrics', {}),
+                                    'Metadata': info.get('metadata', {})
+                                })
+            else:
+                st.info("Henüz kayıtlı model versiyonu yok")
+        
+        st.divider()
+        
+        # A/B Testing
+        if st.session_state.ab_test_manager:
+            st.subheader("🧪 A/B Testing")
+            
+            active_tests = st.session_state.ab_test_manager.get_active_tests()
+            if active_tests:
+                st.write(f"**Aktif Testler:** {len(active_tests)}")
+                for test in active_tests[:3]:  # İlk 3'ü göster
+                    with st.expander(f"📊 {test['test_name']} ({test['test_id'][:8]}...)"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Model A", test['model_a'])
+                            st.metric("Accuracy A", f"{test['accuracy_a']:.1f}%")
+                            st.metric("ROI A", f"{test['roi_a']:.2f}%")
+                        with col2:
+                            st.metric("Model B", test['model_b'])
+                            st.metric("Accuracy B", f"{test['accuracy_b']:.1f}%")
+                            st.metric("ROI B", f"{test['roi_b']:.2f}%")
+                        
+                        if test['winner']:
+                            st.success(f"🏆 Kazanan: Model {test['winner']}")
+                        else:
+                            st.info("⚖️ Henüz kazanan belli değil")
+                        
+                        st.caption(f"Güven Seviyesi: {test['confidence_level']:.1f}%")
+            else:
+                st.info("Aktif A/B testi yok")
+            
+            if st.button("➕ Yeni A/B Testi Oluştur"):
+                st.info("A/B testi oluşturmak için sayfayı yenileyin ve test ayarlarını yapın")
+        
+        st.divider()
+        
+        # Model Durumu ve Sanal Kasa Bilgisi
+        st.subheader("💰 Sanal Kasa Sistemi")
+        
+        with st.expander("📊 Sanal Kasa Sistemleri Hakkında", expanded=False):
+            st.markdown("""
+            **3 Farklı Sanal Kasa Sistemi:**
+            
+            1. **VirtualBankrollCallback** (Eğitim Sırasında)
+               - Her epoch'ta performans ölçümü
+               - Kasa 1: 1.5x eşik sistemi
+               - Kasa 2: %70 çıkış sistemi
+            
+            2. **DualBankrollSystem** (Test/Değerlendirme)
+               - Güven skoru filtresi ile
+               - Dinamik kasa miktarı
+               - Detaylı raporlama
+            
+            3. **AdvancedBankrollManager** (Production)
+               - Kelly Criterion (optimal bahis)
+               - Risk stratejileri (conservative, moderate, aggressive)
+               - Stop-loss & Take-profit
+               - Streak tracking
+            
+            **Detaylı bilgi için:** `docs/WORKFLOW_AND_SYSTEMS.md`
+            """)
         
         st.divider()
     
@@ -315,6 +472,9 @@ main_col1, main_col2 = st.columns([1, 1])
 with main_col1:
     st.subheader("🎯 Tahmin Yap")
     
+    # Tüm modelleri göster seçeneği
+    show_all_models = st.checkbox("📊 Tüm Modellerin Çıktılarını Göster", value=False)
+    
     # Tahmin butonu
     if st.button("🔮 YENİ TAHMİN YAP", type="primary", use_container_width=True):
         with st.spinner("Tahmin yapılıyor..."):
@@ -324,7 +484,17 @@ with main_col1:
             if len(history) < 50:
                 st.warning("⚠️ Tahmin için en az 50 veri gerekli!")
             else:
-                # Tahmin yap
+                # Tüm modellerden tahmin al (eğer seçiliyse)
+                all_predictions = None
+                if show_all_models and st.session_state.all_models_predictor:
+                    try:
+                        history_array = np.array(history)
+                        all_predictions = st.session_state.all_models_predictor.predict_all(history_array)
+                    except Exception as e:
+                        logger.error(f"All models prediction hatası: {e}")
+                        all_predictions = None
+                
+                # Ana tahmin yap
                 prediction = st.session_state.predictor.predict(history, mode=mode)
                 st.session_state.last_prediction = prediction
                 
@@ -398,6 +568,96 @@ with main_col1:
                         st.subheader("⚠️ Uyarılar")
                         for warning in prediction['warnings']:
                             st.warning(warning)
+                    
+                    # Tüm Modellerin Çıktıları
+                    if show_all_models and all_predictions:
+                        st.divider()
+                        st.subheader("📊 Tüm Modellerin Tahminleri")
+                        
+                        # Model isimleri ve renkleri
+                        model_names = {
+                            'progressive_nn': '🧠 Progressive NN',
+                            'catboost': '🐱 CatBoost',
+                            'autogluon': '🤖 AutoGluon',
+                            'tabnet': '📊 TabNet',
+                            'consensus': '🤝 Consensus'
+                        }
+                        
+                        model_colors = {
+                            'progressive_nn': '#667eea',
+                            'catboost': '#00d4ff',
+                            'autogluon': '#ff6b6b',
+                            'tabnet': '#4ecdc4',
+                            'consensus': '#ffe66d'
+                        }
+                        
+                        # Her model için kart göster
+                        for model_key, model_pred in all_predictions.items():
+                            if model_pred is None:
+                                continue
+                            
+                            model_name = model_names.get(model_key, model_key)
+                            model_color = model_colors.get(model_key, '#999999')
+                            
+                            with st.expander(f"{model_name} - {model_pred.get('prediction', 0):.2f}x", expanded=(model_key == 'consensus')):
+                                col1, col2, col3 = st.columns(3)
+                                
+                                with col1:
+                                    st.metric("Tahmin", f"{model_pred.get('prediction', 0):.2f}x")
+                                    st.metric("1.5x Üstü", "✅ Evet" if model_pred.get('above_threshold', False) else "❌ Hayır")
+                                
+                                with col2:
+                                    st.metric("Güven", f"{model_pred.get('confidence', 0):.0%}")
+                                    st.metric("Kategori", model_pred.get('category', 'N/A'))
+                                
+                                with col3:
+                                    if 'threshold_prob' in model_pred:
+                                        st.metric("Threshold Prob", f"{model_pred['threshold_prob']:.0%}")
+                                    if 'agreement' in model_pred:
+                                        st.metric("Model Uyumu", f"{model_pred['agreement']:.0%}")
+                                        st.caption(f"{model_pred.get('models_agreed', 0)}/{model_pred.get('total_models', 0)} model aynı fikirde")
+                                
+                                # Consensus için özel bilgi
+                                if model_key == 'consensus':
+                                    st.info(f"🤝 {model_pred.get('models_agreed', 0)} model 1.5x üstü tahmin ediyor")
+                        
+                        # Karşılaştırma grafiği
+                        if len([p for p in all_predictions.values() if p is not None]) > 1:
+                            st.subheader("📈 Model Karşılaştırması")
+                            
+                            fig_comparison = go.Figure()
+                            
+                            for model_key, model_pred in all_predictions.items():
+                                if model_pred is None:
+                                    continue
+                                
+                                model_name = model_names.get(model_key, model_key)
+                                model_color = model_colors.get(model_key, '#999999')
+                                
+                                fig_comparison.add_trace(go.Bar(
+                                    x=[model_name],
+                                    y=[model_pred.get('prediction', 0)],
+                                    name=model_name,
+                                    marker_color=model_color,
+                                    text=[f"{model_pred.get('prediction', 0):.2f}x"],
+                                    textposition='auto'
+                                ))
+                            
+                            fig_comparison.add_hline(
+                                y=1.5,
+                                line_dash="dash",
+                                line_color="red",
+                                annotation_text="1.5x Eşik"
+                            )
+                            
+                            fig_comparison.update_layout(
+                                title="Model Tahmin Karşılaştırması",
+                                yaxis_title="Tahmin Edilen Değer (x)",
+                                height=400,
+                                showlegend=False
+                            )
+                            
+                            st.plotly_chart(fig_comparison, use_container_width=True)
     
     st.divider()
     
