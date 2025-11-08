@@ -1133,7 +1133,7 @@ SEQUENCE_LENGTHS = {
 
 # Risk yönetimi eşikleri (konservatif yaklaşım - threshold yükseltildi)
 CONFIDENCE_THRESHOLDS = {
-    'aggressive': 0.55,  # +0.05
-    'normal': 0.75,     # +0.10
-    'rolling': 0.85     # +0.05
+    'aggressive': 0.60,  # %60 güven eşiği
+    'normal': 0.70,      # %70 güven eşiği
+    'rolling': 0.90      # %90 güven eşiği (çok konservatif)
 }

@@ -151,8 +151,8 @@ class RiskManager:
         # 4. Mod bazlı karar - SADECE 1.5 ÜSTÜ İÇİN
         if above_threshold:
             if self.mode == 'rolling':
-                # Rolling: Çok konservatif
-                if confidence >= 0.80 and self.consecutive_losses < 2:
+                # Rolling: Çok konservatif (%90 güven eşiği)
+                if confidence >= confidence_threshold and self.consecutive_losses < 2:
                     should_play = True
                     risk_level = 'LOW'
                     reasons.append("✅ Rolling mod: Yüksek güven ve düşük risk")
@@ -160,8 +160,8 @@ class RiskManager:
                     reasons.append("❌ Rolling mod: Koşullar uygun değil - BEKLE")
                     
             elif self.mode == 'normal':
-                # Normal: Dengeli
-                if confidence >= 0.65 and self.consecutive_losses < 3:
+                # Normal: Dengeli (%70 güven eşiği)
+                if confidence >= confidence_threshold and self.consecutive_losses < 3:
                     should_play = True
                     risk_level = 'MEDIUM'
                     reasons.append("✅ Normal mod: Koşullar uygun")
@@ -169,8 +169,8 @@ class RiskManager:
                     reasons.append("❌ Normal mod: Koşullar uygun değil - BEKLE")
                     
             elif self.mode == 'aggressive':
-                # Aggressive: Risk alır
-                if confidence >= 0.50:
+                # Aggressive: Risk alır (%60 güven eşiği)
+                if confidence >= confidence_threshold:
                     should_play = True
                     risk_level = 'HIGH'
                     reasons.append("⚠️ Agresif mod: Riskli ama oynanabilir")

@@ -30,9 +30,9 @@ prediction:
   
   # Güven eşikleri (mod bazında)
   confidence_thresholds:
-    aggressive: 0.50
-    normal: 0.65
-    rolling: 0.80
+    aggressive: 0.60
+    normal: 0.70
+    rolling: 0.90
   
   # Varsayılan mod
   default_mode: "normal"
