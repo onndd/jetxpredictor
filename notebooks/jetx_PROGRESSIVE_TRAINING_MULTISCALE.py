@@ -115,6 +115,7 @@ print(f"📂 Proje kök dizini: {PROJECT_ROOT}")
 from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.multi_scale_window import MultiScaleWindowExtractor, MultiScaleEnsemble, split_data_preserving_order
 from utils.custom_losses import percentage_aware_regression_loss, balanced_focal_loss, create_weighted_binary_crossentropy
+from utils.adaptive_lr_scheduler import AdaptiveLearningRateScheduler, CosineAnnealingSchedule, LearningRateSchedulerFactory
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
 
 # =============================================================================
@@ -594,9 +595,30 @@ for window_size in window_sizes:
     print(f"  1.5 üstü (fırsat kaçırma cezası): {w1:.1f}x")
     print(f"  Oran (w0/w1): {w0/w1:.1f}x (ESKİ: 1.67x)")
     
+    # Adaptive Learning Rate Scheduler oluştur
+    adaptive_scheduler = AdaptiveLearningRateScheduler(
+        initial_lr=0.001,
+        max_lr=0.01,
+        min_lr=0.0001,
+        patience=5,
+        factor=0.5,
+        improvement_threshold=0.01,
+        reduction_factor=0.5,
+        warmup_epochs=3,
+        stability_window=10,
+        min_lr_after_plateau=0.0001
+    )
+    
+    print(f"🔧 ADAPTIVE LEARNING RATE SCHEDULER:")
+    print(f"  Initial LR: {adaptive_scheduler.initial_lr}")
+    print(f"  Max LR: {adaptive_scheduler.max_lr}")
+    print(f"  Min LR: {adaptive_scheduler.min_lr}")
+    print(f"  Patience: {adaptive_scheduler.patience}")
+    print(f"  Stability Window: {adaptive_scheduler.stability_window}")
+    
     # Compile
     model.compile(
-        optimizer=Adam(0.0001),
+        optimizer=Adam(learning_rate=adaptive_scheduler),
         loss={
             'regression': percentage_aware_regression_loss,
             'classification': 'categorical_crossentropy',
@@ -631,9 +653,41 @@ for window_size in window_sizes:
         y_val=y_reg_val
     )
     
+    # Custom Learning Rate Callback - Adaptive scheduler'ı entegre eder
+    class AdaptiveLRCallback(callbacks.Callback):
+        def __init__(self, scheduler):
+            super().__init__()
+            self.scheduler = scheduler
+            self.epoch = 0
+            
+        def on_epoch_end(self, epoch, logs=None):
+            self.epoch = epoch
+            # Learning rate'i güncelle
+            current_lr = self.scheduler(epoch, logs)
+            
+            # Log'ları güncelle
+            if hasattr(self.model.optimizer, 'learning_rate'):
+                old_lr = self.model.optimizer.learning_rate.numpy()
+                if abs(old_lr - current_lr) > 1e-8:
+                    print(f"🔄 Epoch {epoch+1}: LR {old_lr:.6f} -> {current_lr:.6f}")
+            
+            # Model optimizer'ın learning rate'ini güncelle
+            self.model.optimizer.learning_rate.assign(current_lr)
+            
+            # Scheduler bilgilerini log'la
+            scheduler_info = self.scheduler.get_scheduler_info()
+            print(f"📊 LR Scheduler Info: {scheduler_info['type']}")
+            print(f"   Current LR: {current_lr:.6f}")
+            print(f"   Best Score: {scheduler_info.get('best_score', 'N/A')}")
+            print(f"   Patience Counter: {scheduler_info.get('patience_counter', 'N/A')}")
+    
+    # Adaptive LR Callback oluştur
+    adaptive_lr_callback = AdaptiveLRCallback(adaptive_scheduler)
+    
     cbs = [
         detailed_metrics,  # Her epoch detaylı metrikler
         weighted_checkpoint,  # Weighted model selection
+        adaptive_lr_callback,  # Adaptive learning rate management
         callbacks.EarlyStopping(
             monitor='val_loss',
             patience=20,
@@ -726,6 +780,53 @@ for window_size in window_sizes:
 total_training_time = sum(training_times.values())
 print(f"\n✅ TÜM MODELLER EĞİTİLDİ!")
 print(f"⏱️  Toplam Süre: {total_training_time/60:.1f} dakika ({total_training_time/3600:.2f} saat)")
+
+# =============================================================================
+# MODEL SELECTION SİSTEMİ ENTEGRASYONU
+# =============================================================================
+print("\n" + "="*80)
+print("🎯 MODEL SELECTION SİSTEMİ ENTEGRASYONU")
+print("="*80)
+
+# Comprehensive Model Selection entegrasyonu
+try:
+    from utils.model_selection import get_model_selector
+    model_selector = get_model_selector()
+    
+    # Tüm modelleri değerlendir
+    all_models_for_selection = {}
+    for window_size in window_sizes:
+        model_dict = trained_models[window_size]
+        model = model_dict['model']
+        
+        # Bu window için test data
+        X_f_test_w, X_seq_test_w, _, _, _ = all_data_by_window[window_size]['test']
+        
+        all_models_for_selection[f"window_{window_size}"] = model
+    
+    print(f"📊 {len(all_models_for_selection)} model comprehensive evaluation'a gönderiliyor...")
+    
+    # Model seçimi yap
+    selection_result = model_selector.select_best_model(
+        all_models_for_selection, 
+        [X_f_val, X_seq_val],  # Validation data (tüm window'lar aynı)
+        y_reg_val
+    )
+    
+    if selection_result['selected_model']:
+        print(f"✅ En iyi model seçildi: {selection_result['selected_model']}")
+        print(f"   Skor: {selection_result['selected_score']:.3f}")
+        print(f"   Grade: {selection_result['selected_grade']}")
+        print(f"   Win Rate: {selection_result['selected_metrics']['win_rate']:.3f}")
+        print(f"   Stability: {selection_result['selected_metrics']['stability']:.3f}")
+        print(f"   ROI: {selection_result['selected_metrics']['roi']:.3f}")
+    else:
+        print(f"⚠️ Hiçbir model minimum eşikleri karşılamadı!")
+        print(f"   Sebep: {selection_result.get('reason', 'Bilinmeyen sebep')}")
+    
+except ImportError as e:
+    print(f"⚠️ Model selection modülü yüklenemedi: {e}")
+    print("   Weighted checkpoint kullanılmaya devam ediliyor...")
 
 # =============================================================================
 # ENSEMBLE PERFORMANS DEĞERLENDİRMESİ
