@@ -587,8 +587,8 @@ for window_size in window_sizes:
     # Class weights - DENGELI SISTEM (1.5 üstü ödülü düşürüldü)
     # w0: Para kaybı cezası (1.5 altını yanlış tahmin etme)
     # w1: Fırsat kaçırma cezası (1.5 üstünü tahmin edememe)
-    # TÜM PENCERELER İÇİN SABİT DENGELI AĞIRLIKLAR
-    w0, w1 = 10.0, 1.0  # PARA KAYBI 10X DAHA AĞIR CEZA!
+    # DÜZELTME: Dengeli ağırlıklar - 1.2x-1.5x arası (LAZY LEARNING DÜZELTMESİ)
+    w0, w1 = 1.3, 1.0  # DENGELI - Para kaybına 1.3x ceza (ESKİ: 2.5x)
     
     print(f"📊 CLASS WEIGHTS (Konservatif - Para Kaybı Öncelikli):")
     print(f"  1.5 altı (para kaybı cezası): {w0:.1f}x ⚠️ ÇOK YÜKSEK!")
@@ -670,14 +670,19 @@ for window_size in window_sizes:
                 # Learning rate'i güncelle
                 current_lr = self.scheduler(epoch, logs)
                 
-                # Model optimizer'ın learning rate'ini güncelle
-                if hasattr(self.model.optimizer, 'learning_rate'):
-                    old_lr = K.get_value(self.model.optimizer.learning_rate)
-                    if abs(old_lr - current_lr) > 1e-8:
-                        print(f"🔄 Epoch {epoch+1}: LR {old_lr:.6f} -> {current_lr:.6f}")
-                    
-                    # TensorFlow için learning rate güncelleme
-                    K.set_value(self.model.optimizer.learning_rate, current_lr)
+                # Model optimizer'ın learning rate'ini güncelle - DÜZELTME: String hatası önleme
+                try:
+                    # TensorFlow 2.x için learning rate güncelleme
+                    if hasattr(self.model.optimizer, 'learning_rate'):
+                        # Learning rate'i doğrudan güncelle
+                        self.model.optimizer.learning_rate = current_lr
+                        print(f"🔄 Epoch {epoch+1}: LR -> {current_lr:.6f}")
+                    else:
+                        # Alternatif yöntem: optimizer'ı yeniden oluştur
+                        from tensorflow.keras.optimizers import Adam
+                        new_optimizer = Adam(learning_rate=current_lr)
+                        self.model.compile(optimizer=new_optimizer, loss=self.model.loss)
+                        print(f"🔄 Epoch {epoch+1}: Yeni optimizer ile LR -> {current_lr:.6f}")
                 
                 # Scheduler bilgilerini log'la (her 5 epoch'ta bir)
                 if epoch % 5 == 0:

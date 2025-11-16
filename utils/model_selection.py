@@ -50,9 +50,22 @@ class ComprehensiveModelEvaluator:
                 y_binary = (y_val >= 1.5).astype(int)
                 pred_binary = (predictions >= 1.5).astype(int)
             else:
-                # Multi-output classification
-                y_binary = np.argmax(y_val, axis=1)
-                pred_binary = np.argmax(predictions, axis=1)
+                # Multi-output classification - DÜZELTME: Shape kontrolü eklendi
+                try:
+                    y_binary = np.argmax(y_val, axis=1)
+                    pred_binary = np.argmax(predictions, axis=1)
+                except (ValueError, IndexError) as shape_error:
+                    logger.error(f"Shape hatası: {shape_error}")
+                    # Fallback: Basit binary conversion
+                    if len(predictions.shape) == 1:
+                        pred_binary = (predictions.flatten() >= 1.5).astype(int)
+                    else:
+                        pred_binary = np.argmax(predictions, axis=1) if len(predictions.shape) > 1 else (predictions.flatten() >= 1.5).astype(int)
+                    
+                    if len(y_val.shape) == 1:
+                        y_binary = (y_val >= 1.5).astype(int)
+                    else:
+                        y_binary = np.argmax(y_val, axis=1) if len(y_val.shape) > 1 else (y_val >= 1.5).astype(int)
             
             accuracy = np.mean(y_binary == pred_binary)
             return accuracy
