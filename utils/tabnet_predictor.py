@@ -69,16 +69,37 @@ class TabNetHighXPredictor:
             self.load_model()
     
     @staticmethod
-    def categorize_value(value: float) -> int:
+    def categorize_value(value) -> int:
         """Değeri kategoriye çevir"""
-        if value < 1.5:
-            return 0  # Düşük
-        elif value < 10:
-            return 1  # Orta
-        elif value < 50:
-            return 2  # Yüksek
-        else:
-            return 3  # Mega
+        try:
+            # Input validation ve type conversion
+            if isinstance(value, str):
+                value = float(value)
+            elif not isinstance(value, (int, float)):
+                raise ValueError(f"Geçersiz değer tipi: {type(value)}")
+            
+            # NaN kontrolü
+            if pd.isna(value) or value is None:
+                raise ValueError("Değer None veya NaN")
+            
+            # Pozitif değer kontrolü
+            if value <= 0:
+                raise ValueError(f"Değer pozitif olmalı: {value}")
+            
+            # Kategorizasyon
+            if value < 1.5:
+                return 0  # Düşük
+            elif value < 10:
+                return 1  # Orta
+            elif value < 50:
+                return 2  # Yüksek
+            else:
+                return 3  # Mega
+                
+        except (ValueError, TypeError) as e:
+            logger.error(f"categorize_value hatası: {e}, value: {value}")
+            # Hata durumunda varsayılan olarak "Düşük" kategorisi dön
+            return 0
     
     def train(
         self,

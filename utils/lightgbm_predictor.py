@@ -216,7 +216,7 @@ class LightGBMPredictor:
         
         return metrics
     
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X) -> np.ndarray:
         """
         Tahmin yapma
         
@@ -228,6 +228,37 @@ class LightGBMPredictor:
         """
         if not self.is_trained:
             raise ValueError("Model henüz eğitilmemiş. Önce train() metodunu çağırın.")
+        
+        # Input validation
+        try:
+            # Type conversion
+            if isinstance(X, list):
+                X = np.array(X)
+            elif isinstance(X, pd.Series):
+                X = X.values.reshape(1, -1)
+            elif not isinstance(X, (np.ndarray, pd.DataFrame)):
+                raise ValueError(f"Geçersiz input tipi: {type(X)}")
+            
+            # NaN kontrolü
+            if hasattr(X, 'isna'):
+                if X.isna().any().any():
+                    raise ValueError("Input verisinde NaN değerler var")
+            elif pd.isna(X).any():
+                raise ValueError("Input verisinde NaN değerler var")
+            
+            # DataFrame kontrolü
+            if isinstance(X, pd.DataFrame):
+                X = X.values
+                
+        except Exception as e:
+            logger.error(f"LightGBM input validation hatası: {e}")
+            # Hata durumunda varsayılan tahmin dön
+            if self.mode == 'classification':
+                return np.array([0])  # Negative class
+            elif self.mode == 'multiclass':
+                return np.array([0])  # Low category
+            else:  # regression
+                return np.array([1.0])  # Conservative prediction
         
         predictions = self.model.predict(X, num_iteration=self.model.best_iteration)
         
@@ -415,4 +446,3 @@ class LightGBMPredictor:
             'model_path': self.model_path,
             'scaler_path': self.scaler_path
         }
-

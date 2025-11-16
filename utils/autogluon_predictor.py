@@ -151,11 +151,39 @@ class AutoGluonPredictor:
         if self.predictor is None:
             raise RuntimeError("Model henüz yüklenmedi veya eğitilmedi!")
         
-        # DataFrame'e çevir
-        if isinstance(X, np.ndarray):
-            X_df = pd.DataFrame(X)
-        else:
-            X_df = X
+        # Input validation
+        try:
+            # Type conversion ve validation
+            if isinstance(X, list):
+                X = np.array(X)
+            elif isinstance(X, pd.Series):
+                X = X.values.reshape(1, -1)
+            elif not isinstance(X, (np.ndarray, pd.DataFrame)):
+                raise ValueError(f"Geçersiz input tipi: {type(X)}")
+            
+            # NaN kontrolü
+            if hasattr(X, 'isna'):
+                if X.isna().any().any():
+                    raise ValueError("Input verisinde NaN değerler var")
+            elif pd.isna(X).any():
+                raise ValueError("Input verisinde NaN değerler var")
+            
+            # DataFrame'e çevir
+            if isinstance(X, np.ndarray):
+                X_df = pd.DataFrame(X)
+            else:
+                X_df = X
+                
+        except Exception as e:
+            logger.error(f"AutoGluon input validation hatası: {e}")
+            # Hata durumunda varsayılan sonuç dön
+            return {
+                'threshold_probability': 0.5,
+                'confidence': 0.5,
+                'above_threshold': False,
+                'recommendation': 'BEKLE',
+                'error': str(e)
+            }
         
         # Tahmin
         if return_proba:
