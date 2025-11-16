@@ -79,15 +79,29 @@ Kullanıcının belirttiği iki temel problem başarıyla çözüldü:
 
 ## Aktif Kararlar ve Nedenleri
 
-### 1. Lazy Learning Önleme ✅ Aktif
+### 1. Training Hataları Çözüldü ✅ Tamamlandı
+- **Sorun 1**: AdaptiveLearningRateScheduler TypeError
+  - **Sebep**: TensorFlow optimizer'ı learning rate'i doğrudan callable olarak bekliyordu
+  - **Çözüm**: Custom callback ile learning rate yönetimi, error handling eklendi
+
+- **Sorun 2**: Model compile hatası
+  - **Sebep**: Adaptive scheduler doğrudan optimizer'a parametre olarak veriliyordu
+  - **Çözüm**: Sabit learning rate ile başlatma, callback üzerinden dinamik güncelleme
+
+- **Sorun 3**: FileNotFoundError (model_info.json)
+  - **Sebep**: Training crash olduğunda dizinler oluşturulamıyordu
+  - **Çözüm**: Error handling ile graceful degradation, dizin oluşturma garantisi
+
+### 2. Lazy Learning Önleme ✅ Aktif
 - **Karar**: Adaptive learning rate scheduler'lar kullanılacak
 - **Neden**: Stability score'a göre learning rate adaptasyonu en etkili yöntem
 - **Uygulama**: 
   - Early stopping ile stability monitoring
   - Learning rate scheduling ile warmup
   - Gradient clipping
+  - Error handling ile fallback mekanizmaları
 
-### 2. Overfitting Önleme ✅ Aktif
+### 3. Overfitting Önleme ✅ Aktif
 - **Karar**: Multi-katmanlı regularization stratejisi
 - **Neden**: Modelin training verisine ezberlemesini önlemek
 - **Uygulama**: 

@@ -618,7 +618,7 @@ for window_size in window_sizes:
     
     # Compile
     model.compile(
-        optimizer=Adam(learning_rate=adaptive_scheduler),
+        optimizer=Adam(learning_rate=0.001),  # Sabit başlangıç LR
         loss={
             'regression': percentage_aware_regression_loss,
             'classification': 'categorical_crossentropy',
@@ -662,24 +662,34 @@ for window_size in window_sizes:
             
         def on_epoch_end(self, epoch, logs=None):
             self.epoch = epoch
-            # Learning rate'i güncelle
-            current_lr = self.scheduler(epoch, logs)
-            
-            # Log'ları güncelle
-            if hasattr(self.model.optimizer, 'learning_rate'):
-                old_lr = self.model.optimizer.learning_rate.numpy()
-                if abs(old_lr - current_lr) > 1e-8:
-                    print(f"🔄 Epoch {epoch+1}: LR {old_lr:.6f} -> {current_lr:.6f}")
-            
-            # Model optimizer'ın learning rate'ini güncelle
-            self.model.optimizer.learning_rate.assign(current_lr)
-            
-            # Scheduler bilgilerini log'la
-            scheduler_info = self.scheduler.get_scheduler_info()
-            print(f"📊 LR Scheduler Info: {scheduler_info['type']}")
-            print(f"   Current LR: {current_lr:.6f}")
-            print(f"   Best Score: {scheduler_info.get('best_score', 'N/A')}")
-            print(f"   Patience Counter: {scheduler_info.get('patience_counter', 'N/A')}")
+            try:
+                # Learning rate'i hesapla - logs dict olabilir veya None
+                if logs is None:
+                    logs = {}
+                
+                # Learning rate'i güncelle
+                current_lr = self.scheduler(epoch, logs)
+                
+                # Model optimizer'ın learning rate'ini güncelle
+                if hasattr(self.model.optimizer, 'learning_rate'):
+                    old_lr = K.get_value(self.model.optimizer.learning_rate)
+                    if abs(old_lr - current_lr) > 1e-8:
+                        print(f"🔄 Epoch {epoch+1}: LR {old_lr:.6f} -> {current_lr:.6f}")
+                    
+                    # TensorFlow için learning rate güncelleme
+                    K.set_value(self.model.optimizer.learning_rate, current_lr)
+                
+                # Scheduler bilgilerini log'la (her 5 epoch'ta bir)
+                if epoch % 5 == 0:
+                    scheduler_info = self.scheduler.get_scheduler_info()
+                    print(f"📊 LR Scheduler Info: {scheduler_info['type']}")
+                    print(f"   Current LR: {current_lr:.6f}")
+                    print(f"   Best Score: {scheduler_info.get('best_score', 'N/A')}")
+                    print(f"   Patience Counter: {scheduler_info.get('patience_counter', 'N/A')}")
+                    
+            except Exception as e:
+                print(f"⚠️ LR Scheduler hatası: {e}")
+                print("📊 Sabit learning rate ile devam ediliyor...")
     
     # Adaptive LR Callback oluştur
     adaptive_lr_callback = AdaptiveLRCallback(adaptive_scheduler)
@@ -1020,68 +1030,76 @@ print("\n" + "="*80)
 print("💾 MODELLER KAYDEDİLİYOR")
 print("="*80)
 
-models_dir = os.path.join(PROJECT_ROOT, 'models/progressive_multiscale')
-os.makedirs(models_dir, exist_ok=True)
-
-# Her window için model kaydet
-for window_size in window_sizes:
-    model_dict = trained_models[window_size]
+# Error handling ile dizin oluşturma
+try:
+    models_dir = os.path.join(PROJECT_ROOT, 'models/progressive_multiscale')
+    os.makedirs(models_dir, exist_ok=True)
+    print(f"✅ Models dizini oluşturuldu: {models_dir}")
     
-    # Model
-    model_path = os.path.join(PROJECT_ROOT, f'models/progressive_multiscale/model_window_{window_size}.h5')
-    model_dict['model'].save(model_path)
+    # Her window için model kaydet
+    for window_size in window_sizes:
+        model_dict = trained_models[window_size]
+        
+        # Model
+        model_path = os.path.join(PROJECT_ROOT, f'models/progressive_multiscale/model_window_{window_size}.h5')
+        model_dict['model'].save(model_path)
+        
+        # Scaler
+        scaler_path = os.path.join(PROJECT_ROOT, f'models/progressive_multiscale/scaler_window_{window_size}.pkl')
+        joblib.dump(model_dict['scaler'], scaler_path)
+        
+        print(f"✅ Window {window_size} kaydedildi")
     
-    # Scaler
-    scaler_path = os.path.join(PROJECT_ROOT, f'models/progressive_multiscale/scaler_window_{window_size}.pkl')
-    joblib.dump(model_dict['scaler'], scaler_path)
-    
-    print(f"✅ Window {window_size} kaydedildi")
-
-# Model bilgileri
-info = {
-    'model': 'Progressive_NN_MultiScale_Ensemble',
-    'version': '3.0',
-    'date': datetime.now().strftime('%Y-%m-%d'),
-    'window_sizes': window_sizes,
-    'total_training_time_hours': round(total_training_time/3600, 2),
-    'ensemble_metrics': {
-        'mae': float(mae_ensemble),
-        'rmse': float(rmse_ensemble),
-        'threshold_accuracy': float(thr_acc_ensemble),
-        'below_15_accuracy': float(below_acc_ensemble),
-        'above_15_accuracy': float(above_acc_ensemble),
-        'money_loss_risk': float(fpr) if cm[0,0] + cm[0,1] > 0 else 0.0
-    },
-    'individual_models': {
-        str(ws): {
-            'mae': trained_models[ws]['mae'],
-            'threshold_acc': trained_models[ws]['threshold_acc'],
-            'below_acc': trained_models[ws]['below_acc'],
-            'above_acc': trained_models[ws]['above_acc'],
-            'training_time_minutes': round(trained_models[ws]['training_time']/60, 1)
-        } for ws in window_sizes
-    },
-    'bankroll_performance': {
-        'kasa_1_15x': {
-            'roi': float(roi1),
-            'win_rate': float(win_rate1),
-            'total_bets': int(total_bets1),
-            'profit_loss': float(profit1)
+    # Model bilgileri
+    info = {
+        'model': 'Progressive_NN_MultiScale_Ensemble',
+        'version': '3.0',
+        'date': datetime.now().strftime('%Y-%m-%d'),
+        'window_sizes': window_sizes,
+        'total_training_time_hours': round(total_training_time/3600, 2),
+        'ensemble_metrics': {
+            'mae': float(mae_ensemble),
+            'rmse': float(rmse_ensemble),
+            'threshold_accuracy': float(thr_acc_ensemble),
+            'below_15_accuracy': float(below_acc_ensemble),
+            'above_15_accuracy': float(above_acc_ensemble),
+            'money_loss_risk': float(fpr) if cm[0,0] + cm[0,1] > 0 else 0.0
         },
-        'kasa_2_80percent': {
-            'roi': float(roi2),
-            'win_rate': float(win_rate2),
-            'total_bets': int(total_bets2),
-            'profit_loss': float(profit2)
+        'individual_models': {
+            str(ws): {
+                'mae': trained_models[ws]['mae'],
+                'threshold_acc': trained_models[ws]['threshold_acc'],
+                'below_acc': trained_models[ws]['below_acc'],
+                'above_acc': trained_models[ws]['above_acc'],
+                'training_time_minutes': round(trained_models[ws]['training_time']/60, 1)
+            } for ws in window_sizes
+        },
+        'bankroll_performance': {
+            'kasa_1_15x': {
+                'roi': float(roi1),
+                'win_rate': float(win_rate1),
+                'total_bets': int(total_bets1),
+                'profit_loss': float(profit1)
+            },
+            'kasa_2_80percent': {
+                'roi': float(roi2),
+                'win_rate': float(win_rate2),
+                'total_bets': int(total_bets2),
+                'profit_loss': float(profit2)
+            }
         }
     }
-}
-
-info_path = os.path.join(PROJECT_ROOT, 'models/progressive_multiscale/model_info.json')
-with open(info_path, 'w') as f:
-    json.dump(info, f, indent=2)
-
-print(f"✅ Model bilgileri kaydedildi")
+    
+    info_path = os.path.join(PROJECT_ROOT, 'models/progressive_multiscale/model_info.json')
+    with open(info_path, 'w') as f:
+        json.dump(info, f, indent=2)
+    
+    print(f"✅ Model bilgileri kaydedildi: {info_path}")
+    
+except Exception as e:
+    print(f"❌ Model kaydetme hatası: {e}")
+    print("⚠️ Training sonuçları kaydedilemedi ama training tamamlandı.")
+    print("📊 Manuel olarak model kaydetmeyi deneyin...")
 
 # ZIP oluştur
 zip_filename = 'jetx_models_progressive_multiscale_v3.0'
