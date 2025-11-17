@@ -339,7 +339,8 @@ def calculate_weighted_score(y_true, y_pred):
     above_acc = (TP / (TP + FN) * 100) if (TP + FN) > 0 else 0
     balanced_acc = (below_acc + above_acc) / 2
     recall = (TP / (TP + FN)) if (TP + FN) > 0 else 0
-    f1_score = (2 * (precision/100) * recall / ((precision/100) + recall)) if ((precision/100) + recall) > 0 else f1_score_percent = f1_score * 100
+    f1_score = (2 * (precision/100) * recall / ((precision/100) + recall)) if ((precision/100) + recall) > 0 else 0
+    f1_score_percent = f1_score * 100
     money_loss_risk = (FP / (TN + FP)) if (TN + FP) > 0 else 1.0
     
     return weighted_score, balanced_acc, below_acc, above_acc, f1_score_percent, money_loss_risk * 100, roi, win_rate, bets_made

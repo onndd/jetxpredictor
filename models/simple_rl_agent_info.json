@@ -1,0 +1,16 @@
+{
+  "model": "Simple_RL_Agent",
+  "version": "1.0",
+  "date": "2025-11-18 00:58:58",
+  "state_dim": 200,
+  "action_dim": 4,
+  "training_samples": 10306,
+  "epochs": 20,
+  "final_accuracy": 0.16456433145740346,
+  "action_distribution": [
+    3082,
+    2395,
+    3382,
+    1447
+  ]
+}

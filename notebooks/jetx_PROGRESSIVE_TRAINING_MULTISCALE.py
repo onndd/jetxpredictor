@@ -666,10 +666,10 @@ for window_size in window_sizes:
                 # Learning rate'i hesapla - logs dict olabilir veya None
                 if logs is None:
                     logs = {}
-                
+
                 # Learning rate'i güncelle
                 current_lr = self.scheduler(epoch, logs)
-                
+
                 # Model optimizer'ın learning rate'ini güncelle - DÜZELTME: String hatası önleme
                 try:
                     # TensorFlow 2.x için learning rate güncelleme
@@ -683,7 +683,11 @@ for window_size in window_sizes:
                         new_optimizer = Adam(learning_rate=current_lr)
                         self.model.compile(optimizer=new_optimizer, loss=self.model.loss)
                         print(f"🔄 Epoch {epoch+1}: Yeni optimizer ile LR -> {current_lr:.6f}")
-                
+
+                except Exception as e:
+                    print(f"⚠️ LR Scheduler hatası: {e}")
+                    print("📊 Sabit learning rate ile devam ediliyor...")
+
                 # Scheduler bilgilerini log'la (her 5 epoch'ta bir)
                 if epoch % 5 == 0:
                     scheduler_info = self.scheduler.get_scheduler_info()
@@ -691,10 +695,10 @@ for window_size in window_sizes:
                     print(f"   Current LR: {current_lr:.6f}")
                     print(f"   Best Score: {scheduler_info.get('best_score', 'N/A')}")
                     print(f"   Patience Counter: {scheduler_info.get('patience_counter', 'N/A')}")
-                    
+
             except Exception as e:
-                print(f"⚠️ LR Scheduler hatası: {e}")
-                print("📊 Sabit learning rate ile devam ediliyor...")
+                print(f"⚠️ Adaptive LR Callback hatası: {e}")
+                print("📊 Callback dışında devam ediliyor...")
     
     # Adaptive LR Callback oluştur
     adaptive_lr_callback = AdaptiveLRCallback(adaptive_scheduler)
