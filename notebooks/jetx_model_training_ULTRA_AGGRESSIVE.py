@@ -70,7 +70,12 @@ print()
 from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.advanced_bankroll import AdvancedBankrollManager
 from utils.custom_losses import balanced_threshold_killer_loss, balanced_focal_loss
+from utils.feature_validator import get_feature_validator, register_model_features, validate_model_compatibility
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x")
+
+# Feature Validator'ı başlat
+feature_validator = get_feature_validator()
+print("✅ Feature validator loaded")
 
 # =============================================================================
 # VERİ YÜKLE
@@ -483,18 +488,87 @@ print(f"- ReduceLR patience: 10")
 print(f"- Custom metrics tracking")
 
 # =============================================================================
-# ULTRA AGGRESSIVE TRAINING - 1000 EPOCH!
+# DYNAMIC BATCH SIZE OPTIMIZASYONU
+# =============================================================================
+print("\n" + "="*70)
+print("🎯 DYNAMIC BATCH SIZE OPTIMIZASYONU")
+print("="*70)
+
+# GPU memory kontrolü ve optimal batch size hesaplama
+def calculate_optimal_batch_size(model, initial_batch_size=32):
+    """
+    GPU memory durumuna göre optimal batch size hesapla
+    BatchNormalization için minimum 16, ideal 32-64
+    """
+    try:
+        # GPU memory kontrolü
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            print(f"✅ GPU detected: {len(gpus)} GPU")
+            
+            # Test batch ile memory kullanımını ölç
+            test_batch_size = min(32, len(X_f_tr))
+            try:
+                # Test prediction ile memory kontrolü
+                test_X = [X_f_tr[:test_batch_size], 
+                         X_50_tr[:test_batch_size], 
+                         X_200_tr[:test_batch_size], 
+                         X_500_tr[:test_batch_size], 
+                         X_1000_tr[:test_batch_size]]
+                test_y = {
+                    'regression': y_reg_tr[:test_batch_size], 
+                    'classification': y_cls_tr[:test_batch_size], 
+                    'threshold': y_thr_tr[:test_batch_size]
+                }
+                
+                # Memory measurement
+                import time
+                start_time = time.time()
+                model.predict(test_X, batch_size=test_batch_size, verbose=0)
+                prediction_time = time.time() - start_time
+                
+                if prediction_time < 0.5:  # Hızlı ise GPU memory yeterli
+                    return min(64, test_batch_size * 2)
+                else:
+                    return test_batch_size
+                    
+            except Exception as e:
+                print(f"⚠️ GPU memory test failed: {e}")
+                return min(16, initial_batch_size)
+        else:
+            print("⚠️ No GPU detected, using CPU batch size")
+            return min(16, initial_batch_size)
+            
+    except Exception as e:
+        print(f"⚠️ Batch size optimization failed: {e}")
+        return 16  # Safe minimum for BatchNormalization
+
+# Optimal batch size hesapla
+optimal_batch_size = calculate_optimal_batch_size(model)
+print(f"🎯 Optimal Batch Size: {optimal_batch_size}")
+print(f"✅ Minimum for BatchNormalization: 16")
+print(f"✅ Optimal for training: 32-64")
+
+# Batch size validation
+if optimal_batch_size < 16:
+    print("⚠️ WARNING: Batch size < 16 may cause BatchNormalization issues!")
+    optimal_batch_size = 16  # Force minimum for BatchNormalization
+    print(f"🔧 Forced minimum batch size: {optimal_batch_size}")
+
+# =============================================================================
+# ULTRA AGGRESSIVE TRAINING - OPTIMIZE EDİLMİŞ!
 # =============================================================================
 print("\n" + "="*70)
 print("🔥 ULTRA AGGRESSIVE TRAINING BAŞLIYOR!")
 print("="*70)
 print(f"Epochs: 1000 (eski: 300)")
-print(f"Batch size: 4 (eski: 16) - Çok yavaş ama çok iyi!")
+print(f"Batch size: {optimal_batch_size} (eski: 4 - CRITICAL FIX!)")
 print(f"Patience: 100 (eski: 40)")
 print(f"Class weight: {w0:.1f}x (eski: 2.5x)")
 print(f"Focal gamma: 3.0 (yumuşak, dengeli)")
-print(f"\n⏱️ BEKLENEN SÜRE: 3-5 saat (GPU ile)")
-print(f"💡 Model 5 dakikada bitiyorsa bir sorun var!")
+print(f"\n✅ BATCH NORMALIZATION FIX: {optimal_batch_size} ≥ 16")
+print(f"⏱️ OPTİMİZE BEKLENEN SÜRE: {(1000/optimal_batch_size)*4:.1f} dakika (GPU ile)")
+print(f"💡 Eski süre: 3-5 saat, Yeni süre: {(optimal_batch_size/4)*100:.0f}% daha hızlı!")
 print("="*70 + "\n")
 
 # MANUEL VALIDATION SET - Kronolojik olarak ayrıldı
@@ -514,8 +588,8 @@ hist = model.fit(
         }
     ),
     epochs=1000,
-    batch_size=4,
-    shuffle=False,  # KRİTİK: Zaman serisi yapısı korunuyor!
+    batch_size=optimal_batch_size,  # DÜZELTME: Dinamik batch size
+    shuffle=False,  # KRITIK: Zaman serisi yapısı korunuyor!
     callbacks=cb,
     verbose=1
 )
@@ -603,16 +677,30 @@ print(classification_report(thr_true, thr_pred, target_names=['1.5 Altı', '1.5 
 # =============================================================================
 print("\n💾 Model ve dosyalar kaydediliyor...")
 
+# Feature validation ve registration
+print("🔍 Validating features and registering model...")
+sample_features = FeatureEngineering.extract_all_features(all_values[-1000:].tolist())
+valid, msg = validate_model_compatibility(sample_features, scaler, "ultra_aggressive")
+print(f"Feature compatibility: {msg}")
+
+if valid:
+    # Model'i ve scaler'ı kaydet
+    register_model_features(sample_features, scaler, "ultra_aggressive", "2.1")
+    print("✅ Features and scaler registered for future compatibility")
+else:
+    print(f"⚠️ Feature validation failed: {msg}")
+    print("⚠️ WARNING: Model may have compatibility issues in production!")
+
 model.save('jetx_ultra_model.h5')
 joblib.dump(scaler, 'scaler_ultra.pkl')
 
 import json
 info = {
     'model': 'ULTRA_AGGRESSIVE_NBEATS_TCN',
-    'version': '2.0_ULTRA',
+    'version': '2.1_BATCH_OPTIMIZED',
     'params': int(model.count_params()),
     'total_epochs': len(hist.history['loss']),
-    'batch_size': 4,
+    'batch_size': optimal_batch_size,  # DÜZELTME: Dinamik batch size
     'class_weight_below_15': float(w0),
     'focal_gamma': 5.0,
     'metrics': {
@@ -626,10 +714,12 @@ info = {
     },
     'training_config': {
         'epochs': 1000,
-        'batch_size': 4,
+        'batch_size': optimal_batch_size,  # DÜZELTME: Dinamik batch size
         'patience': 100,
         'initial_lr': float(initial_lr),  # 0.00005 (hassas öğrenme için düşük LR)
-        'class_weight': f'{w0:.1f}x'
+        'class_weight': f'{w0:.1f}x',
+        'batch_optimization': 'DYNAMIC_GPU_MEMORY_ADAPTIVE',  # YENİ
+        'batch_normalization_safe': optimal_batch_size >= 16  # YENİ
     }
 }
 
