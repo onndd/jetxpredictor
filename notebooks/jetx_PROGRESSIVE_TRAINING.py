@@ -1031,9 +1031,9 @@ model.compile(
 
 # Adaptive Weight Scheduler (GÜÇLENDIRILDI - Lazy Learning Önleme)
 adaptive_scheduler_2 = AdaptiveWeightScheduler(
-    initial_weight=20.0,   # 1.5 → 20.0 (13.3x artış!)
-    min_weight=10.0,       # 1.0 → 10.0 (minimum bile yüksek)
-    max_weight=50.0,       # 4.0 → 50.0 (lazy learning için yeterli!)
+    initial_weight=2.0,    # DÜZELTME: 20.0 → 2.0 (10x azaltma!)
+    min_weight=1.0,        # DÜZELTME: 10.0 → 1.0 (normal seviye)
+    max_weight=5.0,        # DÜZELTME: 50.0 → 5.0 (reasonable limit)
     target_below_acc=0.70,
     target_above_acc=0.75,
     test_data=([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], y_reg_te),
@@ -1142,9 +1142,9 @@ model.compile(
 
 # Adaptive Weight Scheduler (GÜÇLENDIRILDI - Lazy Learning Önleme)
 adaptive_scheduler_3 = AdaptiveWeightScheduler(
-    initial_weight=25.0,   # 2.0 → 25.0 (12.5x artış!)
-    min_weight=15.0,       # 1.0 → 15.0 (minimum bile çok yüksek)
-    max_weight=50.0,       # 4.0 → 50.0 (lazy learning için yeterli!)
+    initial_weight=2.5,    # DÜZELTME: 25.0 → 2.5 (10x azaltma!)
+    min_weight=1.5,        # DÜZELTME: 15.0 → 1.5 (normal seviye)
+    max_weight=6.0,        # DÜZELTME: 50.0 → 6.0 (reasonable limit)
     target_below_acc=0.70,
     target_above_acc=0.75,
     test_data=([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], y_reg_te),

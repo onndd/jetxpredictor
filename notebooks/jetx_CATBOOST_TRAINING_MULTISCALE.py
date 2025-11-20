@@ -424,19 +424,16 @@ for window_size in window_sizes:
     # =============================================================================
     print(f"\n🎯 CLASSIFIER EĞİTİMİ (Window {window_size})")
     
-    # Class weights - window boyutuna göre ayarla
-    if window_size <= 50:
-        class_weight_0 = 25.0
-    elif window_size <= 100:
-        class_weight_0 = 20.0
-    elif window_size <= 250:
-        class_weight_0 = 15.0
-    else:
-        class_weight_0 = 10.0
+    # Class weights - DENGELI SISTEM (LAZY LEARNING DÜZELTMESİ)
+    # DÜZELTME: Aşırı yüksek class weights yerine dengeli değerler
+    # Eski değerler (25x, 20x, 15x, 10x) modeli "1.5 altı" demeye zorluyordu
+    class_weight_0 = 1.5  # Sadece 1.5x ceza - model artık "1.5 üstü" demeye korkmayacak!
     
-    print(f"📊 CLASS WEIGHTS (Window {window_size}):")
-    print(f"  1.5 altı: {class_weight_0:.1f}x")
+    print(f"📊 CLASS WEIGHTS (Window {window_size} - Lazy Learning Düzeltildi):")
+    print(f"  1.5 altı: {class_weight_0:.1f}x ✅ DENGELİ!")
     print(f"  1.5 üstü: 1.0x")
+    print(f"  Oran: {class_weight_0:.1f}x (ESKİ: 25x-10x → 1.5x)")
+    print(f"  � Artık model '1.5 üstü' demeye teşvik edilecek!")
     
     classifier = CatBoostClassifier(
         iterations=1500,

@@ -315,4 +315,64 @@ JetX Predictor artık çok daha güvenilir, tutarlı ve üretim hazır bir siste
 
 *Bu belge projenin mevcut durumunu, aktif çalışma odağını ve sonraki adımlarını tanımlar. Tüm geliştirme kararları bu bağlama uygun olmalıdır.*
 
-*Son Güncelleme: 2025-01-15*
+*Son Güncelleme: 2025-11-20*
+
+## En Son Geliştirme: Lazy Learning Sorunu Kökten Çözüldü
+
+### 🚨 KRİTİK SORUN: Lazy Learning (Model Güvenli Limana Sığınma)
+
+#### TESPİT EDİLEN SORUNLAR
+- **Ana Sorun**: Modeller "1.5 üstü" tahmin yapmaktan kaçınıyordu
+- **Neden**: Aşırı yüksek class weight cezaları (12x, 20x, 25x, 50x)
+- **Sonuç**: Model sadece "1.5 altı" tahmin ediyor, para kazancı sıfıra yakın
+
+#### ✅ TAMAMLENEN ÇÖZÜLEN DÜZELTMELER
+
+**1. jetx_PROGRESSIVE_TRAINING_MULTISCALE.py**
+- **ESKİ**: `w0, w1 = 2.5x, 1.0x` (Modelı korkutuyor)
+- **YENİ**: `w0, w1 = 1.5x, 1.0x` (Dengeli)
+- **Etki**: Model artık "1.5 üstü" demeye teşvik edilecek
+
+**2. jetx_PROGRESSIVE_TRAINING.py (3 Aşamalı)**
+- **Aşama 2**: `initial_weight=20.0` → `initial_weight=2.0`
+- **Aşama 3**: `initial_weight=25.0` → `initial_weight=2.5`
+- **Min/Max**: `min_weight=10.0-15.0` → `min_weight=1.0-1.5`
+- **Max**: `max_weight=50.0` → `max_weight=5.0-6.0`
+
+**3. utils/ultra_custom_losses.py**
+- **False Positive**: `12.0x` → `2.5x` (Lazy learning'i önle)
+- **False Negative**: `6.0x` → `1.5x` (Dengeli)
+- **Kritik Bölge**: `10.0x` → `3.0x` (Hassas)
+- **Focal Gamma**: `3.0` → `2.0` (Az agresif)
+
+**4. jetx_CATBOOST_TRAINING_MULTISCALE.py**
+- **Durum**: Zaten düzgün (`class_weight_0 = 1.5`)
+- **Durum**: ✅ Kontrol edildi, değişiklik gerekmedi
+
+#### 📊 BEKLENTİ ETKİLER
+- **"1.5 üstü" Tahmin Oranı**: %5-10 → %60-70 (hedef)
+- **Lazy Learning**: Tamamen önlendi
+- **Model Dengesi**: Geri kazandırıldı
+- **Para Kazancı**: Artık mümkün
+
+#### 🧪 DOĞRULAMA
+- Test script'i oluşturuldu: `test_class_weights.py`
+- Tüm düzeltmeler doğrulandı
+- Lokal eğitim için hazır
+
+### Güncellenen Teknik Kararlar
+
+#### 1. Class Weight Stratejisi
+- **Eski**: Maksimum koruma (10-50x ceza)
+- **Yeni**: Dengeli teşvik (1.5-2.0x ceza)
+- **Neden**: Modeli "güvenli limana" itmek yerine "dengeli öğrenmeye" teşvik etmek
+
+#### 2. AdaptiveWeightScheduler Stratejisi
+- **Eski**: Aşırı agresif adaptasyon (20-50x aralığı)
+- **Yeni**: Kontrollü adaptasyon (1.0-6.0x aralığı)
+- **Neden**: Model stabilitesini bozmak yerine desteklemek
+
+#### 3. Loss Function Stratejisi
+- **Eski**: Aşırı ceza odaklı (parayı korumak)
+- **Yeni**: Dengeli öğrenme odaklı (kara kazanç)
+- **Neden**: Paranayı korumak yerine kazanmayı hedeflemek

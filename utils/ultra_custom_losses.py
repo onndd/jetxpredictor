@@ -17,12 +17,12 @@ from tensorflow.keras import backend as K
 
 def ultra_threshold_killer_loss(y_true, y_pred):
     """
-    ULTRA AGGRESSIVE Threshold Killer Loss - 12x CEZA!
+    BALANCED Threshold Killer Loss - DENGELİ CEZA!
     
-    Bu loss fonksiyonu para kaybını önlemek için maksimum ceza kullanır:
-    - 1.5 altıyken üstü tahmin = 12x ceza (PARA KAYBI - en kritik)
-    - 1.5 üstüyken altı tahmin = 6x ceza (fırsat kaçırma)
-    - Kritik bölge (1.4-1.6) = 10x ceza (hassas bölge)
+    Bu loss fonksiyonu para kaybını önlerken lazy learning'i de önler:
+    - 1.5 altıyken üstü tahmin = 2.5x ceza (DÜZELTME: 12x → 2.5x)
+    - 1.5 üstüyken altı tahmin = 1.5x ceza (D��ZELTME: 6x → 1.5x)
+    - Kritik bölge (1.4-1.6) = 3.0x ceza (DÜZELTME: 10x → 3.0x)
     
     Args:
         y_true: Gerçek değerler
@@ -33,23 +33,23 @@ def ultra_threshold_killer_loss(y_true, y_pred):
     """
     mae = K.abs(y_true - y_pred)
     
-    # 1.5 altıyken üstü tahmin = 12x ceza (PARA KAYBI - en kritik)
+    # 1.5 altıyken üstü tahmin = 2.5x ceza (DÜZELTME: Lazy learning'i önle)
     false_positive = K.cast(
         tf.logical_and(y_true < 1.5, y_pred >= 1.5),
         'float32'
-    ) * 12.0
+    ) * 2.5
     
-    # 1.5 üstüyken altı tahmin = 6x ceza (fırsat kaçırma)
+    # 1.5 üstüyken altı tahmin = 1.5x ceza (DÜZELTME: Dengeli)
     false_negative = K.cast(
         tf.logical_and(y_true >= 1.5, y_pred < 1.5),
         'float32'
-    ) * 6.0
+    ) * 1.5
     
-    # Kritik bölge (1.4-1.6) = 10x ceza (hassas bölge)
+    # Kritik bölge (1.4-1.6) = 3.0x ceza (DÜZELTME: Hassas bölge)
     critical_zone = K.cast(
         tf.logical_and(y_true >= 1.4, y_true <= 1.6),
         'float32'
-    ) * 10.0
+    ) * 3.0
     
     # Maksimum cezayı uygula
     weight = K.maximum(K.maximum(false_positive, false_negative), critical_zone)
@@ -58,13 +58,13 @@ def ultra_threshold_killer_loss(y_true, y_pred):
     return K.mean(mae * weight)
 
 
-def ultra_focal_loss(gamma=3.0, alpha=0.85):
+def ultra_focal_loss(gamma=2.0, alpha=0.75):
     """
-    ULTRA AGGRESSIVE Focal Loss - gamma=3.0
+    BALANCED Focal Loss - gamma=2.0 (DÜZELTME)
     
     Args:
-        gamma: Focal loss parametresi (3.0 - çok agresif)
-        alpha: Class balancing parametresi (0.85 - baskı)
+        gamma: Focal loss parametresi (2.0 - dengeli)
+        alpha: Class balancing parametresi (0.75 - dengeli)
         
     Returns:
         Ultra focal loss fonksiyonu
