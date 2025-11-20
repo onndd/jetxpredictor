@@ -65,6 +65,30 @@ from tqdm.auto import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
+# =============================================================================
+# GPU OPTIMIZER ENTEGRASYONU
+# =============================================================================
+try:
+    # GPU optimizer'ı import et
+    from utils.gpu_optimizer import setup_colab_gpu_optimization, get_gpu_optimizer
+    
+    print("\n🚀 GPU OPTİMİZASYONU BAŞLATILIYOR...")
+    gpu_results = setup_colab_gpu_optimization()
+    
+    # GPU optimizer instance
+    gpu_optimizer = get_gpu_optimizer()
+    
+    # GPU monitoring
+    print("📊 GPU performansı izleniyor...")
+    gpu_optimizer.monitor_gpu_usage(duration_seconds=3)
+    
+except ImportError as e:
+    print(f"⚠️ GPU optimizer import edilemedi: {e}")
+    gpu_optimizer = None
+except Exception as e:
+    print(f"⚠️ GPU optimizasyonu başarısız: {e}")
+    gpu_optimizer = None
+
 # GPU konfigürasyonu
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
@@ -82,6 +106,14 @@ if gpus:
         print(f"   - Memory growth: Aktif")
         print(f"   - Mixed precision: Aktif (float16)")
         print(f"   - GPU'lar: {[gpu.name for gpu in gpus]}")
+        
+        # GPU optimizer entegrasyonu
+        if gpu_optimizer:
+            try:
+                gpu_optimizer.optimize_tensorflow()
+            except Exception as e:
+                print(f"⚠️ TensorFlow GPU optimizasyonu başarısız: {e}")
+        
     except RuntimeError as e:
         print(f"⚠️ GPU konfigürasyon hatası: {e}")
         print(f"✅ TensorFlow: {tf.__version__}")
@@ -89,6 +121,68 @@ if gpus:
 else:
     print(f"✅ TensorFlow: {tf.__version__}")
     print(f"⚠️ GPU: Bulunamadı - CPU modunda çalışacak")
+    # CPU fallback için gpu optimizer'ı hala çağırabiliriz
+    if gpu_optimizer:
+        print("ℹ️ GPU optimizer CPU fallback mekanizmalarını çalıştırıyor...")
+# =============================================================================
+# GPU OPTIMIZER ENTEGRASYONU
+# =============================================================================
+try:
+    # GPU optimizer'ı import et
+    from utils.gpu_optimizer import setup_colab_gpu_optimization, get_gpu_optimizer
+    
+    print("\n🚀 GPU OPTİMİZASYONU BAŞLATILIYOR...")
+    gpu_results = setup_colab_gpu_optimization()
+    
+    # GPU optimizer instance
+    gpu_optimizer = get_gpu_optimizer()
+    
+    # GPU monitoring
+    print("📊 GPU performansı izleniyor...")
+    gpu_optimizer.monitor_gpu_usage(duration_seconds=3)
+    
+except ImportError as e:
+    print(f"⚠️ GPU optimizer import edilemedi: {e}")
+    gpu_optimizer = None
+except Exception as e:
+    print(f"⚠️ GPU optimizasyonu başarısız: {e}")
+    gpu_optimizer = None
+
+# GPU konfigürasyonu
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        # Memory growth ayarla - GPU belleğini dinamik kullan
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        
+        # Mixed precision training - GPU performansını artırır
+        from tensorflow.keras import mixed_precision
+        mixed_precision.set_global_policy('mixed_float16')
+        
+        print(f"✅ TensorFlow: {tf.__version__}")
+        print(f"✅ GPU: {len(gpus)} GPU bulundu ve yapılandırıldı")
+        print(f"   - Memory growth: Aktif")
+        print(f"   - Mixed precision: Aktif (float16)")
+        print(f"   - GPU'lar: {[gpu.name for gpu in gpus]}")
+        
+        # GPU optimizer entegrasyonu
+        if gpu_optimizer:
+            try:
+                gpu_optimizer.optimize_tensorflow()
+            except Exception as e:
+                print(f"⚠️ TensorFlow GPU optimizasyonu başarısız: {e}")
+        
+    except RuntimeError as e:
+        print(f"⚠️ GPU konfigürasyon hatası: {e}")
+        print(f"✅ TensorFlow: {tf.__version__}")
+        print(f"✅ GPU: Mevcut ama CPU modunda çalışacak")
+else:
+    print(f"✅ TensorFlow: {tf.__version__}")
+    print(f"⚠️ GPU: Bulunamadı - CPU modunda çalışacak")
+    # CPU fallback için gpu optimizer'ı hala çağırabiliriz
+    if gpu_optimizer:
+        print("ℹ️ GPU optimizer CPU fallback mekanizmalarını çalıştırıyor...")
 
 # Proje yükle ve kök dizini tespit et
 PROJECT_ROOT = None
