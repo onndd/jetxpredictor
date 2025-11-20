@@ -161,7 +161,8 @@ class AdvancedBankrollManager:
     def calculate_bet_size(
         self,
         confidence: float,
-        predicted_value: Optional[float] = None
+        predicted_value: Optional[float] = None,
+        volatility_risk: float = 0.0
     ) -> float:
         """
         Güven ve tahmine göre optimal bahis miktarını hesapla
@@ -169,6 +170,7 @@ class AdvancedBankrollManager:
         Args:
             confidence: Model güven skoru (0-1 arası)
             predicted_value: Tahmin edilen değer (None ise self.win_multiplier kullanılır)
+            volatility_risk: Volatilite risk skoru (0-1 arası, default: 0.0)
             
         Returns:
             Optimal bahis miktarı (TL)
@@ -194,6 +196,16 @@ class AdvancedBankrollManager:
         # Bankroll yetersizse 0 döndür
         if bet_size > self.current_bankroll:
             return 0.0
+        
+        # 🛡️ VOLATİLİTE BAZLI POZİSYON KÜÇÜLTME - GÜVENLİK KATMANI
+        # Kelly Criterion hesaplandıktan SONRA volatilite riskine göre pozisyon küçült
+        if volatility_risk > 0.7:
+            # YÜKSEK RİSK: Bahis miktarını %80 azalt (%20'sini al)
+            bet_size = bet_size * 0.20
+        elif volatility_risk > 0.5:
+            # ORTA RİSK: Bahis miktarını %50 azalt (%50'sini al)
+            bet_size = bet_size * 0.50
+        # Diğer durumlarda hesaplanan miktar korunur
         
         return bet_size
     

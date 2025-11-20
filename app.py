@@ -737,13 +737,88 @@ with main_col1:
         with st.expander("📊 Son Tahmin Detayları", expanded=False):
             pred = st.session_state.last_prediction
             if 'error' not in pred:
-                st.json({
-                    'Tahmin': f"{pred['predicted_value']:.2f}x",
-                    'Güven': f"{pred['confidence']:.0%}",
-                    '1.5x Üstü': 'Evet' if pred['above_threshold'] else 'Hayır',
-                    'Kategori': pred['category'],
-                    'Mod': pred['mode'].upper()
-                })
+                # Volatilite riskini hesapla ve göster
+                manipulation_score = 0.0
+                volatility_risk_level = "Düşük"
+                
+                try:
+                    from utils.psychological_analyzer import PsychologicalAnalyzer
+                    analyzer = PsychologicalAnalyzer(threshold=1.5)
+                    history = st.session_state.db_manager.get_recent_results(100)
+                    
+                    if len(history) >= 20:
+                        psych_features = analyzer.analyze_psychological_patterns(history)
+                        manipulation_score = psych_features.get('manipulation_score', 0.0)
+                        
+                        if manipulation_score > 0.7:
+                            volatility_risk_level = "Yüksek"
+                        elif manipulation_score > 0.5:
+                            volatility_risk_level = "Orta"
+                        else:
+                            volatility_risk_level = "Düşük"
+                except Exception as e:
+                    logger.error(f"Volatilite riski hesaplama hatası: {e}")
+                    manipulation_score = 0.0
+                    volatility_risk_level = "Hesaplanamadı"
+                
+                # Tahmin detaylarını göster
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.json({
+                        'Tahmin': f"{pred['predicted_value']:.2f}x",
+                        'Güven': f"{pred['confidence']:.0%}",
+                        '1.5x Üstü': 'Evet' if pred['above_threshold'] else 'Hayır',
+                        'Kategori': pred['category'],
+                        'Mod': pred['mode'].upper()
+                    })
+                
+                with col2:
+                    # Volatilite riski bilgisi
+                    st.subheader("🛡️ Volatilite Riski")
+                    risk_color = "🔴" if manipulation_score > 0.7 else "🟡" if manipulation_score > 0.5 else "🟢"
+                    st.metric(
+                        "Risk Seviyesi", 
+                        f"{volatility_risk_level}",
+                        delta=f"{manipulation_score*100:.0f}%",
+                        delta_color="inverse" if manipulation_score > 0.5 else "normal"
+                    )
+                    
+                    # Volatilite riskine göre bahis önerisi
+                    if manipulation_score > 0.7:
+                        st.warning("⚠️ Yüksek volatilite riski! Bahis miktarı %80 küçültüldü.")
+                    elif manipulation_score > 0.5:
+                        st.info("⚠️ Orta volatilite riski! Bahis miktarı %50 küçültüldü.")
+                    else:
+                        st.success("✅ Düşük risk! Normal bahis miktarı uygulanıyor.")
+                        
+                    # Advanced Bankroll Manager ile örnek bahis hesaplama
+                    try:
+                        from utils.advanced_bankroll import AdvancedBankrollManager
+                        bankroll_manager = AdvancedBankrollManager(
+                            initial_bankroll=1000.0,
+                            risk_tolerance=mode
+                        )
+                        
+                        original_bet = bankroll_manager.calculate_bet_size(
+                            confidence=pred['confidence'],
+                            predicted_value=pred['predicted_value']
+                        )
+                        
+                        adjusted_bet = bankroll_manager.calculate_bet_size(
+                            confidence=pred['confidence'],
+                            predicted_value=pred['predicted_value'],
+                            volatility_risk=manipulation_score
+                        )
+                        
+                        if original_bet > 0 and adjusted_bet > 0:
+                            reduction = ((original_bet - adjusted_bet) / original_bet) * 100
+                            st.write(f"**Örnek Bahis:** {adjusted_bet:.2f} TL (Orijinal: {original_bet:.2f} TL)")
+                            if reduction > 0:
+                                st.write(f"**Küçültme:** %{reduction:.0f}")
+                    except Exception as e:
+                        logger.error(f"Bahis hesaplama hatası: {e}")
+                        st.write("Bahis hesaplama için bankroll manager gerekli.")
 
 with main_col2:
     st.subheader("📈 Son Değerler Grafiği")
