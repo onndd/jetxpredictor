@@ -2,6 +2,30 @@
 
 ## Mevcut Çalışma Odağı
 
+### 🎯 KRİTİK GÜNCELLEME: "Keskin Nişancı (Sniper)" Stratejisi Uygulandı ✅
+
+**20 Kasım 2025** tarihinde kullanıcı analizi sonrası stratejik değişiklik yapıldı:
+
+#### Strateji Değişikliği Nedenleri:
+- **%50 Güven Eşik**: ROI -%4.10 (negatif - çok işlem, para kaybı)
+- **%65-70 Güven Eşik**: ROI +%1.05, Win Rate %78 (pozitif - az ama doğru işlem)
+
+#### "Agresif" → "Keskin Nişancı" Geçişi:
+1. **Config Dosyası Güncellendi**:
+   - aggressive: 0.60 → **0.70** (+0.10)
+   - normal: 0.70 → **0.80** (+0.10)  
+   - rolling: 0.90 → **0.90** (aynı - zaten yüksek)
+
+2. **Training Script'leri Güncellendi**:
+   - DetailedMetricsCallback: 0.65 → **0.70**
+   - WeightedModelCheckpoint: 0.65 → **0.70**
+   - utils/predictor.py: normal mod 0.65 → **0.70**
+
+#### Hedeflenen Etki:
+- Model sadece %70+ güven durumunda "Oyna" demesi
+- False Positive'leri minimize ederek kasayı koruma
+- Daha az ama daha doğru işlem ("Az ama Öz")
+
 ### KRİTİK DURUM: Tüm Eğitim Sistemi Kurtarıldı ✅
 
 Kullanıcının detaylı hata raporu sonrası yapılan acil müdahale ile 3 kritik sorun başarıyla çözüldü:

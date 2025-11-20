@@ -28,11 +28,11 @@ prediction:
   critical_threshold: 1.5
   high_multiplier_threshold: 3.0
   
-  # Güven eşikleri (mod bazında)
+  # Güven eşikleri (mod bazında) - KESKİN NİŞANCI STRATEJİSİ
   confidence_thresholds:
-    aggressive: 0.60
-    normal: 0.70
-    rolling: 0.90
+    aggressive: 0.70  # +0.10 (%60 → %70) - Daha seçici
+    normal: 0.80     # +0.10 (%70 → %80) - Çok daha seçici  
+    rolling: 0.90    # Aynı (%90 zaten yüksek) - En seçici
   
   # Varsayılan mod
   default_mode: "normal"

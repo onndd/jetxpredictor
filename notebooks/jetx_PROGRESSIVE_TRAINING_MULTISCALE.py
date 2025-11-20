@@ -494,9 +494,9 @@ class DetailedMetricsCallback(callbacks.Callback):
         preds = self.model.predict(self.X_val, verbose=0)
         threshold_preds = preds[2].flatten()
         
-        # Confusion Matrix hesapla (KONSERVATIF THRESHOLD)
+        # Confusion Matrix hesapla (KESKİN NİŞANCI THRESHOLD)
         y_true = (self.y_val >= 1.5).astype(int)
-        y_pred = (threshold_preds >= 0.65).astype(int)
+        y_pred = (threshold_preds >= 0.70).astype(int)
         
         TN = np.sum((y_true == 0) & (y_pred == 0))
         FP = np.sum((y_true == 0) & (y_pred == 1))
@@ -587,7 +587,7 @@ class WeightedModelCheckpoint(callbacks.Callback):
         wins = 0
         
         for pred, actual in zip(predictions, actuals):
-            if pred >= 0.65:  # Model 1.5 üstü dedi (KONSERVATIF) ⚠️
+            if pred >= 0.70:  # Model 1.5 üstü dedi (KESKİN NİŞANCI) 🎯
                 total_bets += 1
                 wallet -= 10  # Bahis yapıldı
                 if actual >= 1.5:

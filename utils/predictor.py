@@ -402,7 +402,7 @@ class JetXPredictor:
         if confidence >= threshold and above_threshold:
             if mode == 'rolling' and confidence >= 0.80:
                 return 'OYNA'
-            elif mode == 'normal' and confidence >= 0.65:
+            elif mode == 'normal' and confidence >= 0.70:  # KESKİN NİŞANCI GÜNCELLEMESİ
                 return 'OYNA'
             elif mode == 'aggressive' and confidence >= 0.50:
                 return 'RİSKLİ'
