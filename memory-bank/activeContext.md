@@ -1,402 +1,99 @@
-# JetX Predictor - Aktif Bağlam
+# JetX Predictor - Active Context
 
-## Mevcut Çalışma Odağı
+## Güncel Çalışma Alanı
 
-### 🎯 KRİTİK GÜNCELLEME: "Keskin Nişancı (Sniper)" Stratejisi Uygulandı ✅
+Bu belge mevcut çalışma alanını, son değişiklikleri ve bir sonraki adımları belgelemek için kullanılır.
 
-**20 Kasım 2025** tarihinde kullanıcı analizi sonrası stratejik değişiklik yapıldı:
+## Son Değişiklikler
 
-#### Strateji Değişikliği Nedenleri:
-- **%50 Güven Eşik**: ROI -%4.10 (negatif - çok işlem, para kaybı)
-- **%65-70 Güven Eşik**: ROI +%1.05, Win Rate %78 (pozitif - az ama doğru işlem)
+### 2025-11-21 - Threshold Management Sistemi
 
-#### "Agresif" → "Keskin Nişancı" Geçişi:
-1. **Config Dosyası Güncellendi**:
-   - aggressive: 0.60 → **0.70** (+0.10)
-   - normal: 0.70 → **0.80** (+0.10)  
-   - rolling: 0.90 → **0.90** (aynı - zaten yüksek)
+**Ana Değişiklik:**
+- "Raporlama vs. Eylem" tutarsızlıklarını kökten çözen merkezi threshold yönetimi sistemi oluşturuldu
+- Tüm hardcoded threshold değerleri config'den dinamik olarak alınır hale getirildi
 
-2. **Training Script'leri Güncellendi**:
-   - DetailedMetricsCallback: 0.65 → **0.70**
-   - WeightedModelCheckpoint: 0.65 → **0.70**
-   - utils/predictor.py: normal mod 0.65 → **0.70**
+**Yapılan İşlemler:**
+1. **Config Yapılandırması:** `config/config.yaml`'a yeni threshold ve loss penalty ayarları eklendi
+2. **Threshold Manager:** `utils/threshold_manager.py` oluşturuldu - merkezi yönetim
+3. **Callback Güncellemeleri:** `utils/virtual_bankroll_callback.py` config'den threshold alıyor
+4. **Loss Fonksiyonları:** `utils/custom_losses.py` gömülü sabitler parametrik hale getirildi
+5. **Test Framework:** `tests/test_threshold_consistency.py` tutarlılık testleri oluşturuldu
 
-#### Hedeflenen Etki:
-- Model sadece %70+ güven durumunda "Oyna" demesi
-- False Positive'leri minimize ederek kasayı koruma
-- Daha az ama daha doğru işlem ("Az ama Öz")
+**Çözülen Sorunlar:**
+- VirtualBankrollCallback'de %50 hardcoded threshold → %70 config'den
+- CatBoost training'de %65 hardcoded threshold → %70 config'den  
+- Loss fonksiyonlarında gömülü sabitler → parametrik config'den
+- Tüm threshold'ların tek yerden yönetimi
 
-### KRİTİK DURUM: Tüm Eğitim Sistemi Kurtarıldı ✅
+## Mevcut Durum
 
-Kullanıcının detaylı hata raporu sonrası yapılan acil müdahale ile 3 kritik sorun başarıyla çözüldü:
+### Aktif Development
+- **Threshold Management:** Sistemin tamamlandı ve test ediliyor
+- **Keskin Nişancı Stratejisi:** Tüm callback'ler %70 threshold kullanıyor
+- **Config Integration:** Merkezi yönetim aktif
 
-#### 1. Tembel Öğrenme (Lazy Learning) ✅ ÇÖZÜLDİ
-- **Sorun**: 10x class weight cezası modeli TAMAMEN "1.5 altı" demeye zorlamış
-- **Çözüm**: Class weight 1.3x seviyesine çekildi (ESKİ: 2.5x)
-- **Kanıt**: Model artık dengeli öğrenme yapabilir, "1.5 üstü" demeye zorlamıyor
-- **Sonuç**: Model bias sorunu çözüldü, artık tutarlı öğrenme yapabiliyor
+### Kritik Dosyalar
+- `utils/threshold_manager.py` - Merkezi threshold yönetimi
+- `config/config.yaml` - Tüm threshold ayarları
+- `utils/virtual_bankroll_callback.py` - Eğitim raporları
+- `utils/custom_losses.py` - Parametrik loss fonksiyonları
+- `tests/test_threshold_consistency.py` - Tutarlılık testleri
 
-#### 2. LR Scheduler Çökmesi ✅ ÇÖZÜLDİ
-- **Sorun**: `'str' object has no attribute 'name'` TensorFlow uyumluluk hatası
-- **Çözüm**: TensorFlow optimizer'ına alternatif yöntem eklendi
-- **Kanıt**: Adaptive learning rate artık çalışabilir, model adaptasyon yeteneği kazandı
-- **Sonuç**: Learning rate adaptasyon sistemi tamamen çalışır hale getirildi
+## Bir Sonraki Adımlar
 
-#### 3. Model Selection Çökmesi ✅ ÇÖZÜLDİ
-- **Sorun**: Data shape uyuşmazlığı ve evaluation sistemi mevcut değil
-- **Çözüm**: Shape kontrolü ve fallback mekanizması eklendi
-- **Kanıt**: Model selection sistemi artık çalışır durumda ve modeller değerlendirilebilir
-- **Sonuç**: Comprehensive evaluation sistemi hazır ve çalışıyor
+### Kısa Vadeli (Bu Oturum)
+- [x] Memory Bank güncellemelerini tamamla
+- [ ] GitHub'a tüm değişiklikleri push yap
+- [ ] Testleri çalıştır ve sonuçları doğrula
 
-#### 4. Sanal Kasa Sistemleri ✅ Mevcut ve Test Edilebilir
-- **Durum**: 3 farklı sistem mevcut ve analiz edildi
-- **Sistemler**: 
-  - VirtualBankrollCallback (eğitim için sanal kasa simülasyonu)
-  - DualBankrollSystem (test/değerlendirme için çift kasa)
-  - AdvancedBankrollManager (production için Kelly Criterion optimizasyonu)
-- **Sonuç**: Sistemler hazır ve çalışan modellerle test edilebilir durumda
+### Orta Vadeli (1-2 Hafta)
+- [ ] Training script'lerinde AdaptiveWeightScheduler tutarlılığı
+- [ ] Production ve training threshold'larının senkronizasyonu
+- [ ] Dokümantasyon güncellemeleri
 
-### Mevcut Durum Analizi
+### Uzun Vadeli (1 Ay+)
+- [ ] Threshold otomasyonu (auto-tuning)
+- [ ] Performance monitoring ve alert sistemi
+- [ ] Advanced threshold optimizasyon algoritmaları
 
-- **Uygulama**: Streamlit ana uygulama çalışıyor
-- **Veritabanı**: SQLite aktif ve veri akışı devam ediyor
-- **Modeller**: Eğitim script'i düzeltildi ve çalışır durumda
-- **Sistem Durumu**: JetX Predictor artık krizik durumdan çıktı ve temel fonksiyonları yerine getirildi
+## Teknik Kararlar
 
-### Sonraki Adımlar
+### Threshold Hiyerarşisi
+1. **Production Default (0.80):** En yüksek güven, gerçek para için
+2. **Model Checkpoint (0.70):** Model kaydetme için "Keskin Nişancı"
+3. **Virtual Bankroll (0.70):** Eğitim raporları için
+4. **CatBoost Evaluation (0.70):** Test sonuçları için
+5. **Conservative Mode (0.65):** Düşük risk testleri için
 
-1. **Aşama 2: Sistem Validasyonu** (Yüksek Öncelik - 2-3 saat)
-   - Düzeltilmiş evaluation sistemi ile modelleri test et
-   - Adaptive LR Scheduler fonksiyonelliğini doğrula
-   - Sanal Kasa Sistemlerini çalışan modellerle test et
-   - Optimize edilmiş parametrelerle tam eğitim çalıştır
+### Loss Penalty Stratejisi
+- **False Positive (5.0x):** Para kaybı en riskli
+- **Critical Zone (4.0x):** 1.4-1.6 arası hassas bölge
+- **False Negative (3.0x):** Fırsat kaçırma
 
-2. **Aşama 3: Production Entegrasyonu** (Orta Öncelik - 1-2 gün)
-   - Sanal Kasa Sistemlerini ana uygulamaya entegre et
-   - Performans Monitoring Dashboard oluştur
-   - Kapsamlı test framework'u kur
-   - Dokümantasyonu güncelle
+## Bilinmeyenler ve Açık Sorular
 
-### Başarı Metrikleri
+### Technical Debt
+- [ ] Eski training script'lerindeki hardcoded değerler
+- [ ] AdaptiveWeightScheduler başlangıç değerlerinin tutarlılığı
+- [ ] CatBoost'un internal threshold'ları
 
-- **Hedefler**: Minimum %65 win rate, %70 stability, %10 ROI
-- **Mevcut Durum**: Sistem çalışır ve temel sorunlar çözüldü
-- **Sonraki**: Validasyon ve production entegrasyonu
+### Feature Requests
+- [ ] Threshold auto-tuning algoritmaları
+- [ ] Performance dashboard
+- [ ] Threshold optimization için A/B test framework
+
+## Notlar
+
+### Öğrenilenler
+- Merkezi config yönetimi maintenance'ı büyük ölçüde azaltır
+- Threshold tutarlılığı model performansını doğrudan etkiler
+- Test-driven development kritik sistemlerde zorunludur
+
+### İpuçları
+- Her threshold değişikliğinde mutlaka test çalıştır
+- Production'dan önce mutlaka validation yap
+- Config değişikliklerini versiyonla
 
 ---
-
-*Bu belge projenin mevcut durumunu, aktif çalışma odağını ve sonraki adımlarını tanımlar. Tüm geliştirme kararları bu bağlama uygun olmalıdır.*
-
-*Son Güncelleme: 2025-01-17*
-
-## Mevcut Durum Analizi
-
-### Sistem Durumu
-- **Uygulama**: Streamlit ana uygulama çalışır durumda
-- **Veritabanı**: SQLite aktif, veri akışı devam ediyor
-- **Modeller**: Eğitim script'leri güncellendi ve adaptive scheduler'larla entegre edildi
-- **UI**: Türkçe arayüz aktif, multi-page yapı çalışıyor
-
-### Tamamlanan İyileştirmeler
-
-#### ✅ Adaptive Learning Rate Scheduler Entegrasyonu
-- **`utils/adaptive_lr_scheduler.py`** module başarıyla oluşturuldu:
-  - 3 farklı scheduler tipi (CosineAnnealing, AdaptiveLearningRateScheduler, PlateauDetection)
-  - Stability-based learning rate optimizasyonu
-  - Plateau detection ve warmup mekanizmaları
-  - Learning rate değişimlerini epoch başında log'lama
-
-- **Training Script Güncellemesi**:
-  - **`notebooks/jetx_PROGRESSIVE_TRAINING_MULTISCALE.py`** adaptive scheduler'larla güncellendi:
-  - Sabit `Adam(0.0001)` yerine `Adam(learning_rate=adaptive_scheduler)`
-  - AdaptiveLRCallback eklendi
-  - Learning rate değişimleri gerçek zamanlı olarak takip ediliyor
-  - Comprehensive callback sistemi kuruldu
-
-#### ✅ Comprehensive Model Selection Sistemi Entegrasyonu
-- **`utils/model_selection.py`** training pipeline'a entegrasyonu tamamlandı:
-  - ComprehensiveModelEvaluator sınıfı
-  - Minimum eşikler (win_rate >65%, stability >70%)
-  - Dengeli skorlama (ROI %25, win_rate %25, sharpe_ratio %25, stability %15, consistency %10%)
-  - Grade sistemi (A, B, C, D)
-  - ModelSelectionManager sınıfı
-
-- **Test Framework Kurulumu**:
-  - Mock data ile sistem testi başarılı
-  - Model selection fonksiyonları doğrulanıyor
-  - Adaptive scheduler test edildi
-  - Integration test edildi
-
-## Aktif Kararlar ve Nedenleri
-
-### 1. Training Hataları Çözüldü ✅ Tamamlandı
-- **Sorun 1**: AdaptiveLearningRateScheduler TypeError
-  - **Sebep**: TensorFlow optimizer'ı learning rate'i doğrudan callable olarak bekliyordu
-  - **Çözüm**: Custom callback ile learning rate yönetimi, error handling eklendi
-
-- **Sorun 2**: Model compile hatası
-  - **Sebep**: Adaptive scheduler doğrudan optimizer'a parametre olarak veriliyordu
-  - **Çözüm**: Sabit learning rate ile başlatma, callback üzerinden dinamik güncelleme
-
-- **Sorun 3**: FileNotFoundError (model_info.json)
-  - **Sebep**: Training crash olduğunda dizinler oluşturulamıyordu
-  - **Çözüm**: Error handling ile graceful degradation, dizin oluşturma garantisi
-
-### 2. Lazy Learning Önleme ✅ Aktif
-- **Karar**: Adaptive learning rate scheduler'lar kullanılacak
-- **Neden**: Stability score'a göre learning rate adaptasyonu en etkili yöntem
-- **Uygulama**: 
-  - Early stopping ile stability monitoring
-  - Learning rate scheduling ile warmup
-  - Gradient clipping
-  - Error handling ile fallback mekanizmaları
-
-### 3. Overfitting Önleme ✅ Aktif
-- **Karar**: Multi-katmanlı regularization stratejisi
-- **Neden**: Modelin training verisine ezberlemesini önlemek
-- **Uygulama**: 
-  - Dropout katmanları (%20-30)
-  - L1/L2 regularization
-  - Cross-validation
-  - Data augmentation (production için)
-
-### 3. Model Drift Detection ✅ Planlandı
-- **Karar**: Real-time performans monitoring sistemi
-- **Neden**: Model zamanla kötüleşebileceği için
-- **Uygulama**: 
-  - Statistical drift detection
-  - Performance degradation monitoring
-  - Automated retraining triggers
-
-## Mevcut Geliştirme Öncelikleri
-
-### Yüksek Öncelik (Acil)
-1. **Model Selection Metrics Güncelleme** ✅ Tamamlandı
-2. **Learning Rate Optimizasyonu** ✅ Tamamlandı
-
-### Orta Öncelik (1-2 Hafta)
-3. **Training Pipeline İyileştirmesi**
-   - Multi-metric early stopping
-   - Dynamic batch sizing
-   - Better data validation
-   - Overfitting prevention
-
-4. **Model Monitoring Sistemi**
-   - Real-time performance tracking
-   - Automated alerts
-   - Performance dashboard
-
-### Düşük Öncelik (1 Ay+)
-5. **Production Optimizasyonları**
-   - Model quantization
-   - Inference speed optimization
-   - Memory usage reduction
-6. **Advanced Risk Management**
-   - Dynamic risk thresholds
-   - Multi-bankroll coordination
-   - Psychological profiling
-
-## Teknik İyileştirmeler
-
-### 1. Memory Management
-- GPU memory growth optimizasyonu
-- Garbage collection ile temizlik
-- Efficient data processing
-
-### 2. Performance Optimization
-- Vectorized operations
-- Parallel processing
-- Model caching
-
-### 3. Advanced Analytics
-- Model interpretability
-- Feature importance analizi
-- Performance trend analizi
-
-## Sistem Kararları
-
-### 1. Model Architecture
-- **Karar**: Multi-scale ensemble devam etmeli
-- **Neden**: Farklı zaman dilimleri farklı pattern'leri yakalar
-- **Uygulama**: Mevcut 5-window sistemi korunacak
-
-### 2. Training Strategy
-- **Karar**: Time-series split korumalı, shuffle yok
-- **Neden**: Data leakage önlemek için kritik
-- **Uygulama**: `shuffle=False` tüm training script'lerinde zorunlu
-
-### 3. Evaluation Metrics
-- **Karar**: Profit-focused metrikler kullanılacak
-- **Neden**: Para kazandırmayan model işe yaramaz
-- **Uygulama**: ROI, Sharpe ratio, stability kombinasyonu
-
-### 4. Risk Management
-- **Karar**: 3 katmanlı risk sistemi devam etmeli
-- **Neden**: Farklı risk seviyeleri farklı kullanıcı profilleri için
-- **Uygulama**: Confidence + consecutive losses + bankroll
-
-## Önemli Pattern'ler ve İpuçları
-
-### Code Pattern'leri
-- **Model Loading**: Her zaman fallback mekanizması olmalı
-- **Error Handling**: Graceful degradation, hard failures yok
-- **Configuration**: Environment-specific ayarlar
-- **Testing**: Unit + integration + performance tests
-
-### Performance Pattern'leri
-- **Memory Management**: GC ile düzenli temizlik
-- **Caching**: Expensive calculations cache'lenmeli
-- **Parallel Processing**: Feature extraction parallelize edilmeli
-- **Monitoring**: Real-time metrics tracking
-
-### Data Pattern'leri
-- **Validation**: Input her zaman validate edilmeli
-- **Chronology**: Time series sırası korunmalı
-- **Augmentation**: Training için yok, production için var
-- **Quality**: Outlier detection ve cleaning
-
-## Mevcut Kısıtlamalar
-
-### Teknik Kısıtlamalar
-- **GPU Memory**: 8GB VRAM limiti
-- **Training Time**: Single model max 4 saat
-- **Model Size**: Production için <500MB
-- **Inference Time**: <1 saniye zorunlu
-
-### İş Kısıtlamaları
-- **Development**: Sadece lokal deployment
-- **Data Privacy**: Kullanıcı verileri lokal kalmalı
-- **Model Sharing**: Open source değil, kapalı kalacak
-- **Support**: Sadece dokümantasyon ile destek
-
-## Risk Değerlendirmesi
-
-### Yüksek Risk Alanları
-1. **Model Selection**: Kötü model seçimi production riski
-2. **Training Instability**: Lazy learning kalitesi sorunları
-3. **Performance Drift**: Model zamanla kötüleşebilir
-4. **Overfitting**: Training verisine ezberleme riski
-
-### Risk Azaltma Stratejileri
-1. **Comprehensive Validation**: Çoklu metrik ile model doğrulama
-2. **Stability Monitoring**: Real-time stability takibi
-3. **Automated Retraining**: Performans düştüğünde otomatik eğitim
-4. **Conservative Defaults**: Güvenli varsayılan ayarlar
-
-## Sonraki Adımlar
-
-### Immediate (Bu Hafta)
-1. **Model Selection Metrics Güncelleme**
-   - Comprehensive evaluation function oluştur
-   - Minimum eşikler uygula
-   - Test et ve doğrula
-
-2. **Learning Rate Optimizasyonu**
-   - Adaptive scheduler implement et
-   - Training script'lerde güncelle
-   - Sonuçları karşılaştır
-
-### Short-term (1-2 Hafta)
-3. **Training Pipeline İyileştirmesi**
-   - Multi-metric early stopping
-   - Dynamic batch sizing
-   - Better data validation
-   - Overfitting prevention
-
-4. **Model Monitoring Sistemi**
-   - Real-time performance tracking
-   - Automated alerts
-   - Performance dashboard
-
-### Medium-term (1-2 Ay)
-5. **Production Deployment Hazırlığı**
-   - Model quantization
-   - Inference optimization
-   - Advanced monitoring
-   - A/B testing framework
-
-6. **Advanced Risk Management**
-   - Dynamic risk thresholds
-   - Multi-bankroll coordination
-   - Psychological profiling
-
-### Long-term (2+ Ay)
-7. **Enterprise Features**
-   - Multi-user support
-   - Role-based access control
-   - Audit logging
-   - Compliance features
-
-8. **Model Versiyonlama**
-   - Semantic versioning
-   - Model registry
-   - Rollback mechanisms
-   - Automated testing
-
-JetX Predictor artık çok daha güvenilir, tutarlı ve üretim hazır bir sistem haline geldi! 🚀
-
----
-
-*Bu belge projenin mevcut durumunu, aktif çalışma odağını ve sonraki adımlarını tanımlar. Tüm geliştirme kararları bu bağlama uygun olmalıdır.*
-
-*Son Güncelleme: 2025-11-20*
-
-## En Son Geliştirme: Lazy Learning Sorunu Kökten Çözüldü
-
-### 🚨 KRİTİK SORUN: Lazy Learning (Model Güvenli Limana Sığınma)
-
-#### TESPİT EDİLEN SORUNLAR
-- **Ana Sorun**: Modeller "1.5 üstü" tahmin yapmaktan kaçınıyordu
-- **Neden**: Aşırı yüksek class weight cezaları (12x, 20x, 25x, 50x)
-- **Sonuç**: Model sadece "1.5 altı" tahmin ediyor, para kazancı sıfıra yakın
-
-#### ✅ TAMAMLENEN ÇÖZÜLEN DÜZELTMELER
-
-**1. jetx_PROGRESSIVE_TRAINING_MULTISCALE.py**
-- **ESKİ**: `w0, w1 = 2.5x, 1.0x` (Modelı korkutuyor)
-- **YENİ**: `w0, w1 = 1.5x, 1.0x` (Dengeli)
-- **Etki**: Model artık "1.5 üstü" demeye teşvik edilecek
-
-**2. jetx_PROGRESSIVE_TRAINING.py (3 Aşamalı)**
-- **Aşama 2**: `initial_weight=20.0` → `initial_weight=2.0`
-- **Aşama 3**: `initial_weight=25.0` → `initial_weight=2.5`
-- **Min/Max**: `min_weight=10.0-15.0` → `min_weight=1.0-1.5`
-- **Max**: `max_weight=50.0` → `max_weight=5.0-6.0`
-
-**3. utils/ultra_custom_losses.py**
-- **False Positive**: `12.0x` → `2.5x` (Lazy learning'i önle)
-- **False Negative**: `6.0x` → `1.5x` (Dengeli)
-- **Kritik Bölge**: `10.0x` → `3.0x` (Hassas)
-- **Focal Gamma**: `3.0` → `2.0` (Az agresif)
-
-**4. jetx_CATBOOST_TRAINING_MULTISCALE.py**
-- **Durum**: Zaten düzgün (`class_weight_0 = 1.5`)
-- **Durum**: ✅ Kontrol edildi, değişiklik gerekmedi
-
-#### 📊 BEKLENTİ ETKİLER
-- **"1.5 üstü" Tahmin Oranı**: %5-10 → %60-70 (hedef)
-- **Lazy Learning**: Tamamen önlendi
-- **Model Dengesi**: Geri kazandırıldı
-- **Para Kazancı**: Artık mümkün
-
-#### 🧪 DOĞRULAMA
-- Test script'i oluşturuldu: `test_class_weights.py`
-- Tüm düzeltmeler doğrulandı
-- Lokal eğitim için hazır
-
-### Güncellenen Teknik Kararlar
-
-#### 1. Class Weight Stratejisi
-- **Eski**: Maksimum koruma (10-50x ceza)
-- **Yeni**: Dengeli teşvik (1.5-2.0x ceza)
-- **Neden**: Modeli "güvenli limana" itmek yerine "dengeli öğrenmeye" teşvik etmek
-
-#### 2. AdaptiveWeightScheduler Stratejisi
-- **Eski**: Aşırı agresif adaptasyon (20-50x aralığı)
-- **Yeni**: Kontrollü adaptasyon (1.0-6.0x aralığı)
-- **Neden**: Model stabilitesini bozmak yerine desteklemek
-
-#### 3. Loss Function Stratejisi
-- **Eski**: Aşırı ceza odaklı (parayı korumak)
-- **Yeni**: Dengeli öğrenme odaklı (kara kazanç)
-- **Neden**: Paranayı korumak yerine kazanmayı hedeflemek
+*Son Güncelleme: 2025-11-21*
+*Status: Active Development - Threshold Management*

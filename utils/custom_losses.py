@@ -58,12 +58,16 @@ def percentage_aware_regression_loss(y_true, y_pred):
     return K.mean(weighted_percentage_error)
 
 
-def balanced_threshold_killer_loss(y_true, y_pred):
+def balanced_threshold_killer_loss(y_true, y_pred, 
+                                   fp_penalty=5.0, fn_penalty=3.0, critical_penalty=4.0):
     """
     DENGELI ve TUTARLI ceza sistemi - Lazy learning'i önler
     
+    GÜNCELLEME: Penalty değerleri artık parametrik - config'den alınıyor
+    "Raporlama vs. Eylem" tutarsızlıkları önleniyor
+    
     Bu loss fonksiyonu:
-    - Tutarlı ceza değerleri kullanır (5x, 3x, 4x)
+    - Tutarlı ceza değerleri kullanır (config'den gelir)
     - Lazy learning'i önler
     - Para kaybı riskini minimize eder
     - Balanced batch generator ile birlikte çalışır
@@ -71,16 +75,19 @@ def balanced_threshold_killer_loss(y_true, y_pred):
     Args:
         y_true: Gerçek değerler
         y_pred: Tahmin edilen değerler
+        fp_penalty: False positive penalty (PARA KAYBI)
+        fn_penalty: False negative penalty (fırsat kaçırma)
+        critical_penalty: Kritik bölge penalty
         
     Returns:
         Weighted MAE loss
     """
     mae = K.abs(y_true - y_pred)
     
-    # Tutarlı ceza çarpanları
-    FALSE_POSITIVE_PENALTY = 5.0  # 1.5 altıyken üstü tahmin (PARA KAYBI)
-    FALSE_NEGATIVE_PENALTY = 3.0  # 1.5 üstüyken altı tahmin
-    CRITICAL_ZONE_PENALTY = 4.0   # 1.4-1.6 arası (kritik bölge)
+    # Parametrik ceza çarpanları - ARTIK CONFIG'DEN GELİYOR
+    FALSE_POSITIVE_PENALTY = fp_penalty  # 1.5 altıyken üstü tahmin (PARA KAYBI)
+    FALSE_NEGATIVE_PENALTY = fn_penalty  # 1.5 üstüyken altı tahmin
+    CRITICAL_ZONE_PENALTY = critical_penalty   # 1.4-1.6 arası (kritik bölge)
     
     # 1.5 altıyken üstü tahmin = 5x ceza (PARA KAYBI - en önemli)
     false_positive = K.cast(

@@ -1,12 +1,18 @@
 """
 Virtual Bankroll Callback - Her Epoch İçin Sanal Kasa Gösterimi
 Progressive NN ve CatBoost eğitimleri için
+
+GÜNCELLEME: Threshold değerleri artık config'den alınıyor
+"Raporlama vs. Eylem" tutarsızlıkları önleniyor
 """
 
 import numpy as np
 from sklearn.metrics import accuracy_score
 import tensorflow as tf
 from tensorflow.keras import callbacks
+
+# Threshold Manager import
+from .threshold_manager import get_threshold_manager
 
 
 class VirtualBankrollCallback(callbacks.Callback):
@@ -58,9 +64,22 @@ class VirtualBankrollCallback(callbacks.Callback):
         # Threshold output'u al (üçüncü output)
         p_thr = predictions[2].flatten() if len(predictions) > 2 else predictions[0].flatten()
         
-        # Binary predictions
-        p_thr_binary = (p_thr >= 0.5).astype(int)
+        # GÜNCELLEME: Threshold değerini config'den al
+        try:
+            threshold_manager = get_threshold_manager()
+            virtual_bankroll_threshold = threshold_manager.get_threshold('virtual_bankroll')
+        except Exception as e:
+            # Fallback: Config'den alınamazsa eski değeri kullan
+            print(f"⚠️ Threshold manager hatası: {e}, varsayılan %70 kullanılıyor")
+            virtual_bankroll_threshold = 0.70
+        
+        # Binary predictions - ARTIK CONFIG'DEN GELEN DEĞER KULLANILIYOR
+        p_thr_binary = (p_thr >= virtual_bankroll_threshold).astype(int)
         t_thr = (self.y_test >= self.threshold).astype(int)
+        
+        # Debug info
+        if epoch == 0:  # Sadece ilk epoch'ta göster
+            print(f"🎯 VirtualBankroll Threshold: {virtual_bankroll_threshold:.2f} (Config'den alındı)")
         
         # ========================================================================
         # KASA 1: 1.5x EŞİK SİSTEMİ

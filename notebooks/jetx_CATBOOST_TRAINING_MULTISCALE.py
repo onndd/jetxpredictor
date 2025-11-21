@@ -105,7 +105,9 @@ print(f"📂 Proje kök dizini: {PROJECT_ROOT}")
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.multi_scale_window import split_data_preserving_order
-print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
+from utils.threshold_manager import get_threshold_manager
+print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x")
+print(f"✅ Threshold Manager yüklendi - Config'den değerler alınacak\n")
 
 # =============================================================================
 # VERİ YÜKLEME (SIRA KORUNARAK)

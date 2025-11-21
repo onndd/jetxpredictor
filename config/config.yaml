@@ -80,3 +80,59 @@ cache:
   enabled: true
   ttl_seconds: 300  # 5 dakika
   max_size: 100  # Maksimum cache item sayısı
+
+# =============================================================================
+# THRESHOLD MANAGEMENT - Merkezi Threshold Yönetimi
+# =============================================================================
+# Tüm training ve evaluation threshold'larını tek yerden yönetir
+# "Raporlama vs. Eylem" tutarsızlıklarını önlemek için tasarlandı
+
+training_thresholds:
+  # Callback threshold'ları - "Keskin Nişancı" stratejisi
+  detailed_metrics: 0.70      # DetailedMetricsCallback ROI hesaplaması
+  virtual_bankroll: 0.70      # VirtualBankrollCallback sanal kasa
+  model_checkpoint: 0.70      # WeightedModelCheckpoint model seçimi
+  
+  # Evaluation threshold'ları
+  catboost_evaluation: 0.70   # CatBoost training sonrası değerlendirme
+  conservative_mode: 0.65     # Konservatif test modu
+  production_default: 0.80    # Production varsayılan (normal mod)
+  
+  # Special threshold'lar
+  binary_conversion: 0.50     # Binary tahminlere dönüştürme (eski sistem uyumluluğu)
+  high_value_prediction: 2.0  # Yüksek değer tahmini için eşik
+
+# =============================================================================
+# LOSS PENALTIES - Merkezi Loss Ceza Yönetimi
+# =============================================================================
+# custom_losses.py içindeki gömülü sabitleri parametrik yapar
+
+loss_penalties:
+  # balanced_threshold_killer_loss için
+  false_positive_penalty: 5.0   # 1.5 altıyken üstü tahmin (PARA KAYBI)
+  false_negative_penalty: 3.0   # 1.5 üstüyken altı tahmin (fırsat kaçırma)
+  critical_zone_penalty: 4.0    # 1.4-1.6 arası kritik bölge
+  
+  # Diğer loss fonksiyonları için
+  focal_gamma: 2.0              # Focal loss gamma parametresi
+  focal_alpha: 0.7              # Focal loss alpha parametresi
+  
+# =============================================================================
+# ADAPTIVE WEIGHT SCHEDULER - Merkezi Ağırlık Yönetimi
+# =============================================================================
+# AdaptiveWeightScheduler başlangıç ve sınır değerleri
+
+adaptive_weights:
+  # Başlangıç değerleri (ilk epoch için)
+  initial_false_positive_weight: 2.5  # Başlangıç FP cezası
+  initial_false_negative_weight: 1.0  # Başlangıç FN cezası
+  
+  # Sınır değerleri (maksimum/minimum)
+  min_weight: 1.0                    # Minimum ağırlık
+  max_weight: 6.0                    # Maximum ağırlık
+  
+  # Adaptasyon parametreleri
+  patience_increase: 5               # Kaç epoch'de bir artır
+  patience_decrease: 3               # Kaç epoch'de bir azalt
+  increase_factor: 1.2               # Artırma çarpanı
+  decrease_factor: 0.8               # Azaltma çarpanı
