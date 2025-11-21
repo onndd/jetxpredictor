@@ -1131,9 +1131,9 @@ SEQUENCE_LENGTHS = {
     'extra_long': 1000  # Yeni: 1000 veri penceresi
 }
 
-# Risk yönetimi eşikleri (konservatif yaklaşım - threshold yükseltildi)
+# Risk yönetimi eşikleri (config.yaml ile uyumlu)
 CONFIDENCE_THRESHOLDS = {
-    'aggressive': 0.60,  # %60 güven eşiği
-    'normal': 0.70,      # %70 güven eşiği
+    'aggressive': 0.70,  # %70 güven eşiği
+    'normal': 0.80,      # %80 güven eşiği
     'rolling': 0.90      # %90 güven eşiği (çok konservatif)
 }
