@@ -26,7 +26,7 @@ features:
 prediction:
   # Kritik eşik
   critical_threshold: 1.5
-  high_multiplier_threshold: 3.0
+  high_multiplier_threshold: 5.0
   
   # Güven eşikleri (mod bazında) - KESKİN NİŞANCI STRATEJİSİ
   confidence_thresholds:
