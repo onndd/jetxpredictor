@@ -473,13 +473,13 @@ class DetailedMetricsCallback(callbacks.Callback):
         self.y_val = y_val
     
     def simulate_bankroll(self, predictions, actuals):
-        """1.5x eşikte sanal kasa simülasyonu"""
+        """1.5x eşikte sanal kasa simülasyonu - KESKİN NİŞANCI STRATEJİSİ"""
         initial = 10000
         wallet = initial
         wins = 0
         total_bets = 0
         for pred, actual in zip(predictions, actuals):
-            if pred >= 0.5:  # Model 1.5 üstü dedi
+            if pred >= 0.70:  # Model %70'den fazla eminse oyna (KESKİN NİŞANCI)
                 wallet -= 10
                 total_bets += 1
                 if actual >= 1.5:
