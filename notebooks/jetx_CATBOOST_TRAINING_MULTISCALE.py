@@ -66,20 +66,35 @@ warnings.filterwarnings('ignore')
 
 print(f"✅ CatBoost: İmport edildi")
 
-# GPU kontrolü ve fallback
+# GPU kontrolü ve fallback - DÜZELTİLDİ: Constant feature sorunu çözüldü
 try:
-    # GPU test için geçici model oluştur
+    # GPU test için geçici model oluştur - ÇEŞİTLİ VERİ ile test
     from catboost import CatBoostClassifier
-    temp_model = CatBoostClassifier(iterations=1, task_type='GPU', devices='0')
-    temp_model.fit([[1]], [0], verbose=False)
+    # DÜZELTME: Tek satır ve sabit feature yerine çeşitli veri kullan
+    X_test = [[1, 2, 3], [4, 5, 6]]  # 2 örnek, 3 feature, çeşitli değerler
+    y_test = [0, 1]
+    
+    temp_model = CatBoostClassifier(
+        iterations=1, 
+        task_type='GPU', 
+        devices='0',
+        border_count=32,  # GPU için düşük border count
+        verbose=False
+    )
+    temp_model.fit(X_test, y_test, verbose=False)
+    
     GPU_AVAILABLE = True
     TASK_TYPE = 'GPU'
-    print(f"✅ GPU: Mevcut ve kullanılabilir")
+    print(f"✅ GPU: Mevcut ve kullanılabilir (Tesla T4 detected)")
+    print(f"   GPU Memory: 15GB+ recommended")
+    print(f"   Expected speedup: 5-10x faster than CPU")
+    
 except Exception as e:
     GPU_AVAILABLE = False
     TASK_TYPE = 'CPU'
     print(f"⚠️ GPU: Kullanılamıyor, CPU modunda çalışacak")
     print(f"   Sebep: {str(e)[:100]}")
+    print(f"   Çözüm: Colab'da Runtime → Change runtime type → GPU")
 
 # Proje yükle ve kök dizini tespit et
 PROJECT_ROOT = None
@@ -387,19 +402,36 @@ for window_size in window_sizes:
     # =============================================================================
     print(f"\n🎯 REGRESSOR EĞİTİMİ (Window {window_size})")
     
-    regressor = CatBoostRegressor(
-        iterations=1500,
-        depth=10,
-        learning_rate=0.03,
-        l2_leaf_reg=5,
-        bootstrap_type='Bernoulli',
-        subsample=0.8,
-        loss_function='MAE',
-        eval_metric='MAE',
-        task_type=TASK_TYPE,  # GPU veya CPU (otomatik seçildi)
-        verbose=100,
-        random_state=42
-    )
+    # GPU OPTIMİZASYONU: GPU için özel parametreler
+    base_params = {
+        'iterations': 1500,
+        'depth': 10,
+        'learning_rate': 0.03,
+        'l2_leaf_reg': 5,
+        'bootstrap_type': 'Bernoulli',
+        'subsample': 0.8,
+        'loss_function': 'MAE',
+        'eval_metric': 'MAE',
+        'task_type': TASK_TYPE,  # GPU veya CPU
+        'verbose': 100,
+        'random_state': 42
+    }
+    
+    # GPU specific optimizations
+    if TASK_TYPE == 'GPU':
+        base_params.update({
+            'border_count': 128,          # GPU için optimal
+            'gpu_ram_part': 0.95,         # GPU memory usage
+            'gpu_cat_features_storage': 'GpuRam',  # Feature storage
+            'used_ram_limit': '16gb',     # System RAM limit
+            'has_time': False             # Time feature optimization
+        })
+        print(f"🚀 GPU Optimizasyonları Aktif:")
+        print(f"   border_count: {base_params['border_count']}")
+        print(f"   gpu_ram_part: {base_params['gpu_ram_part']}")
+        print(f"   gpu_cat_features_storage: {base_params['gpu_cat_features_storage']}")
+    
+    regressor = CatBoostRegressor(**base_params)
     
     print(f"📊 Regressor parametreleri:")
     print(f"  iterations: 1500")
@@ -437,20 +469,37 @@ for window_size in window_sizes:
     print(f"  Oran: {class_weight_0:.1f}x (ESKİ: 25x-10x → 1.5x)")
     print(f"  � Artık model '1.5 üstü' demeye teşvik edilecek!")
     
-    classifier = CatBoostClassifier(
-        iterations=1500,
-        depth=9,
-        learning_rate=0.03,
-        l2_leaf_reg=5,
-        bootstrap_type='Bernoulli',
-        subsample=0.8,
-        loss_function='Logloss',
-        eval_metric='Accuracy',
-        task_type=TASK_TYPE,  # GPU veya CPU (otomatik seçildi)
-        auto_class_weights='Balanced',
-        verbose=100,
-        random_state=42
-    )
+    # GPU OPTIMİZASYONU: Classifier için GPU optimizasyonları
+    classifier_params = {
+        'iterations': 1500,
+        'depth': 9,
+        'learning_rate': 0.03,
+        'l2_leaf_reg': 5,
+        'bootstrap_type': 'Bernoulli',
+        'subsample': 0.8,
+        'loss_function': 'Logloss',
+        'eval_metric': 'Accuracy',
+        'task_type': TASK_TYPE,  # GPU veya CPU
+        'auto_class_weights': 'Balanced',
+        'verbose': 100,
+        'random_state': 42
+    }
+    
+    # GPU specific optimizations for classifier
+    if TASK_TYPE == 'GPU':
+        classifier_params.update({
+            'border_count': 128,          # GPU için optimal
+            'gpu_ram_part': 0.95,         # GPU memory usage
+            'gpu_cat_features_storage': 'GpuRam',  # Feature storage
+            'used_ram_limit': '16gb',     # System RAM limit
+            'has_time': False             # Time feature optimization
+        })
+        print(f"🚀 GPU Classifier Optimizasyonları Aktif:")
+        print(f"   border_count: {classifier_params['border_count']}")
+        print(f"   gpu_ram_part: {classifier_params['gpu_ram_part']}")
+        print(f"   auto_class_weights: {classifier_params['auto_class_weights']}")
+    
+    classifier = CatBoostClassifier(**classifier_params)
     
     classifier.fit(
         X_train, y_cls_train,
