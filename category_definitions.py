@@ -46,23 +46,58 @@ except ImportError:
     NOLDS_AVAILABLE = False
     MISSING_DEPENDENCIES.append('nolds')
 
+def _validate_critical_dependencies():
+    """
+    KRİTİK bağımlılıkları kontrol et - eksikse SİSTEM ÇÖKSÜN
+    
+    🔒 GÜVENLİK: Sessiz başarısızlık yok - fail-fast principle
+    🚨 KRİTİK: Eksik dependency'ler data skew'e neden olur
+    """
+    critical_deps = ['numpy', 'pandas']  # Minimum çalışması gerekenler
+    missing = []
+    
+    for dep in critical_deps:
+        try:
+            __import__(dep)
+        except ImportError:
+            missing.append(dep)
+    
+    if missing:
+        error_msg = f"🚨 KRİTİK BAĞIMLILIKLAR EKSİK: {missing}\n"
+        error_msg += f"Lütfen kurun: pip install {' '.join(missing)}\n"
+        error_msg += "JetX Predictor bu bağımlılıklar olmadan çalışamaz!"
+        raise RuntimeError(error_msg)
+    
+    return True
+
 def check_and_warn_dependencies():
-    """Eksik bağımlılıkları kontrol et ve uyar (sadece bir kez)"""
+    """
+    Optional bağımlılıkları kontrol et ve uyar (sadece bir kez)
+    
+    ⚠️ UYARI: Eksik optional dependencies feature sayısını azaltır
+    📊 ETKİ: 25+ advanced feature 0.0 olarak doldurulur
+    """
     global DEPENDENCY_WARNINGS_SHOWN
+    
+    # Önce kritik bağımlılıkları kontrol et
+    _validate_critical_dependencies()
     
     if MISSING_DEPENDENCIES and not DEPENDENCY_WARNINGS_SHOWN:
         logger.warning("=" * 70)
-        logger.warning("EKSİK BAĞIMLILIKLAR TESPİT EDİLDİ!")
+        logger.warning("EKSİK OPTİONEL BAĞIMLILIKLAR TESPİT EDİLDİ!")
         logger.warning("=" * 70)
         logger.warning("Aşağıdaki kütüphaneler bulunamadı:")
         for dep in MISSING_DEPENDENCIES:
             logger.warning(f"  ❌ {dep}")
         logger.warning("")
-        logger.warning("Bu, model performansını düşürebilir!")
-        logger.warning("Eksik özelliklerin yerine 0.0 değerleri kullanılacak.")
+        logger.warning("📊 ETKİ: Bu, model performansını düşürebilir!")
+        logger.warning("🔧 Özellikler: Eksik özelliklerin yerine 0.0 değerleri kullanılacak.")
+        logger.warning(f"🎯 KAYIP: {len(MISSING_DEPENDENCIES)} kütüphane = 25+ advanced feature kaybı")
         logger.warning("")
         logger.warning("Kurulum için:")
         logger.warning(f"  pip install {' '.join(MISSING_DEPENDENCIES)}")
+        logger.warning("")
+        logger.warning("Alternatif: pip install scipy pywt nolds")
         logger.warning("=" * 70)
         DEPENDENCY_WARNINGS_SHOWN = True
     
@@ -977,12 +1012,16 @@ class FeatureEngineering:
         return features
     
     @staticmethod
-    @lru_cache(maxsize=128)
-    def _extract_features_cached(values_tuple: Tuple[float, ...]) -> Dict[str, float]:
+    def _calculate_features_direct(values: List[float]) -> Dict[str, float]:
         """
-        Cache'lenmiş özellik çıkarma (internal method)
+        Doğrudan özellik hesaplama (cache olmadan - streaming için optimize)
+        
+        Args:
+            values: Geçmiş değerler listesi
+            
+        Returns:
+            Özellik sözlüğü
         """
-        values = list(values_tuple)
         all_features = {}
         
         # Temel özellikler
@@ -1099,15 +1138,18 @@ class FeatureEngineering:
     @staticmethod
     def extract_all_features(values: List[float]) -> Dict[str, float]:
         """
-        Tüm özellikleri çıkar - Cache'li versiyon
-        """
-        if not values:
-            values_tuple = tuple()
-        else:
-            values_to_cache = values[-1000:] if len(values) > 1000 else values
-            values_tuple = tuple(values_to_cache)
+        Tüm özellikleri çıkar - Cache'siz versiyon (streaming için optimize)
         
-        return FeatureEngineering._extract_features_cached(values_tuple)
+        🔒 GÜVENLİK: LRU cache kaldırıldı - data skew ve leakage riski önledi
+        ⚡ PERFORMANS: Direct calculation - tuple dönüşüm ve hashing maliyeti yok
+        
+        Args:
+            values: Geçmiş değerler listesi (en yeni en sonda)
+            
+        Returns:
+            Özellik sözlüğü
+        """
+        return FeatureEngineering._calculate_features_direct(values)
 
 
 def create_sequences(data: List[float], sequence_length: int = 50) -> Tuple[np.ndarray, np.ndarray]:

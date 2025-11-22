@@ -523,6 +523,30 @@ print("✅ CatBoost Classifier kaydedildi: catboost_classifier.cbm")
 joblib.dump(scaler, 'models/catboost_scaler.pkl')
 print("✅ Scaler kaydedildi: catboost_scaler.pkl")
 
+# 4. FEATURE METADATA KAYDET (KRİTİK - Feature Skew Önleme)
+print("\n🔒 Feature Metadata kaydediliyor...")
+try:
+    from utils.feature_validator import register_model_features
+    
+    # Sample feature'ları oluştur (dummy data ile)
+    sample_history = all_values[:1000].tolist()
+    sample_features = FeatureEngineering.extract_all_features(sample_history)
+    
+    # Feature metadata kaydet
+    register_model_features(
+        features=sample_features,
+        scaler=scaler,
+        model_name="catboost_regressor",
+        version="2.0"
+    )
+    
+    print("✅ Feature metadata kaydedildi - catboost_regressor_metadata.json")
+    
+except ImportError:
+    print("⚠️ Feature validator bulunamadı, metadata kaydedilemedi")
+except Exception as e:
+    print(f"⚠️ Metadata kaydetme hatası: {e}")
+
 # 4. Model bilgileri (JSON)
 total_time = reg_time + cls_time
 info = {

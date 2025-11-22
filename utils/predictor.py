@@ -99,9 +99,101 @@ class JetXPredictor:
             else:
                 logger.warning(f"⚠️ Scaler bulunamadı: {self.scaler_path}")
             
+            # KRİTİK: Feature Schema Validation
+            self._validate_feature_schema_or_fail()
+            
         except Exception as e:
             logger.error(f"⚠️ Model yükleme hatası: {e}")
             logger.info("Model henüz eğitilmemiş olabilir. Önce Google Colab'da eğitin.")
+    
+    def _validate_feature_schema_or_fail(self):
+        """
+        Feature schema validation - ZORUNLU kontrol
+        
+        🔒 GÜVENLİK: Feature skew ve data leakage riskini önler
+        🚨 KRİTİK: Model-features uyumsuzluğunda SİSTEM ÇÖKSÜN (fail-fast)
+        
+        Raises:
+            RuntimeError: Feature schema uyumsuzluğunda
+        """
+        try:
+            from utils.feature_validator import get_feature_validator
+            
+            # Dummy veriyle test feature'ları oluştur
+            dummy_history = [1.5] * 1000  # 1000 adet örnek veri
+            current_features = FeatureEngineering.extract_all_features(dummy_history)
+            
+            # Feature validator'ı al
+            validator = get_feature_validator()
+            
+            # Model metadata path'ini belirle
+            model_name = "jetx_model_v2"  # Default model name
+            
+            # Model tipine göre metadata path'ini güncelle
+            if self.model_type == 'catboost':
+                meta_path = self.model_path.replace("_regressor.cbm", "_metadata.json")
+            else:
+                meta_path = self.model_path.replace(".h5", "_metadata.json")
+            
+            # Metadata kontrolü
+            if not os.path.exists(meta_path):
+                logger.warning(f"⚠️ Metadata bulunamadı: {meta_path}")
+                logger.warning("🔧 Training sırasında feature metadata kaydedilmemiş olabilir.")
+                logger.warning("💡 Çözüm: Modeli yeniden eğitin ve metadata kaydedin.")
+                # Continue without strict validation (development mode)
+                return
+            
+            # Metadata'yı yükle
+            import json
+            with open(meta_path, 'r') as f:
+                metadata = json.load(f)
+                expected_features = metadata.get("feature_names", [])
+                expected_count = metadata.get("feature_count", len(expected_features))
+            
+            # Feature sayısı kontrolü
+            current_count = len(current_features)
+            if expected_count != current_count:
+                raise RuntimeError(
+                    f"🚨 FEATURE COUNT MISMATCH:\n"
+                    f"   Model eğitildiği: {expected_count} özellik\n"
+                    f"   Mevcut kod ürettiği: {current_count} özellik\n"
+                    f"   Fark: {abs(expected_count - current_count)} özellik\n"
+                    f"💡 Model yeniden eğitilmeli veya kod güncellenmeli"
+                )
+            
+            # Feature isimleri kontrolü
+            current_feature_names = sorted(list(current_features.keys()))
+            expected_feature_names = sorted(expected_features)
+            
+            missing_features = set(expected_feature_names) - set(current_feature_names)
+            extra_features = set(current_feature_names) - set(expected_feature_names)
+            
+            if missing_features or extra_features:
+                error_msg = "🚨 FEATURE SCHEMA MISMATCH:\n"
+                if missing_features:
+                    error_msg += f"   Eksik feature'lar: {list(missing_features)[:5]}{'...' if len(missing_features) > 5 else ''}\n"
+                if extra_features:
+                    error_msg += f"   Fazla feature'lar: {list(extra_features)[:5]}{'...' if len(extra_features) > 5 else ''}\n"
+                error_msg += f"   Model eğitildiği: {expected_count} feature\n"
+                error_msg += f"   Mevcut kod: {current_count} feature\n"
+                error_msg += "💡 Model yeniden eğitilmeli veya kod güncellenmeli"
+                raise RuntimeError(error_msg)
+            
+            # Scaler compatibility kontrolü
+            if self.scaler is not None:
+                validator.validate_compatibility(current_features, self.scaler, model_name)
+            
+            logger.info(f"✅ Feature Schema Validation Passed - {current_count} features")
+            
+        except ImportError:
+            logger.warning("⚠️ Feature validator bulunamadı, validation atlanıyor")
+        except Exception as e:
+            if "Feature schema" in str(e) or "FEATURE" in str(e):
+                # Feature schema hatası - CRITICAL
+                raise RuntimeError(f"🚨 FEATURE SCHEMA VALIDATION FAILED: {e}")
+            else:
+                # Diğer hatalar - warning ile devam et
+                logger.warning(f"⚠️ Feature validation warning: {e}")
     
     def extract_features_from_history(self, history: List[float]) -> Dict:
         """
