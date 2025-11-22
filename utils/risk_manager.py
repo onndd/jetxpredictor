@@ -151,31 +151,22 @@ class RiskManager:
         # 4. Mod bazlı karar - SADECE 1.5 ÜSTÜ İÇİN
         if above_threshold:
             if self.mode == 'rolling':
-                # Rolling: Çok konservatif (%90 güven eşiği)
-                if confidence >= confidence_threshold and self.consecutive_losses < 2:
-                    should_play = True
-                    risk_level = 'LOW'
-                    reasons.append("✅ Rolling mod: Yüksek güven ve düşük risk")
-                else:
-                    reasons.append("❌ Rolling mod: Koşullar uygun değil - BEKLE")
-                    
-            elif self.mode == 'normal':
-                # Normal: Dengeli (%70 güven eşiği)
-                if confidence >= confidence_threshold and self.consecutive_losses < 3:
-                    should_play = True
-                    risk_level = 'MEDIUM'
-                    reasons.append("✅ Normal mod: Koşullar uygun")
-                else:
-                    reasons.append("❌ Normal mod: Koşullar uygun değil - BEKLE")
-                    
-            elif self.mode == 'aggressive':
-                # Aggressive: Risk alır (%60 güven eşiği)
+                # Rolling: Çok yüksek güvenlik (%95)
                 if confidence >= confidence_threshold:
                     should_play = True
-                    risk_level = 'HIGH'
-                    reasons.append("⚠️ Agresif mod: Riskli ama oynanabilir")
+                    risk_level = 'LOW'
+                    reasons.append("✅ Rolling mod: %95 üzeri güven sağlandı")
                 else:
-                    reasons.append("❌ Agresif mod bile oynamayı önermez")
+                    reasons.append(f"❌ Rolling mod: Güven yetersiz ({confidence:.0%} < 95%) - BEKLE")
+                    
+            elif self.mode == 'normal':
+                # Normal: Yüksek güvenlik (%85)
+                if confidence >= confidence_threshold:
+                    should_play = True
+                    risk_level = 'MEDIUM'
+                    reasons.append("✅ Normal mod: %85 üzeri güven sağlandı")
+                else:
+                    reasons.append(f"❌ Normal mod: Güven yetersiz ({confidence:.0%} < 85%) - BEKLE")
         
         # 5. Kritik bölge uyarısı
         if 1.45 <= predicted_value <= 1.55:
