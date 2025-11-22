@@ -35,7 +35,7 @@ class RiskManager:
         Modu değiştirir
         
         Args:
-            mode: Yeni mod ('normal', 'rolling', 'aggressive')
+            mode: Yeni mod ('normal', 'rolling')
         """
         if mode in ['normal', 'rolling', 'aggressive']:
             self.mode = mode
