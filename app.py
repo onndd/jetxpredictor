@@ -398,13 +398,12 @@ with st.sidebar:
     st.subheader("📊 Tahmin Modu")
     mode = st.selectbox(
         "Mod seçin:",
-        options=['normal', 'rolling', 'aggressive'],
+        options=['normal', 'rolling'],  # Sadece 2 seçenek kaldı
         format_func=lambda x: {
-            'normal': '🎯 Normal (Dengeli)',
-            'rolling': '🛡️ Rolling (Konservatif)',
-            'aggressive': '⚡ Agresif (Riskli)'
+            'normal': '🎯 Normal (%85+ Güven)',
+            'rolling': '🛡️ Rolling / Kasa Katlama (%95+ Güven)'
         }[x],
-        help="Rolling: %80+ güven, Normal: %65+ güven, Agresif: %50+ güven"
+        help="Normal: %85 üzeri güven, Rolling: %95 üzeri güven (Çok güvenli)"
     )
     
     st.session_state.risk_manager.set_mode(mode)
