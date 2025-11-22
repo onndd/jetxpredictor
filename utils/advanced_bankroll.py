@@ -41,31 +41,25 @@ class AdvancedBankrollManager:
     """
     
     # Strateji tanımları
+    # Strateji tanımları
     STRATEGIES = {
-        'conservative': {
-            'name': 'Konservatif',
-            'max_bet_ratio': 0.02,      # Max %2 bahis
-            'kelly_fraction': 0.25,      # 1/4 Kelly (çok güvenli)
-            'stop_loss': 0.20,           # %20 kayıp = dur
-            'take_profit': 0.50,         # %50 kar = dur
-            'min_confidence': 0.75       # Minimum %75 güven
+        'rolling': {  # Eskiden conservative idi, rolling ile eşleştirdik
+            'name': 'Rolling / Kasa Katlama',
+            'max_bet_ratio': 0.05,
+            'kelly_fraction': 0.25,
+            'stop_loss': 0.20,
+            'take_profit': 0.50,
+            'min_confidence': 0.95       # %95 olarak güncellendi
         },
-        'moderate': {
-            'name': 'Dengeli',
-            'max_bet_ratio': 0.05,      # Max %5 bahis
-            'kelly_fraction': 0.50,      # 1/2 Kelly (dengeli)
-            'stop_loss': 0.30,           # %30 kayıp = dur
-            'take_profit': 1.00,         # %100 kar = dur
-            'min_confidence': 0.65       # Minimum %65 güven
-        },
-        'aggressive': {
-            'name': 'Agresif',
-            'max_bet_ratio': 0.10,      # Max %10 bahis
-            'kelly_fraction': 1.00,      # Full Kelly (riskli)
-            'stop_loss': 0.40,           # %40 kayıp = dur
-            'take_profit': 2.00,         # %200 kar = dur
-            'min_confidence': 0.50       # Minimum %50 güven
+        'normal': {   # Eskiden moderate idi
+            'name': 'Normal',
+            'max_bet_ratio': 0.10,
+            'kelly_fraction': 0.50,
+            'stop_loss': 0.30,
+            'take_profit': 1.00,
+            'min_confidence': 0.85       # %85 olarak güncellendi
         }
+        # Aggressive tamamen silindi
     }
     
     def __init__(
