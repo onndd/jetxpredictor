@@ -28,17 +28,17 @@ prediction:
   critical_threshold: 1.5
   high_multiplier_threshold: 5.0
   
-  # Güven eşikleri (mod bazında) - KESKİN NİŞANCI STRATEJİSİ
+  # Güven eşikleri (mod bazında) - GÜNCELLENDİ
   confidence_thresholds:
-    aggressive: 0.70  # +0.10 (%60 → %70) - Daha seçici
-    normal: 0.80     # +0.10 (%70 → %80) - Çok daha seçici  
-    rolling: 0.90    # Aynı (%90 zaten yüksek) - En seçici
+    normal: 0.85     # İsteğiniz üzerine %85 yapıldı
+    rolling: 0.95    # İsteğiniz üzerine %95 yapıldı
+    # Aggressive modu kaldırıldı
   
   # Varsayılan mod
   default_mode: "normal"
   
   # Risk yönetimi
-  max_consecutive_losses: 3  # Bu kadar ardışık yanlış tahmin sonrası uyarı
+  max_consecutive_losses: 3
   
 # Streamlit Arayüz Ayarları
 ui:
