@@ -1173,9 +1173,8 @@ SEQUENCE_LENGTHS = {
     'extra_long': 1000  # Yeni: 1000 veri penceresi
 }
 
-# Risk yönetimi eşikleri (config.yaml ile uyumlu)
+# Risk yönetimi eşikleri (GÜNCELLENDİ)
 CONFIDENCE_THRESHOLDS = {
-    'aggressive': 0.70,  # %70 güven eşiği
-    'normal': 0.80,      # %80 güven eşiği
-    'rolling': 0.90      # %90 güven eşiği (çok konservatif)
+    'normal': 0.85,      # %85 Güven (Normal Mod)
+    'rolling': 0.95      # %95 Güven (Kasa Katlama/Rolling)
 }
