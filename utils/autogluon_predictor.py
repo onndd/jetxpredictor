@@ -3,6 +3,11 @@ AutoGluon Predictor - Otomatik ML Champion
 
 AutoGluon birden fazla modeli otomatik olarak dener ve en iyisini seçer.
 Genel amaçlı 1.5x eşik tahmini için kullanılır.
+
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) entegrasyonu.
+- Normal Mod Eşik: 0.85
+- Rolling Mod Eşik: 0.95
 """
 
 import numpy as np
@@ -28,13 +33,11 @@ except ImportError:
 class AutoGluonPredictor:
     """
     AutoGluon tabanlı tahmin sınıfı
-    
-    Özellikler:
-    - 50+ farklı modeli otomatik dener
-    - Ensemble ve stacking otomatik yapar
-    - Hyperparameter tuning otomatik
-    - 1.5x eşik tahmini için optimize edilmiş
     """
+    
+    # Eşikler
+    THRESHOLD_NORMAL = 0.85
+    THRESHOLD_ROLLING = 0.95
     
     def __init__(
         self,
@@ -70,25 +73,10 @@ class AutoGluonPredictor:
         eval_metric: str = 'roc_auc',
         **kwargs
     ) -> Dict:
-        """
-        AutoGluon modelini eğit
-        
-        Args:
-            X_train: Training features
-            y_train: Training labels (binary: 0=below threshold, 1=above threshold)
-            time_limit: Maksimum eğitim süresi (saniye)
-            presets: AutoGluon preset ('best_quality', 'high_quality', 'medium_quality')
-            eval_metric: Değerlendirme metriği
-            **kwargs: Ek AutoGluon parametreleri
-            
-        Returns:
-            Training sonuçları dict
-        """
+        """AutoGluon modelini eğit"""
         logger.info("=" * 70)
         logger.info("AutoGluon Eğitimi Başlıyor...")
         logger.info(f"Time limit: {time_limit}s (~{time_limit/60:.0f} dakika)")
-        logger.info(f"Preset: {presets}")
-        logger.info(f"Eval metric: {eval_metric}")
         logger.info("=" * 70)
         
         # Train dataframe oluştur
@@ -116,15 +104,13 @@ class AutoGluonPredictor:
         # Leaderboard
         leaderboard = self.predictor.leaderboard(silent=True)
         
-        logger.info("\n" + "=" * 70)
-        logger.info("AutoGluon Eğitimi Tamamlandı!")
-        logger.info("=" * 70)
-        logger.info(f"\nEn İyi Model: {leaderboard.iloc[0]['model']}")
-        logger.info(f"Score: {leaderboard.iloc[0]['score_val']:.4f}")
-        logger.info(f"\nToplam {len(leaderboard)} model eğitildi")
+        logger.info("\nAutoGluon Eğitimi Tamamlandı!")
         
         # Feature importance
-        feature_importance = self.predictor.feature_importance(train_data)
+        try:
+            feature_importance = self.predictor.feature_importance(train_data)
+        except:
+            feature_importance = None
         
         return {
             'leaderboard': leaderboard,
@@ -139,14 +125,7 @@ class AutoGluonPredictor:
         return_proba: bool = True
     ) -> Dict:
         """
-        Tahmin yap
-        
-        Args:
-            X: Input features
-            return_proba: Olasılık döndür mü?
-            
-        Returns:
-            Tahmin sonuçları dict
+        Tahmin yap (2 Modlu)
         """
         if self.predictor is None:
             raise RuntimeError("Model henüz yüklenmedi veya eğitilmedi!")
@@ -154,19 +133,8 @@ class AutoGluonPredictor:
         # Input validation
         try:
             # Type conversion ve validation
-            if isinstance(X, list):
-                X = np.array(X)
-            elif isinstance(X, pd.Series):
-                X = X.values.reshape(1, -1)
-            elif not isinstance(X, (np.ndarray, pd.DataFrame)):
-                raise ValueError(f"Geçersiz input tipi: {type(X)}")
-            
-            # NaN kontrolü
-            if hasattr(X, 'isna'):
-                if X.isna().any().any():
-                    raise ValueError("Input verisinde NaN değerler var")
-            elif pd.isna(X).any():
-                raise ValueError("Input verisinde NaN değerler var")
+            if isinstance(X, list): X = np.array(X)
+            elif isinstance(X, pd.Series): X = X.values.reshape(1, -1)
             
             # DataFrame'e çevir
             if isinstance(X, np.ndarray):
@@ -176,42 +144,54 @@ class AutoGluonPredictor:
                 
         except Exception as e:
             logger.error(f"AutoGluon input validation hatası: {e}")
-            # Hata durumunda varsayılan sonuç dön
-            return {
-                'threshold_probability': 0.5,
-                'confidence': 0.5,
-                'above_threshold': False,
-                'recommendation': 'BEKLE',
-                'error': str(e)
-            }
+            return {'error': str(e)}
         
         # Tahmin
         if return_proba:
             proba = self.predictor.predict_proba(X_df)
             # Binary classification için 1.5 üstü olma olasılığı
-            threshold_prob = float(proba.iloc[0, 1]) if len(proba.shape) > 1 else float(proba.iloc[0])
+            # AutoGluon predict_proba 0 ve 1 sınıfları için sütunlar döner
+            # Genelde 1. sınıf (True/1) ikinci sütundadır (index 1)
+            if 1 in proba.columns:
+                threshold_prob = float(proba.iloc[0, 1]) if len(proba.shape) > 1 else float(proba.iloc[0])
+            else:
+                 # Eğer sütun isimleri farklıysa, son sütunu al (genelde positive class)
+                 threshold_prob = float(proba.iloc[0, -1])
         else:
             prediction = self.predictor.predict(X_df)
-            threshold_prob = 0.5  # Default
+            threshold_prob = float(prediction.iloc[0])
         
-        # Confidence ve recommendation
-        confidence = max(threshold_prob, 1 - threshold_prob)
-        above_threshold = threshold_prob >= 0.5
+        # Confidence
+        confidence = threshold_prob # Direkt 1.5 üstü olma olasılığı
+        
+        # Mod Kararları
+        should_bet_normal = confidence >= self.THRESHOLD_NORMAL
+        should_bet_rolling = confidence >= self.THRESHOLD_ROLLING
         
         return {
             'threshold_probability': threshold_prob,
             'confidence': confidence,
-            'above_threshold': above_threshold,
-            'recommendation': 'OYNA' if (above_threshold and confidence >= 0.65) else 'BEKLE'
+            'above_threshold': threshold_prob >= 0.5,
+            'should_bet_normal': should_bet_normal,
+            'should_bet_rolling': should_bet_rolling,
+            'recommendation': self._get_recommendation(confidence)
         }
     
+    def _get_recommendation(self, confidence: float) -> str:
+        """Öneri oluştur (2 Modlu)"""
+        if confidence >= self.THRESHOLD_ROLLING:
+            return 'ROLLING MOD (Çok Güçlü)'
+        elif confidence >= self.THRESHOLD_NORMAL:
+            return 'NORMAL MOD (Güçlü)'
+        else:
+            return 'BEKLE'
+
     def load_model(self):
         """Modeli yükle"""
         try:
             self.predictor = TabularPredictor.load(self.model_path)
             logger.info(f"✅ AutoGluon modeli yüklendi: {self.model_path}")
             
-            # Scaler varsa yükle
             if os.path.exists(self.scaler_path):
                 self.scaler = joblib.load(self.scaler_path)
                 logger.info(f"✅ Scaler yüklendi: {self.scaler_path}")
@@ -234,5 +214,7 @@ class AutoGluonPredictor:
         """Feature importance döndür"""
         if self.predictor is None:
             raise RuntimeError("Model henüz yüklenmedi!")
-        # Boş dataframe ile çağır (eğitimden bilgi kullanır)
-        return self.predictor.feature_importance()
+        # Feature importance hesabı zaman alabilir, önceden hesaplanmışsa onu kullanmak daha iyi
+        # Burada boş bir veri seti veremeyeceğimiz için uyarı verip geçiyoruz
+        logger.warning("Feature importance için eğitim verisi gerekli. Eğitim sırasında hesaplanan değerleri kullanın.")
+        return pd.DataFrame()
