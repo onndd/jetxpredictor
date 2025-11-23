@@ -2,6 +2,10 @@
 CatBoost Ensemble Manager - Ultra Aggressive Training için
 
 10 model ensemble yönetimi, weighted averaging, variance-based confidence tracking.
+
+GÜNCELLEME:
+- Predict Proba desteği eklendi (Classifier için)
+- 2 Modlu yapıya uygun confidence hesaplamaları
 """
 
 import numpy as np
@@ -50,14 +54,6 @@ class CatBoostEnsemble:
     def create_model(self, seed: int, subsample: float, bagging_temp: float) -> object:
         """
         Tekil model oluştur
-        
-        Args:
-            seed: Random seed
-            subsample: Subsample oranı
-            bagging_temp: Bagging temperature
-            
-        Returns:
-            CatBoost model
         """
         params = self.base_params.copy()
         params.update({
@@ -81,16 +77,6 @@ class CatBoostEnsemble:
     ) -> Dict:
         """
         Ensemble'daki tüm modelleri eğit
-        
-        Args:
-            X_train: Eğitim verileri
-            y_train: Eğitim hedefleri
-            X_val: Validation verileri
-            y_val: Validation hedefleri
-            verbose: Log yazdırma
-            
-        Returns:
-            Eğitim sonuçları
         """
         self.models = []
         individual_scores = []
@@ -119,22 +105,19 @@ class CatBoostEnsemble:
             self.models.append(model)
             
             # Validation performansı
-            val_pred = model.predict(X_val)
-            
-            if self.model_type == 'regressor':
-                from sklearn.metrics import mean_absolute_error
-                score = mean_absolute_error(y_val, val_pred)
-                individual_scores.append(score)
-                
-                if verbose:
-                    print(f"\n✅ Model {i+1} VAL MAE: {score:.4f}")
-            else:
+            if self.model_type == 'classifier':
+                # Classifier için predict_proba kullanmak daha iyi olabilir ama metric accuracy ise predict yeterli
+                val_pred = model.predict(X_val)
                 from sklearn.metrics import accuracy_score
                 score = accuracy_score(y_val, val_pred)
                 individual_scores.append(score)
-                
-                if verbose:
-                    print(f"\n✅ Model {i+1} VAL ACC: {score*100:.2f}%")
+                if verbose: print(f"\n✅ Model {i+1} VAL ACC: {score*100:.2f}%")
+            else:
+                val_pred = model.predict(X_val)
+                from sklearn.metrics import mean_absolute_error
+                score = mean_absolute_error(y_val, val_pred)
+                individual_scores.append(score)
+                if verbose: print(f"\n✅ Model {i+1} VAL MAE: {score:.4f}")
         
         # Performansa göre ağırlıkları hesapla
         if self.model_type == 'regressor':
@@ -162,46 +145,10 @@ class CatBoostEnsemble:
     
     def predict(self, X, return_variance: bool = False) -> np.ndarray:
         """
-        Ensemble tahmin
-        
-        Args:
-            X: Input verileri
-            return_variance: Variance döndür (güven için)
-            
-        Returns:
-            Tahminler (ve opsiyonel variance)
+        Ensemble tahmin (Regressor: Değer, Classifier: Sınıf)
         """
         if not self.models:
             raise ValueError("Ensemble henüz eğitilmedi!")
-        
-        # Input validation
-        try:
-            # Type conversion
-            if isinstance(X, list):
-                X = np.array(X)
-            elif isinstance(X, pd.Series):
-                X = X.values.reshape(1, -1)
-            elif not isinstance(X, (np.ndarray, pd.DataFrame)):
-                raise ValueError(f"Geçersiz input tipi: {type(X)}")
-            
-            # NaN kontrolü
-            if hasattr(X, 'isna'):
-                if X.isna().any().any():
-                    raise ValueError("Input verisinde NaN değerler var")
-            elif pd.isna(X).any():
-                raise ValueError("Input verisinde NaN değerler var")
-            
-            # DataFrame kontrolü
-            if isinstance(X, pd.DataFrame):
-                X = X.values
-                
-        except Exception as e:
-            logger.error(f"CatBoost ensemble input validation hatası: {e}")
-            # Hata durumunda varsayılan tahmin dön
-            if self.model_type == 'regressor':
-                return np.array([1.0])  # Conservative prediction
-            else:  # classifier
-                return np.array([0])  # Negative class
         
         # Her modelden tahmin al
         predictions = []
@@ -211,8 +158,13 @@ class CatBoostEnsemble:
         
         predictions = np.array(predictions)  # Shape: (n_models, n_samples)
         
-        # Ağırlıklı ortalama
+        # Ağırlıklı ortalama (Regressor için değer, Classifier için sınıf ortalaması - dikkat!)
+        # Classifier için hard voting daha doğru olabilir, ama weighted average soft voting'e benzer.
         weighted_pred = np.average(predictions, axis=0, weights=self.weights)
+        
+        if self.model_type == 'classifier':
+            # Sınıf tahminlerini tekrar 0/1'e yuvarla (Soft voting sonrası hard decision)
+            weighted_pred = (weighted_pred >= 0.5).astype(int)
         
         if return_variance:
             # Variance hesapla (model agreement için)
@@ -220,17 +172,10 @@ class CatBoostEnsemble:
             return weighted_pred, variance
         
         return weighted_pred
-    
-    def predict_proba(self, X: np.ndarray, return_variance: bool = False):
+
+    def predict_proba(self, X, return_variance: bool = False) -> np.ndarray:
         """
-        Classifier için probability tahmini
-        
-        Args:
-            X: Input verileri
-            return_variance: Variance döndür
-            
-        Returns:
-            Probability tahminleri
+        Classifier için probability tahmini (Soft Voting)
         """
         if self.model_type != 'classifier':
             raise ValueError("predict_proba sadece classifier için kullanılabilir!")
@@ -241,16 +186,18 @@ class CatBoostEnsemble:
         # Her modelden probability al
         probabilities = []
         for model in self.models:
+            # [:, 1] -> Class 1 (1.5 üstü) olasılığı
+            # predict_proba (n_samples, 2) döner
             proba = model.predict_proba(X)
             probabilities.append(proba)
         
-        probabilities = np.array(probabilities)  # Shape: (n_models, n_samples, n_classes)
+        probabilities = np.array(probabilities) # Shape: (n_models, n_samples, 2)
         
         # Ağırlıklı ortalama
         weighted_proba = np.average(probabilities, axis=0, weights=self.weights)
         
         if return_variance:
-            # Class 1 için variance (1.5 üstü olma olasılığı)
+            # Class 1 için variance (1.5 üstü olma olasılığı üzerinden)
             variance = np.var(probabilities[:, :, 1], axis=0)
             return weighted_proba, variance
         
@@ -259,15 +206,7 @@ class CatBoostEnsemble:
     def get_confidence(self, X: np.ndarray) -> np.ndarray:
         """
         Tahmin güven skorları (variance-based)
-        
         Düşük variance = yüksek güven
-        Yüksek variance = düşük güven (modeller anlaşamıyor)
-        
-        Args:
-            X: Input verileri
-            
-        Returns:
-            Confidence scores (0-1 arası, 1 = en güvenli)
         """
         if self.model_type == 'regressor':
             _, variance = self.predict(X, return_variance=True)
@@ -282,12 +221,7 @@ class CatBoostEnsemble:
         return confidence
     
     def save_ensemble(self, save_dir: str):
-        """
-        Ensemble'ı kaydet
-        
-        Args:
-            save_dir: Kayıt dizini
-        """
+        """Ensemble'ı kaydet"""
         save_path = Path(save_dir)
         save_path.mkdir(parents=True, exist_ok=True)
         
@@ -311,12 +245,7 @@ class CatBoostEnsemble:
         logger.info(f"Ensemble kaydedildi: {save_path}")
     
     def load_ensemble(self, load_dir: str):
-        """
-        Ensemble'ı yükle
-        
-        Args:
-            load_dir: Yükleme dizini
-        """
+        """Ensemble'ı yükle"""
         load_path = Path(load_dir)
         
         # Metadata yükle
@@ -356,12 +285,6 @@ class CrossValidatedEnsemble:
         n_folds: int = 5,
         base_params: Optional[Dict] = None
     ):
-        """
-        Args:
-            model_type: 'regressor' veya 'classifier'
-            n_folds: Fold sayısı
-            base_params: Temel CatBoost parametreleri
-        """
         self.model_type = model_type
         self.n_folds = n_folds
         self.base_params = base_params or {}
@@ -377,14 +300,6 @@ class CrossValidatedEnsemble:
     ) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """
         Kronolojik cross-validation split (time-series için)
-        
-        Args:
-            X: Veriler
-            y: Hedefler
-            n_folds: Fold sayısı
-            
-        Returns:
-            List of (X_train, X_val, y_train, y_val) tuples
         """
         n_samples = len(X)
         fold_size = n_samples // (n_folds + 1)
@@ -409,17 +324,7 @@ class CrossValidatedEnsemble:
         y: np.ndarray,
         verbose: bool = True
     ) -> Dict:
-        """
-        Cross-validation ile eğit
-        
-        Args:
-            X: Eğitim verileri
-            y: Eğitim hedefleri
-            verbose: Log yazdırma
-            
-        Returns:
-            CV sonuçları
-        """
+        """Cross-validation ile eğit"""
         self.fold_models = []
         self.fold_scores = []
         
@@ -431,7 +336,6 @@ class CrossValidatedEnsemble:
                 print(f"\n{'='*80}")
                 print(f"📊 FOLD {fold_idx + 1}/{self.n_folds}")
                 print(f"{'='*80}")
-                print(f"Train: {len(X_train):,}, Val: {len(X_val):,}")
             
             # Model oluştur ve eğit
             if self.model_type == 'regressor':
@@ -454,23 +358,12 @@ class CrossValidatedEnsemble:
                 from sklearn.metrics import mean_absolute_error
                 score = mean_absolute_error(y_val, val_pred)
                 self.fold_scores.append(score)
-                
-                if verbose:
-                    print(f"\n✅ Fold {fold_idx + 1} VAL MAE: {score:.4f}")
+                if verbose: print(f"\n✅ Fold {fold_idx + 1} VAL MAE: {score:.4f}")
             else:
                 from sklearn.metrics import accuracy_score
                 score = accuracy_score(y_val, val_pred)
                 self.fold_scores.append(score)
-                
-                if verbose:
-                    print(f"\n✅ Fold {fold_idx + 1} VAL ACC: {score*100:.2f}%")
-        
-        if verbose:
-            print(f"\n{'='*80}")
-            print(f"📊 CROSS-VALIDATION SONUÇLARI")
-            print(f"{'='*80}")
-            print(f"Ortalama Score: {np.mean(self.fold_scores):.4f}")
-            print(f"Std Score: {np.std(self.fold_scores):.4f}")
+                if verbose: print(f"\n✅ Fold {fold_idx + 1} VAL ACC: {score*100:.2f}%")
         
         return {
             'fold_scores': self.fold_scores,
@@ -479,15 +372,7 @@ class CrossValidatedEnsemble:
         }
     
     def predict(self, X: np.ndarray) -> np.ndarray:
-        """
-        CV ensemble tahmini (tüm fold modellerin ortalaması)
-        
-        Args:
-            X: Input verileri
-            
-        Returns:
-            Tahminler
-        """
+        """CV ensemble tahmini (tüm fold modellerin ortalaması)"""
         if not self.fold_models:
             raise ValueError("CV ensemble henüz eğitilmedi!")
         
