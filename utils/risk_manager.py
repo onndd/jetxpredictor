@@ -2,7 +2,7 @@
 JetX Predictor - Risk Yönetim Modülü
 
 Bu modül tahmin sonuçlarına göre risk analizi yapar ve
-mod bazlı öneriler sunar (Normal, Rolling, Agresif).
+mod bazlı öneriler sunar (Normal, Rolling).
 """
 
 from typing import Dict, List, Optional
@@ -23,7 +23,7 @@ class RiskManager:
     def __init__(self, mode: str = 'normal'):
         """
         Args:
-            mode: Tahmin modu ('normal', 'rolling', 'aggressive')
+            mode: Tahmin modu ('normal', 'rolling')
         """
         self.mode = mode
         self.consecutive_losses = 0
@@ -37,10 +37,10 @@ class RiskManager:
         Args:
             mode: Yeni mod ('normal', 'rolling')
         """
-        if mode in ['normal', 'rolling', 'aggressive']:
+        if mode in ['normal', 'rolling']:
             self.mode = mode
         else:
-            raise ValueError(f"Geçersiz mod: {mode}. 'normal', 'rolling' veya 'aggressive' olmalı.")
+            raise ValueError(f"Geçersiz mod: {mode}. 'normal' veya 'rolling' olmalı.")
     
     def evaluate_prediction(
         self,
@@ -122,7 +122,7 @@ class RiskManager:
         recommendation = prediction_result.get('recommendation', 'BEKLE')
         
         # Mod bazlı eşik
-        confidence_threshold = CONFIDENCE_THRESHOLDS.get(self.mode, 0.65)
+        confidence_threshold = CONFIDENCE_THRESHOLDS.get(self.mode, 0.85)
         
         reasons = []
         should_play = False
@@ -235,17 +235,6 @@ class RiskManager:
                 suggestion['suggested_multiplier'] = 1.5
                 suggestion['bet_percentage'] = 3 if bankroll else 0
                 suggestion['reasons'].append("Normal: 1.5x'te güvenli çık")
-                
-        elif self.mode == 'aggressive':
-            # Aggressive: Yüksek risk, yüksek getiri
-            if predicted_value >= 3.0:
-                suggestion['suggested_multiplier'] = min(predicted_value * 0.85, 5.0)
-                suggestion['bet_percentage'] = 5 if bankroll else 0
-                suggestion['reasons'].append(f"Agresif: Yüksek hedef {suggestion['suggested_multiplier']:.1f}x")
-            else:
-                suggestion['suggested_multiplier'] = 2.0
-                suggestion['bet_percentage'] = 4 if bankroll else 0
-                suggestion['reasons'].append("Agresif: 2.0x hedef")
         
         # Bankroll varsa miktar hesapla
         if bankroll:
