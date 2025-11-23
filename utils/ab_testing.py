@@ -3,6 +3,10 @@ A/B Testing Sistemi
 
 Farklı modelleri veya versiyonları karşılaştırmak için A/B testi yapar.
 Test sonuçlarını kaydeder ve istatistiksel analiz yapar.
+
+GÜNCELLEME:
+- ROI hesaplaması artık %85 güven eşiğine tabidir.
+- Düşük güvenli "doğru" tahminler başarı puanına eklenmez.
 """
 
 import os
@@ -57,6 +61,9 @@ class ABTestManager:
         
         # Results dizinini oluştur
         os.makedirs(os.path.dirname(results_path), exist_ok=True)
+        
+        # Kritik Güven Eşiği (ROI Hesabı İçin)
+        self.CRITICAL_ROI_THRESHOLD = 0.85
     
     def _load_tests(self) -> Dict:
         """Test sonuçlarını yükle"""
@@ -164,19 +171,31 @@ class ABTestManager:
         results = test['results']
         results['total_predictions'] += 1
         
+        # GÜNCELLEME: ROI hesaplama fonksiyonu
+        def calculate_roi_change(pred_val, act_val, conf):
+            """
+            Sadece %85 üzeri güvenli tahminler ROI'yi etkiler.
+            Güvensiz tahminler 'Pas' geçilmiş sayılır.
+            """
+            if pred_val >= 1.5 and conf >= self.CRITICAL_ROI_THRESHOLD:
+                if act_val >= 1.5:
+                    return 0.5  # Kazanç (1.5x - 1.0x = 0.5x Net)
+                else:
+                    return -1.0 # Kayıp (Bahis miktarı)
+            return 0.0 # Pas (İşlem yapılmadı)
+
         if model_used == 'A':
             results['predictions_a'] += 1
+            # Doğruluk hesabı (Güven şartı yok, modelin saf başarısı)
             if was_correct:
                 results['wins_a'] += 1
                 results['correct_a'] += 1
             else:
                 results['losses_a'] += 1
             
-            # ROI hesapla (basit)
-            if predicted_value >= 1.5 and actual_value >= 1.5:
-                results['roi_a'] += 0.5  # Kazanç
-            elif predicted_value >= 1.5 and actual_value < 1.5:
-                results['roi_a'] -= 1.0  # Kayıp
+            # ROI Hesabı (Güven şartı VAR - Cüzdan başarısı)
+            roi_change = calculate_roi_change(predicted_value, actual_value, confidence)
+            results['roi_a'] += roi_change
         
         elif model_used == 'B':
             results['predictions_b'] += 1
@@ -186,11 +205,9 @@ class ABTestManager:
             else:
                 results['losses_b'] += 1
             
-            # ROI hesapla
-            if predicted_value >= 1.5 and actual_value >= 1.5:
-                results['roi_b'] += 0.5
-            elif predicted_value >= 1.5 and actual_value < 1.5:
-                results['roi_b'] -= 1.0
+            # ROI Hesabı
+            roi_change = calculate_roi_change(predicted_value, actual_value, confidence)
+            results['roi_b'] += roi_change
         
         self._save_tests()
     
@@ -206,7 +223,9 @@ class ABTestManager:
         accuracy_a = (results['correct_a'] / results['predictions_a'] * 100) if results['predictions_a'] > 0 else 0.0
         accuracy_b = (results['correct_b'] / results['predictions_b'] * 100) if results['predictions_b'] > 0 else 0.0
         
-        # ROI normalize et
+        # ROI normalize et (Tahmin başına ortalama getiri)
+        # Not: Burada payda olarak toplam tahmin sayısını kullanıyoruz
+        # çünkü pas geçilen tahminler de stratejinin bir parçasıdır.
         roi_a = (results['roi_a'] / results['predictions_a'] * 100) if results['predictions_a'] > 0 else 0.0
         roi_b = (results['roi_b'] / results['predictions_b'] * 100) if results['predictions_b'] > 0 else 0.0
         
@@ -229,7 +248,9 @@ class ABTestManager:
         
         # Kazanan belirle
         winner = None
-        if accuracy_b > accuracy_a + 2.0 and roi_b > roi_a:  # %2+ fark ve ROI üstünlüğü
+        # Hem Accuracy hem de ROI daha iyi olmalı
+        # Accuracy farkı %2'den büyük olmalı
+        if accuracy_b > accuracy_a + 2.0 and roi_b > roi_a:
             winner = 'B'
         elif accuracy_a > accuracy_b + 2.0 and roi_a > roi_b:
             winner = 'A'
@@ -321,4 +342,3 @@ def get_ab_test_manager() -> ABTestManager:
     if _ab_test_manager is None:
         _ab_test_manager = ABTestManager()
     return _ab_test_manager
-
