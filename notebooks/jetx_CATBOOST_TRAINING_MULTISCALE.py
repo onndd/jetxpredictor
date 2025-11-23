@@ -182,7 +182,7 @@ train_data, val_data, test_data = split_data_preserving_order(
 # MULTI-SCALE FEATURE ENGINEERING
 # =============================================================================
 print("\n🔧 MULTI-SCALE FEATURE EXTRACTION...")
-print("� Her pencere boyutu için feature engineering")
+print(" Her pencere boyutu için feature engineering")
 
 window_sizes = [500, 250, 100, 50, 20]
 
@@ -370,7 +370,7 @@ print("🔥 MULTI-SCALE MODEL EĞİTİMİ BAŞLIYOR")
 print("="*80)
 print(f"Window boyutları: {window_sizes}")
 print(f"Her window için ayrı Regressor + Classifier eğitilecek")
-print(f"� Model Seçim Kriteri: PROFIT-FOCUSED Weighted Score (YENİ!)")
+print(f" Model Seçim Kriteri: PROFIT-FOCUSED Weighted Score (YENİ!)")
 print(f"   - 50% ROI (para kazandırma - EN ÖNEMLİ!)")
 print(f"   - 30% Precision (1.5 üstü dediğinde ne kadar haklı)")
 print(f"   - 20% Win Rate (kazanan tahmin oranı)")
@@ -467,7 +467,7 @@ for window_size in window_sizes:
     print(f"  1.5 altı: {class_weight_0:.1f}x ✅ DENGELİ!")
     print(f"  1.5 üstü: 1.0x")
     print(f"  Oran: {class_weight_0:.1f}x (ESKİ: 25x-10x → 1.5x)")
-    print(f"  � Artık model '1.5 üstü' demeye teşvik edilecek!")
+    print(f"   Artık model '1.5 üstü' demeye teşvik edilecek!")
     
     # GPU OPTIMİZASYONU: Classifier için GPU optimizasyonları
     classifier_params = {
@@ -507,8 +507,13 @@ for window_size in window_sizes:
         verbose=100
     )
     
-    # Test performansı
-    y_cls_pred = classifier.predict(X_test)
+    # Test performansı - GÜNCELLENDİ: %85 GÜVEN EŞİĞİ
+    # Sadece sınıfı değil, olasılığı alıyoruz
+    y_cls_proba = classifier.predict_proba(X_test)[:, 1]
+    
+    # %85'ten eminse 1 (Üstü), değilse 0 (Altı) diyoruz
+    y_cls_pred = (y_cls_proba >= 0.85).astype(int)
+    
     cls_acc = accuracy_score(y_cls_test, y_cls_pred)
     
     below_mask = y_cls_test == 0
@@ -517,20 +522,22 @@ for window_size in window_sizes:
     above_acc = accuracy_score(y_cls_test[above_mask], y_cls_pred[above_mask]) if above_mask.sum() > 0 else 0
     
     print(f"\n{'='*80}")
-    print(f"📊 CLASSIFIER FINAL PERFORMANSI")
+    print(f"📊 CLASSIFIER FINAL PERFORMANSI (Eşik: 0.85)")
     print(f"{'='*80}")
     print(f"🎯 Genel Accuracy:     {cls_acc*100:6.2f}%")
     print(f"🔴 1.5 Altı Doğruluk:  {below_acc*100:6.2f}%")
     print(f"🟢 1.5 Üstü Doğruluk:  {above_acc*100:6.2f}%")
     
-    # Validation setinde Weighted Score hesapla
-    y_cls_pred_val = classifier.predict(X_val)
+    # Validation setinde Weighted Score hesapla - GÜNCELLENDİ: %85 EŞİĞİ
+    y_cls_proba_val = classifier.predict_proba(X_val)[:, 1]
+    y_cls_pred_val = (y_cls_proba_val >= 0.85).astype(int)
+    
     weighted_score, balanced_acc_val, below_acc_val, above_acc_val, f1_score_val, money_loss_risk_val, roi_val, win_rate_val, bets_made_val = calculate_weighted_score(
         y_reg_val, y_cls_pred_val
     )
     
     print(f"\n{'='*80}")
-    print(f"✨ VALIDATION BALANCED METRİKLER")
+    print(f"✨ VALIDATION BALANCED METRİKLER (Eşik: 0.85)")
     print(f"{'='*80}")
     print(f"📊 Weighted Score:     {weighted_score:6.2f}")
     print(f"⚖️  Balanced Acc:       {balanced_acc_val:6.2f}% (Her sınıf eşit önemli)")
@@ -588,16 +595,19 @@ for window_size in window_sizes:
     # Bu window için test data
     X_test_w, _, _ = all_data_by_window[window_size]['test']
     
-    # Tahmin
+    # Tahmin - GÜNCELLENDİ: Olasılıkları topluyoruz
     p_reg = regressor.predict(X_test_w)
-    p_cls = classifier.predict(X_test_w)
+    # predict yerine predict_proba kullanıyoruz
+    p_cls_proba = classifier.predict_proba(X_test_w)[:, 1]
     
     ensemble_predictions_reg.append(p_reg)
-    ensemble_predictions_cls.append(p_cls)
+    ensemble_predictions_cls.append(p_cls_proba)
 
-# Ensemble: Basit ortalama
+# Ensemble: Olasılıkların ortalamasını alıp %85 eşiğine göre karar ver
 ensemble_reg = np.mean(ensemble_predictions_reg, axis=0)
-ensemble_cls = np.round(np.mean(ensemble_predictions_cls, axis=0)).astype(int)
+ensemble_proba_avg = np.mean(ensemble_predictions_cls, axis=0)
+# EŞİK GÜNCELLEMESİ: %85
+ensemble_cls = (ensemble_proba_avg >= 0.85).astype(int)
 
 # Metrics
 mae_ensemble = mean_absolute_error(y_reg_test, ensemble_reg)
@@ -609,7 +619,7 @@ above_mask = y_cls_test == 1
 below_acc_ensemble = accuracy_score(y_cls_test[below_mask], ensemble_cls[below_mask]) if below_mask.sum() > 0 else 0
 above_acc_ensemble = accuracy_score(y_cls_test[above_mask], ensemble_cls[above_mask]) if above_mask.sum() > 0 else 0
 
-print(f"\n📊 ENSEMBLE PERFORMANSI:")
+print(f"\n📊 ENSEMBLE PERFORMANSI (Eşik: 0.85):")
 print(f"  MAE: {mae_ensemble:.4f}")
 print(f"  RMSE: {rmse_ensemble:.4f}")
 print(f"  Classifier Accuracy: {cls_acc_ensemble*100:.2f}%")
