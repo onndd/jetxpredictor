@@ -301,9 +301,12 @@ cls_results = classifier_ensemble.train_ensemble(
 cls_time = time.time() - cls_start
 print(f"\n✅ Classifier Ensemble eğitimi tamamlandı! Süre: {cls_time/60:.1f} dakika")
 
-# Test performansı
-y_cls_pred = classifier_ensemble.predict(X_test)
+# Test performansı - GÜNCELLENDİ: %85 EŞİK
+# y_cls_pred (sınıf tahmini) yerine probability kullanıyoruz
 y_cls_proba, y_cls_proba_variance = classifier_ensemble.predict_proba(X_test, return_variance=True)
+# Olasılık 0.85'in üzerindeyse 1 (üst), değilse 0 (alt/belirsiz)
+y_cls_pred = (y_cls_proba[:, 1] >= 0.85).astype(int)
+
 cls_confidence = classifier_ensemble.get_confidence(X_test)
 
 cls_acc = accuracy_score(y_cls_test, y_cls_pred)
@@ -315,7 +318,7 @@ above_mask = y_cls_test == 1
 below_acc = accuracy_score(y_cls_test[below_mask], y_cls_pred[below_mask]) if below_mask.sum() > 0 else 0
 above_acc = accuracy_score(y_cls_test[above_mask], y_cls_pred[above_mask]) if above_mask.sum() > 0 else 0
 
-print(f"\n📊 CLASSIFIER ENSEMBLE PERFORMANSI:")
+print(f"\n📊 CLASSIFIER ENSEMBLE PERFORMANSI (Eşik: 0.85):")
 print(f"  Genel Accuracy: {cls_acc*100:.2f}% (Hedef: > 85%)")
 print(f"  🔴 1.5 Altı Doğruluk: {below_acc*100:.2f}%")
 print(f"  🟢 1.5 Üstü Doğruluk: {above_acc*100:.2f}%")
@@ -323,7 +326,7 @@ print(f"  Ortalama Ensemble Confidence: {cls_confidence.mean():.4f}")
 
 # Confusion Matrix
 cm = confusion_matrix(y_cls_test, y_cls_pred)
-print(f"\n📋 CONFUSION MATRIX:")
+print(f"\n📋 CONFUSION MATRIX (0.85 Eşik):")
 print(f"                Tahmin")
 print(f"Gerçek   1.5 Altı | 1.5 Üstü")
 print(f"1.5 Altı {cm[0,0]:6d}   | {cm[0,1]:6d}  ⚠️ PARA KAYBI")
@@ -343,7 +346,7 @@ if cm[0,0] + cm[0,1] > 0:
 # 3 SANAL KASA SİMÜLASYONU
 # =============================================================================
 print("\n" + "="*80)
-print("💰 3 SANAL KASA SİMÜLASYONU (ULTRA)")
+print("💰 3 SANAL KASA SİMÜLASYONU (ULTRA - %85 GÜVEN)")
 print("="*80)
 
 test_count = len(y_reg_test)
@@ -355,7 +358,7 @@ print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL")
 print(f"💵 Bahis Tutarı: {bet_amount:.2f} TL\n")
 
 # =============================================================================
-# KASA 1: 1.5x EŞİK SİSTEMİ
+# KASA 1: 1.5x EŞİK SİSTEMİ (Güven Filtreli)
 # =============================================================================
 print("="*80)
 print("💰 KASA 1: 1.5x EŞİK SİSTEMİ")
@@ -367,10 +370,8 @@ kasa1_total_wins = 0
 kasa1_total_losses = 0
 
 for i in range(len(y_reg_test)):
-    model_pred_cls = y_cls_pred[i]
-    actual_value = y_reg_test[i]
-    
-    if model_pred_cls == 1:
+    # Model %85 üzerinde "üst" diyorsa oyna
+    if y_cls_pred[i] == 1:
         kasa1_wallet -= bet_amount
         kasa1_total_bets += 1
         
@@ -399,7 +400,7 @@ print(f"📊 ROI: {kasa1_roi:+.2f}%")
 # KASA 2: %80 ÇIKIŞ SİSTEMİ
 # =============================================================================
 print("\n" + "="*80)
-print("💰 KASA 2: %80 ÇIKIŞ SİSTEMİ")
+print("💰 KASA 2: %80 ÇIKIŞ SİSTEMİ (Güvenli)")
 print("="*80)
 
 kasa2_wallet = initial_bankroll
@@ -411,7 +412,8 @@ for i in range(len(y_reg_test)):
     model_pred_value = y_reg_pred[i]
     actual_value = y_reg_test[i]
     
-    if model_pred_value >= 2.0:
+    # Hem değer tahmini yüksek hem de sınıflandırma güvenli olmalı
+    if model_pred_value >= 2.0 and y_cls_pred[i] == 1:
         kasa2_wallet -= bet_amount
         kasa2_total_bets += 1
         
@@ -440,25 +442,26 @@ print(f"📊 ROI: {kasa2_roi:+.2f}%")
 # KASA 3: ENSEMBLE CONFIDENCE-BASED (YENİ!)
 # =============================================================================
 print("\n" + "="*80)
-print("💰 KASA 3: ENSEMBLE CONFIDENCE-BASED (YENİ!)")
+print("💰 KASA 3: ENSEMBLE CONFIDENCE-BASED (Keskin Nişancı)")
 print("="*80)
-print("Strateji: Sadece model agreement > %80 olduğunda bahis")
+print("Strateji: Sadece model agreement > %85 olduğunda bahis")
 print("Çıkış: Ensemble tahmininin ortalaması\n")
 
 kasa3_wallet = initial_bankroll
 kasa3_total_bets = 0
 kasa3_total_wins = 0
 kasa3_total_losses = 0
-confidence_threshold = 0.80  # %80 güven eşiği
+# GÜNCELLEME: Eşik 0.85
+confidence_threshold = 0.85
 
 for i in range(len(y_reg_test)):
     # Hem regressor hem classifier confidence'ı kullan
     combined_confidence = (reg_confidence[i] + cls_confidence[i]) / 2
     
-    # Sadece yüksek güvende bahis yap
+    # Sadece yüksek güvende bahis yap (0.85 üstü)
     if combined_confidence >= confidence_threshold:
-        # Classifier 1.5 üstü tahmin ediyorsa
-        if y_cls_proba[i, 1] > 0.5:
+        # Classifier 1.5 üstü tahmin ediyorsa (ve olasılığı yüksekse)
+        if y_cls_proba[i, 1] >= 0.85:
             kasa3_wallet -= bet_amount
             kasa3_total_bets += 1
             
@@ -682,6 +685,7 @@ if mae_reg < 1.2:
 else:
     targets_met.append(f"⚠️ MAE: {mae_reg:.4f} (Hedef: < 1.2)")
 
+# Hedef: Accuracy (0.85 eşiğine göre)
 if cls_acc >= 0.85:
     targets_met.append(f"✅ Accuracy ≥ 85%: {cls_acc*100:.1f}%")
 else:
