@@ -1,9 +1,9 @@
 """
 Adaptive Threshold Manager - Dinamik Eşik Yönetimi
-Güven skoruna ve model performansına göre threshold'u dinamik olarak ayarlar.
 
 GÜNCELLEME:
-- Minimum güven skoru %85'e sabitlendi.
+- Eşikler 0.85 (Normal) ve 0.95 (Rolling) olarak sabitlendi.
+- Dinamik yapı, "eşik değiştirme" yerine "mod seçimi" yapacak şekilde evrildi.
 - %85 altı güven skorlarında bahis yapılmaz (None döner).
 """
 
@@ -26,34 +26,29 @@ class ThresholdDecision:
     should_bet: bool
     risk_level: str
     reasoning: str
-    fallback_threshold: float = 1.7  # Yedek threshold
+    mode: str = 'normal'  # 'normal' veya 'rolling'
 
 
 class AdaptiveThresholdManager:
     """
-    Dinamik threshold yönetimi
+    Dinamik threshold yönetimi (Adaptif Mod Seçimi)
     
-    Güven skoruna, model uyuşmasına ve geçmiş performansa göre
-    threshold'u otomatik olarak ayarlar.
-    
-    Stratejiler:
-    1. Confidence-based: Güven skoruna göre
-    2. Performance-based: Geçmiş performansa göre
-    3. Hybrid: Her ikisinin kombinasyonu
+    Güven skoruna ve model uyuşmasına göre Normal (%85) veya Rolling (%95)
+    modunu seçer.
     """
     
     def __init__(
         self,
         base_threshold: float = 1.5,
-        min_confidence: float = 0.5,
+        min_confidence: float = 0.85, # Güncellendi: 0.85
         max_threshold: float = 2.0,
         history_window: int = 100,
         config_path: Optional[str] = None
     ):
         """
         Args:
-            base_threshold: Temel threshold değeri
-            min_confidence: Minimum güven skoru
+            base_threshold: Temel threshold değeri (1.5x)
+            min_confidence: Minimum güven skoru (0.85)
             max_threshold: Maximum threshold değeri
             history_window: Geçmiş performans penceresi
             config_path: Konfigürasyon dosyası yolu
@@ -63,14 +58,15 @@ class AdaptiveThresholdManager:
         self.max_threshold = max_threshold
         self.history_window = history_window
         
-        # GÜNCELLENDİ: Threshold Haritası (Sadece Yüksek Güven)
-        # Format: (min_güven, max_güven): gerekli_çarpan_hedefi
+        # Sabit Eşikler
+        self.THRESHOLD_NORMAL = 0.85
+        self.THRESHOLD_ROLLING = 0.95
+        
+        # Threshold Haritası (Güven -> Hedef Çarpan)
         self.threshold_map = {
-            (0.98, 1.00): 1.50,  # Mükemmel güven -> 1.50x yeterli
-            (0.95, 0.98): 1.55,  # Rolling seviyesi -> Biraz daha güvenli hedef
-            (0.90, 0.95): 1.60,  # Çok Yüksek -> 1.60x hedefle
-            (0.85, 0.90): 1.65,  # Normal seviyesi -> 1.65x hedefle (Tampon)
-            (0.00, 0.85): None   # %85 altı -> ASLA BAHSE GİRME (None)
+            (0.95, 1.01): 1.50,  # Rolling Mod (%95+) -> 1.50x
+            (0.85, 0.95): 1.65,  # Normal Mod (%85-95) -> 1.65x (Daha esnek)
+            (0.00, 0.85): None   # Düşük Güven -> Oynama
         }
         
         # Performans geçmişi
@@ -80,217 +76,69 @@ class AdaptiveThresholdManager:
             'correct_predictions': 0,
             'win_rate': 0.0,
             'avg_confidence': 0.0,
-            'false_positives': 0,  # 1.5 altı ama tahmin 1.5 üstü
-            'false_negatives': 0   # 1.5 üstü ama tahmin 1.5 altı
+            'false_positives': 0, 
+            'false_negatives': 0
         }
         
-        # Konfigürasyon yükle
         if config_path:
             self.load_config(config_path)
-        
+            
         logger.info(f"Adaptive Threshold Manager oluşturuldu:")
-        logger.info(f"  • Base threshold: {base_threshold}")
-        logger.info(f"  • Min confidence: {min_confidence}")
-        logger.info(f"  • Max threshold: {max_threshold}")
-        logger.info(f"  • History window: {history_window}")
+        logger.info(f"  • Normal Threshold: {self.THRESHOLD_NORMAL}")
+        logger.info(f"  • Rolling Threshold: {self.THRESHOLD_ROLLING}")
     
     def get_threshold(
         self,
         confidence: float,
         model_agreement: float,
         prediction: float,
-        strategy: str = 'hybrid'
+        strategy: str = 'hybrid' # Legacy support
     ) -> ThresholdDecision:
         """
-        Dinamik threshold hesapla
-        
-        Args:
-            confidence: Model güven skoru (0-1)
-            model_agreement: Model uyuşma skoru (0-1)
-            prediction: Tahmin edilen değer
-            strategy: 'confidence', 'performance', 'hybrid'
-            
-        Returns:
-            ThresholdDecision object
+        Güven skoruna göre mod ve threshold belirle
         """
-        if strategy == 'confidence':
-            decision = self._confidence_based_threshold(confidence, model_agreement, prediction)
-        elif strategy == 'performance':
-            decision = self._performance_based_threshold(confidence, model_agreement, prediction)
-        else:  # hybrid
-            decision = self._hybrid_threshold(confidence, model_agreement, prediction)
-        
-        return decision
-    
-    def _confidence_based_threshold(
-        self,
-        confidence: float,
-        model_agreement: float,
-        prediction: float
-    ) -> ThresholdDecision:
-        """
-        Sadece güven skoruna göre threshold belirle
-        
-        Returns:
-            ThresholdDecision
-        """
-        # Adjusted confidence (model uyuşmasını da hesaba kat)
-        adjusted_confidence = confidence * 0.7 + model_agreement * 0.3
-        
-        # Threshold haritasından threshold bul
-        threshold = None
-        for (min_conf, max_conf), thresh in self.threshold_map.items():
-            if min_conf <= adjusted_confidence < max_conf:
-                threshold = thresh
-                break
-        
-        # Risk değerlendirmesi
-        if threshold is None:
-            risk_level = "Çok Yüksek"
-            should_bet = False
-            reasoning = f"Güven çok düşük ({adjusted_confidence:.2%}), bahse girilmemeli"
-        else:
-            # Tahmin ile threshold arası mesafe
-            distance = abs(prediction - threshold)
-            
-            if adjusted_confidence >= 0.90 and distance > 0.2:
-                risk_level = "Düşük"
-            elif adjusted_confidence >= 0.85 and distance > 0.1:
-                risk_level = "Orta"
-            else:
-                risk_level = "Yüksek"
-            
-            should_bet = adjusted_confidence >= self.min_confidence
-            reasoning = f"Güven: {adjusted_confidence:.2%}, Threshold: {threshold}x"
-        
-        return ThresholdDecision(
-            threshold=threshold,
-            confidence=adjusted_confidence,
-            should_bet=should_bet,
-            risk_level=risk_level,
-            reasoning=reasoning
-        )
-    
-    def _performance_based_threshold(
-        self,
-        confidence: float,
-        model_agreement: float,
-        prediction: float
-    ) -> ThresholdDecision:
-        """
-        Geçmiş performansa göre threshold ayarla
-        
-        Returns:
-            ThresholdDecision
-        """
-        # Eğer yeterli geçmiş yoksa, confidence-based kullan
-        if len(self.prediction_history) < 20:
-            return self._confidence_based_threshold(confidence, model_agreement, prediction)
-        
-        # Geçmiş performansı hesapla
-        recent_win_rate = self.performance_metrics['win_rate']
-        
-        # Performansa göre threshold ayarla
-        if recent_win_rate >= 0.75:
-            # Çok iyi performans → agresif (düşük threshold)
-            threshold = self.base_threshold
-            risk_level = "Düşük"
-            reasoning = f"Yüksek kazanma oranı ({recent_win_rate:.1%}), agresif threshold"
-        elif recent_win_rate >= 0.67:
-            # İyi performans → normal
-            threshold = self.base_threshold + 0.1
-            risk_level = "Orta"
-            reasoning = f"Normal kazanma oranı ({recent_win_rate:.1%}), standart threshold"
-        elif recent_win_rate >= 0.60:
-            # Orta performans → temkinli
-            threshold = self.base_threshold + 0.2
-            risk_level = "Orta-Yüksek"
-            reasoning = f"Düşük kazanma oranı ({recent_win_rate:.1%}), temkinli threshold"
-        else:
-            # Kötü performans → çok temkinli veya dur
-            if recent_win_rate < 0.50:
-                threshold = None
-                risk_level = "Çok Yüksek"
-                reasoning = f"Çok düşük kazanma oranı ({recent_win_rate:.1%}), bahse girilmemeli"
-            else:
-                threshold = self.base_threshold + 0.3
-                risk_level = "Yüksek"
-                reasoning = f"Düşük kazanma oranı ({recent_win_rate:.1%}), çok temkinli"
-        
-        should_bet = threshold is not None and confidence >= self.min_confidence
-        
-        return ThresholdDecision(
-            threshold=threshold,
-            confidence=confidence,
-            should_bet=should_bet,
-            risk_level=risk_level,
-            reasoning=reasoning
-        )
-    
-    def _hybrid_threshold(
-        self,
-        confidence: float,
-        model_agreement: float,
-        prediction: float
-    ) -> ThresholdDecision:
-        """
-        Hem güven hem de performans bazlı (hybrid)
-        
-        Returns:
-            ThresholdDecision
-        """
-        # Her iki metodu çalıştır
-        conf_decision = self._confidence_based_threshold(confidence, model_agreement, prediction)
-        perf_decision = self._performance_based_threshold(confidence, model_agreement, prediction)
-        
-        # Eğer yeterli geçmiş yoksa, sadece confidence kullan
-        if len(self.prediction_history) < 20:
-            return conf_decision
-        
-        # İkisinden de threshold varsa, daha yüksek olanı kullan (daha güvenli)
-        if conf_decision.threshold is not None and perf_decision.threshold is not None:
-            threshold = max(conf_decision.threshold, perf_decision.threshold)
-        elif conf_decision.threshold is not None:
-            threshold = conf_decision.threshold
-        elif perf_decision.threshold is not None:
-            threshold = perf_decision.threshold
-        else:
-            threshold = None
-        
-        # Risk seviyesi (daha yüksek olanı al)
-        risk_levels = ["Düşük", "Orta", "Orta-Yüksek", "Yüksek", "Çok Yüksek"]
-        try:
-            conf_risk_idx = risk_levels.index(conf_decision.risk_level)
-        except ValueError:
-            conf_risk_idx = 3 # Yüksek varsay
-            
-        try:
-            perf_risk_idx = risk_levels.index(perf_decision.risk_level)
-        except ValueError:
-            perf_risk_idx = 3 # Yüksek varsay
-            
-        risk_level = risk_levels[max(conf_risk_idx, perf_risk_idx)]
-        
         # Adjusted confidence
         adjusted_confidence = confidence * 0.7 + model_agreement * 0.3
         
-        should_bet = (
-            threshold is not None and
-            adjusted_confidence >= self.min_confidence and
-            conf_decision.should_bet and
-            perf_decision.should_bet
-        )
+        # Karar mantığı
+        threshold = None
+        mode = 'normal'
+        risk_level = 'Yüksek'
+        should_bet = False
+        reasoning = ""
         
-        reasoning = f"Hybrid: {conf_decision.reasoning} + {perf_decision.reasoning}"
+        if adjusted_confidence >= self.THRESHOLD_ROLLING:
+            # ROLLING MOD
+            threshold = 1.50
+            mode = 'rolling'
+            risk_level = 'Düşük'
+            should_bet = True
+            reasoning = f"Güven çok yüksek ({adjusted_confidence:.2%}), Rolling Mod aktif"
+            
+        elif adjusted_confidence >= self.THRESHOLD_NORMAL:
+            # NORMAL MOD
+            threshold = 1.65 # Biraz daha yüksek hedef
+            mode = 'normal'
+            risk_level = 'Orta'
+            should_bet = True
+            reasoning = f"Güven yeterli ({adjusted_confidence:.2%}), Normal Mod aktif"
+            
+        else:
+            # BAHİS YOK
+            threshold = None
+            risk_level = 'Çok Yüksek'
+            should_bet = False
+            reasoning = f"Güven yetersiz ({adjusted_confidence:.2%} < 85%)"
         
         return ThresholdDecision(
             threshold=threshold,
             confidence=adjusted_confidence,
             should_bet=should_bet,
             risk_level=risk_level,
-            reasoning=reasoning
+            reasoning=reasoning,
+            mode=mode
         )
-    
+
     def update_history(
         self,
         prediction: float,
@@ -299,26 +147,11 @@ class AdaptiveThresholdManager:
         confidence: float,
         bet_placed: bool
     ):
-        """
-        Geçmiş performansı güncelle
-        
-        Args:
-            prediction: Tahmin edilen değer
-            actual: Gerçek değer
-            threshold_used: Kullanılan threshold
-            confidence: Güven skoru
-            bet_placed: Bahse girildi mi?
-        """
-        # Tahmin doğru mu?
+        """Geçmiş performansı güncelle"""
+        correct = False
         if threshold_used is not None and bet_placed:
-            # Bahse girildiyse ve threshold doğru tahmin edildiyse
-            correct = (actual >= threshold_used) if (prediction >= threshold_used) else (actual < threshold_used)
-        else:
-            # Bahse girilmediyse, değer tahmini doğruluğuna bak
-            error = abs(prediction - actual)
-            correct = error < 0.5  # 0.5 tolerans
+            correct = (actual >= threshold_used)
         
-        # Geçmişe ekle
         self.prediction_history.append({
             'prediction': prediction,
             'actual': actual,
@@ -328,82 +161,30 @@ class AdaptiveThresholdManager:
             'bet_placed': bet_placed
         })
         
-        # Metrikleri güncelle
         self._update_metrics()
     
     def _update_metrics(self):
         """Performans metriklerini yeniden hesapla"""
-        if not self.prediction_history:
-            return
+        if not self.prediction_history: return
         
         total = len(self.prediction_history)
-        correct = sum(1 for h in self.prediction_history if h['correct'])
+        bets = sum(1 for h in self.prediction_history if h['bet_placed'])
+        correct = sum(1 for h in self.prediction_history if h['correct'] and h['bet_placed'])
         
-        # False positives/negatives
         fp = sum(1 for h in self.prediction_history 
-                if h['threshold_used'] is not None and
-                   h['prediction'] >= h['threshold_used'] and
-                   h['actual'] < h['threshold_used'])
-        
-        fn = sum(1 for h in self.prediction_history 
-                if h['threshold_used'] is not None and
-                   h['prediction'] < h['threshold_used'] and
-                   h['actual'] >= h['threshold_used'])
-        
-        # Metrikleri güncelle
+                 if h['bet_placed'] and not h['correct'])
+                 
         self.performance_metrics.update({
             'total_predictions': total,
             'correct_predictions': correct,
-            'win_rate': correct / total if total > 0 else 0.0,
+            'win_rate': correct / bets if bets > 0 else 0.0,
             'avg_confidence': np.mean([h['confidence'] for h in self.prediction_history]),
-            'false_positives': fp,
-            'false_negatives': fn
+            'false_positives': fp
         })
-        
-        logger.debug(f"Metrics updated: Win rate={self.performance_metrics['win_rate']:.2%}")
-    
+
     def get_performance_summary(self) -> Dict:
-        """
-        Performans özetini döndür
-        
-        Returns:
-            Performance summary dict
-        """
-        if not self.prediction_history:
-            return {
-                'status': 'Henüz veri yok',
-                'total_predictions': 0
-            }
-        
-        recent_10 = list(self.prediction_history)[-10:] if len(self.prediction_history) >= 10 else list(self.prediction_history)
-        recent_win_rate = sum(1 for h in recent_10 if h['correct']) / len(recent_10)
-        
-        return {
-            'total_predictions': self.performance_metrics['total_predictions'],
-            'overall_win_rate': self.performance_metrics['win_rate'],
-            'recent_win_rate': recent_win_rate,
-            'avg_confidence': self.performance_metrics['avg_confidence'],
-            'false_positives': self.performance_metrics['false_positives'],
-            'false_negatives': self.performance_metrics['false_negatives'],
-            'false_positive_rate': self.performance_metrics['false_positives'] / max(1, self.performance_metrics['total_predictions']),
-            'recommendation': self._get_recommendation()
-        }
-    
-    def _get_recommendation(self) -> str:
-        """Performansa göre öneri"""
-        win_rate = self.performance_metrics['win_rate']
-        fp_rate = self.performance_metrics['false_positives'] / max(1, self.performance_metrics['total_predictions'])
-        
-        if win_rate >= 0.75:
-            return "✅ Mükemmel performans! Devam edin."
-        elif win_rate >= 0.67:
-            return "✅ İyi performans. Başabaş noktasında veya üstünde."
-        elif win_rate >= 0.60:
-            return "⚠️ Orta performans. Dikkatli olun."
-        elif fp_rate > 0.30:
-            return "❌ Yüksek false positive! Para kaybı riski yüksek."
-        else:
-            return "❌ Düşük performans. Bahisleri azaltın veya durdurun."
+        """Performans özetini döndür"""
+        return self.performance_metrics.copy()
     
     def save_config(self, filepath: str):
         """Konfigürasyonu kaydet"""
@@ -411,64 +192,38 @@ class AdaptiveThresholdManager:
             'base_threshold': self.base_threshold,
             'min_confidence': self.min_confidence,
             'max_threshold': self.max_threshold,
-            'threshold_map': {f"{k[0]}-{k[1]}": v for k, v in self.threshold_map.items()},
             'performance_metrics': self.performance_metrics
         }
-        
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, 'w') as f:
             json.dump(config, f, indent=2)
-        
-        logger.info(f"Konfigürasyon kaydedildi: {filepath}")
-    
+            
     def load_config(self, filepath: str):
         """Konfigürasyonu yükle"""
-        if not Path(filepath).exists():
-            logger.warning(f"Konfigürasyon dosyası bulunamadı: {filepath}")
-            return
-        
+        if not Path(filepath).exists(): return
         with open(filepath, 'r') as f:
             config = json.load(f)
         
         self.base_threshold = config.get('base_threshold', self.base_threshold)
         self.min_confidence = config.get('min_confidence', self.min_confidence)
-        self.max_threshold = config.get('max_threshold', self.max_threshold)
         
         if 'performance_metrics' in config:
             self.performance_metrics.update(config['performance_metrics'])
-        
-        logger.info(f"Konfigürasyon yüklendi: {filepath}")
-    
+
     def reset_history(self):
         """Geçmişi sıfırla"""
         self.prediction_history.clear()
         self.performance_metrics = {
-            'total_predictions': 0,
-            'correct_predictions': 0,
-            'win_rate': 0.0,
-            'avg_confidence': 0.0,
-            'false_positives': 0,
-            'false_negatives': 0
+            'total_predictions': 0, 'correct_predictions': 0,
+            'win_rate': 0.0, 'avg_confidence': 0.0,
+            'false_positives': 0, 'false_negatives': 0
         }
-        logger.info("Performans geçmişi sıfırlandı")
-
 
 def create_threshold_manager(
     base_threshold: float = 1.5,
     strategy: str = 'hybrid',
     config_path: Optional[str] = None
 ) -> AdaptiveThresholdManager:
-    """
-    Threshold manager factory function
-    
-    Args:
-        base_threshold: Temel threshold değeri
-        strategy: Varsayılan strateji
-        config_path: Konfigürasyon dosyası
-        
-    Returns:
-        AdaptiveThresholdManager instance
-    """
     return AdaptiveThresholdManager(
         base_threshold=base_threshold,
         config_path=config_path
