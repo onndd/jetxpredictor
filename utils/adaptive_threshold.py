@@ -1,6 +1,10 @@
 """
 Adaptive Threshold Manager - Dinamik Eşik Yönetimi
 Güven skoruna ve model performansına göre threshold'u dinamik olarak ayarlar.
+
+GÜNCELLEME:
+- Minimum güven skoru %85'e sabitlendi.
+- %85 altı güven skorlarında bahis yapılmaz (None döner).
 """
 
 import numpy as np
@@ -59,13 +63,14 @@ class AdaptiveThresholdManager:
         self.max_threshold = max_threshold
         self.history_window = history_window
         
-        # Threshold haritası (confidence range -> threshold)
+        # GÜNCELLENDİ: Threshold Haritası (Sadece Yüksek Güven)
+        # Format: (min_güven, max_güven): gerekli_çarpan_hedefi
         self.threshold_map = {
-            (0.98, 1.00): 1.50,  # Mükemmel güven
-            (0.95, 0.98): 1.55,  # Rolling seviyesi
-            (0.90, 0.95): 1.60,  # Çok Yüksek
-            (0.85, 0.90): 1.65,  # Normal seviyesi (Sınır)
-            (0.00, 0.85): None   # %85 altı -> ASLA BAHSE GİRME
+            (0.98, 1.00): 1.50,  # Mükemmel güven -> 1.50x yeterli
+            (0.95, 0.98): 1.55,  # Rolling seviyesi -> Biraz daha güvenli hedef
+            (0.90, 0.95): 1.60,  # Çok Yüksek -> 1.60x hedefle
+            (0.85, 0.90): 1.65,  # Normal seviyesi -> 1.65x hedefle (Tampon)
+            (0.00, 0.85): None   # %85 altı -> ASLA BAHSE GİRME (None)
         }
         
         # Performans geçmişi
@@ -148,9 +153,9 @@ class AdaptiveThresholdManager:
             # Tahmin ile threshold arası mesafe
             distance = abs(prediction - threshold)
             
-            if adjusted_confidence >= 0.80 and distance > 0.2:
+            if adjusted_confidence >= 0.90 and distance > 0.2:
                 risk_level = "Düşük"
-            elif adjusted_confidence >= 0.60 and distance > 0.1:
+            elif adjusted_confidence >= 0.85 and distance > 0.1:
                 risk_level = "Orta"
             else:
                 risk_level = "Yüksek"
@@ -254,8 +259,16 @@ class AdaptiveThresholdManager:
         
         # Risk seviyesi (daha yüksek olanı al)
         risk_levels = ["Düşük", "Orta", "Orta-Yüksek", "Yüksek", "Çok Yüksek"]
-        conf_risk_idx = risk_levels.index(conf_decision.risk_level)
-        perf_risk_idx = risk_levels.index(perf_decision.risk_level)
+        try:
+            conf_risk_idx = risk_levels.index(conf_decision.risk_level)
+        except ValueError:
+            conf_risk_idx = 3 # Yüksek varsay
+            
+        try:
+            perf_risk_idx = risk_levels.index(perf_decision.risk_level)
+        except ValueError:
+            perf_risk_idx = 3 # Yüksek varsay
+            
         risk_level = risk_levels[max(conf_risk_idx, perf_risk_idx)]
         
         # Adjusted confidence
