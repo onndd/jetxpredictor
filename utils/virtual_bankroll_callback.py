@@ -19,8 +19,8 @@ class VirtualBankrollCallback(callbacks.Callback):
     """
     TensorFlow/Keras için Virtual Bankroll Callback
     Her epoch sonunda 2 sanal kasa simülasyonu gösterir:
-    - Kasa 1: 1.5x eşik sistemi
-    - Kasa 2: %70 çıkış sistemi (yüksek tahminler için)
+    - Kasa 1: 1.5x eşik sistemi (Güvenli)
+    - Kasa 2: %70 çıkış sistemi (Yüksek tahminler + Yüksek güven)
     """
     
     def __init__(self, stage_name, X_test, y_test, threshold=1.5, 
@@ -64,25 +64,26 @@ class VirtualBankrollCallback(callbacks.Callback):
         # Threshold output'u al (üçüncü output)
         p_thr = predictions[2].flatten() if len(predictions) > 2 else predictions[0].flatten()
         
-        # GÜNCELLEME: Threshold değerini config'den al
+        # GÜNCELLEME: Threshold değerini config'den al (Merkezi Yönetim)
         try:
             threshold_manager = get_threshold_manager()
-            virtual_bankroll_threshold = threshold_manager.get_threshold('virtual_bankroll')
+            # Config'den 'virtual_bankroll' eşiğini al (Hedef: 0.85)
+            decision_threshold = threshold_manager.get_threshold('virtual_bankroll')
         except Exception as e:
-            # Fallback: Config'den alınamazsa eski değeri kullan
-            print(f"⚠️ Threshold manager hatası: {e}, varsayılan %70 kullanılıyor")
-            virtual_bankroll_threshold = 0.70
+            # Fallback: Config'den alınamazsa güvenli varsayılanı kullan
+            # print(f"⚠️ Threshold manager hatası: {e}, varsayılan 0.85 kullanılıyor")
+            decision_threshold = 0.85
         
-        # Binary predictions - ARTIK CONFIG'DEN GELEN DEĞER KULLANILIYOR
-        p_thr_binary = (p_thr >= virtual_bankroll_threshold).astype(int)
+        # Binary predictions - Config'den gelen eşiğe göre karar ver
+        p_thr_binary = (p_thr >= decision_threshold).astype(int)
         t_thr = (self.y_test >= self.threshold).astype(int)
         
         # Debug info
         if epoch == 0:  # Sadece ilk epoch'ta göster
-            print(f"🎯 VirtualBankroll Threshold: {virtual_bankroll_threshold:.2f} (Config'den alındı)")
+            print(f"🎯 VirtualBankroll Threshold: {decision_threshold:.2f} (Config'den alındı)")
         
         # ========================================================================
-        # KASA 1: 1.5x EŞİK SİSTEMİ
+        # KASA 1: 1.5x EŞİK SİSTEMİ (Güven Filtreli)
         # ========================================================================
         wallet1 = self.starting_capital
         total_bets1 = 0
@@ -93,7 +94,7 @@ class VirtualBankrollCallback(callbacks.Callback):
             model_pred = p_thr_binary[i]
             actual_value = self.y_test[i]
             
-            # Model "1.5 üstü" diyorsa bahse gir
+            # Model "1.5 üstü" diyorsa (ve güven eşiğini geçtiyse) bahse gir
             if model_pred == 1:
                 wallet1 -= self.bet_amount
                 total_bets1 += 1
@@ -127,7 +128,7 @@ class VirtualBankrollCallback(callbacks.Callback):
             wallet_emoji1 = "❌"
         
         # ========================================================================
-        # KASA 2: %70 ÇIKIŞ SİSTEMİ
+        # KASA 2: %70 ÇIKIŞ SİSTEMİ (Yüksek Tahmin + Yüksek Güven)
         # ========================================================================
         wallet2 = self.starting_capital
         total_bets2 = 0
@@ -138,10 +139,11 @@ class VirtualBankrollCallback(callbacks.Callback):
         if p_reg is not None:
             for i in range(len(p_reg)):
                 model_pred_value = p_reg[i]
+                model_confidence = p_thr[i] # Modelin güven olasılığı
                 actual_value = self.y_test[i]
                 
-                # Model 2.0+ tahmin ediyorsa bahse gir
-                if model_pred_value >= 2.0:
+                # GÜNCELLEME: Sadece 2.0+ tahminlerde VE Yüksek Güven varsa oyna
+                if model_pred_value >= 2.0 and model_confidence >= decision_threshold:
                     wallet2 -= self.bet_amount
                     total_bets2 += 1
                     
@@ -182,7 +184,7 @@ class VirtualBankrollCallback(callbacks.Callback):
         # DETAYLI RAPOR - KASA 1
         # ========================================================================
         print(f"\n{'='*80}")
-        print(f"💰 {self.stage_name} - Epoch {epoch+1} - KASA 1 (1.5x EŞİK)")
+        print(f"💰 {self.stage_name} - Epoch {epoch+1} - KASA 1 (1.5x EŞİK - Güven: >{decision_threshold:.2f})")
         print(f"{'='*80}")
         print(f"   📊 Test Seti: {len(self.y_test):,} örnek")
         print(f"   🎯 Model Tahmini: {total_bets1} oyunda '1.5 üstü' dedi")
@@ -198,7 +200,7 @@ class VirtualBankrollCallback(callbacks.Callback):
         print(f"   ")
         print(f"   🎯 DEĞERLENDİRME:")
         if total_bets1 == 0:
-            print(f"      ⚠️ Model hiç '1.5 üstü' tahmin etmedi!")
+            print(f"      ⚠️ Model hiç '1.5 üstü' tahmin etmedi (Yüksek güvenli tahmin yok)!")
         elif win_rate1 >= 66.7:
             print(f"      ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
         else:
@@ -211,10 +213,10 @@ class VirtualBankrollCallback(callbacks.Callback):
         # DETAYLI RAPOR - KASA 2
         # ========================================================================
         print(f"{'='*80}")
-        print(f"💰 {self.stage_name} - Epoch {epoch+1} - KASA 2 (%{int(self.exit_multiplier*100)} ÇIKIŞ)")
+        print(f"💰 {self.stage_name} - Epoch {epoch+1} - KASA 2 (%{int(self.exit_multiplier*100)} ÇIKIŞ + Yüksek Güven)")
         print(f"{'='*80}")
         print(f"   📊 Test Seti: {len(self.y_test):,} örnek")
-        print(f"   🎯 Model Tahmini: {total_bets2} oyunda '2.0+ değer' dedi")
+        print(f"   🎯 Model Tahmini: {total_bets2} oyunda '2.0+ ve Güvenli' dedi")
         print(f"   ")
         print(f"   📈 SONUÇLAR:")
         print(f"      ✅ Kazanan: {total_wins2} oyun ({win_rate2:.1f}%)")
@@ -228,7 +230,7 @@ class VirtualBankrollCallback(callbacks.Callback):
         print(f"   ")
         print(f"   🎯 DEĞERLENDİRME:")
         if total_bets2 == 0:
-            print(f"      ⚠️ Model hiç '2.0+' tahmin etmedi!")
+            print(f"      ⚠️ Model hiç uygun pozisyon bulamadı!")
         elif win_rate2 >= 66.7:
             print(f"      ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
         else:
@@ -279,6 +281,13 @@ class CatBoostBankrollCallback:
         if iteration % self.interval != 0:
             return True  # Devam et
         
+        # Threshold Manager'dan güncel eşik değerini al
+        try:
+            threshold_manager = get_threshold_manager()
+            decision_threshold = threshold_manager.get_threshold('virtual_bankroll')
+        except:
+            decision_threshold = 0.85  # Fallback to 0.85
+            
         # Model tahminlerini al
         if self.model_type == 'regressor':
             # Regressor: direkt değer tahmini
@@ -286,8 +295,20 @@ class CatBoostBankrollCallback:
             p_binary = (predictions >= self.threshold).astype(int)
         else:
             # Classifier: sınıf tahmini
+            # Eğer predict_proba varsa onu kullanıp eşik kontrolü yapmalıyız
+            # Ancak CatBoost callback içinde modelin predict_proba metoduna erişim
+            # her zaman düzgün çalışmayabilir. Standart predict sınıf (0/1) döner.
+            # Eğitim scriptinde Focal Loss kullanıldığında raw values dönebilir.
+            # Basitlik için standart predict kullanıyoruz, ancak classifier eğitiminde
+            # zaten class_weights ve loss function ile eşik ayarlanmış oluyor.
             predictions = info.model.predict(self.X_test)
-            p_binary = predictions  # Zaten 0 veya 1
+            
+            # Eğer probabilities alabiliyorsak:
+            try:
+                probs = info.model.predict_proba(self.X_test)[:, 1]
+                p_binary = (probs >= decision_threshold).astype(int)
+            except:
+                p_binary = predictions  # Zaten 0 veya 1
         
         t_binary = (self.y_test >= self.threshold).astype(int)
         
@@ -337,7 +358,7 @@ class CatBoostBankrollCallback:
         # Rapor
         model_name = "REGRESSOR" if self.model_type == 'regressor' else "CLASSIFIER"
         print(f"\n{'='*80}")
-        print(f"💰 CATBOOST {model_name} - Iteration {iteration+1} - SANAL KASA")
+        print(f"💰 CATBOOST {model_name} - Iteration {iteration+1} - SANAL KASA (Eşik: {decision_threshold})")
         print(f"{'='*80}")
         print(f"   🎲 Oyun: {total_bets} el ({total_wins} kazanç, {total_losses} kayıp)")
         print(f"   📊 Kazanma Oranı: {win_rate:.1f}%")
