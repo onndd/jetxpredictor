@@ -2,14 +2,12 @@
 """
 🎯 JetX Meta-Model Training Script
 
+GÜNCELLEME:
+- Meta-model ve Base modellerin performansı %85 güven eşiğine göre değerlendirilir.
+- "Keskin Nişancı" (Sniper) modu aktiftir.
+
 Meta-model, base modellerin (Progressive, Ultra, XGBoost) tahminlerini input olarak alır
 ve final kararı verir. Hangi modele ne zaman güveneceğini öğrenir.
-
-KULLANIM:
-1. Base modelleri Google Colab'da eğit (Progressive, Ultra, XGBoost)
-2. Bu scripti çalıştır (lokal veya Colab'da)
-3. Meta-model train edilir ve kaydedilir
-4. Ensemble sistemi artık stacking ile çalışır
 
 Süre: ~30 dakika
 """
@@ -36,6 +34,9 @@ from typing import Dict, List, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
+# Kritik Güven Eşiği
+CONFIDENCE_THRESHOLD = 0.85
+
 # Proje yükle
 if not os.path.exists('jetxpredictor'):
     print("📥 Proje klonlanıyor...")
@@ -59,7 +60,7 @@ CUSTOM_OBJECTS = {
     'percentage_aware_regression_loss': percentage_aware_regression_loss
 }
 
-print("✅ Proje yüklendi")
+print(f"✅ Proje yüklendi - Eşik: {CONFIDENCE_THRESHOLD}")
 
 # =============================================================================
 # VERİ YÜKLE
@@ -414,16 +415,17 @@ meta_model.fit(
 # EVALUATION
 # =============================================================================
 print("\n" + "="*70)
-print("📊 META-MODEL EVALUATION")
+print(f"📊 META-MODEL EVALUATION (Eşik: {CONFIDENCE_THRESHOLD})")
 print("="*70)
 
-# Test predictions
-y_pred = meta_model.predict(X_test)
+# Test predictions (Probabilities)
 y_pred_proba = meta_model.predict_proba(X_test)
+# GÜNCELLEME: Sadece %85 üzerindeki olasılıklar 1 kabul edilir
+y_pred = (y_pred_proba[:, 1] >= CONFIDENCE_THRESHOLD).astype(int)
 
 # Accuracy
 test_acc = accuracy_score(y_test, y_pred)
-print(f"\n✅ Test Accuracy: {test_acc*100:.2f}%")
+print(f"\n✅ Test Accuracy (Emin Olunanlar): {test_acc*100:.2f}%")
 
 # Below/Above threshold accuracy
 below_mask = y_test == 0
@@ -461,22 +463,23 @@ for name, imp in zip(feature_names, importance):
     print(f"  {name}: {imp:.3f}")
 
 # =============================================================================
-# BASE MODELS vs META-MODEL COMPARISON
+# BASE MODELS vs META-MODEL COMPARISON (0.85 Threshold)
 # =============================================================================
 print("\n" + "="*70)
 print("📊 BASE MODELS vs META-MODEL KARŞILAŞTIRMASI")
 print("="*70)
 
-# Individual model predictions (threshold = 0.5)
-prog_pred = (X_test[:, 0] >= 0.5).astype(int)
-ultra_pred = (X_test[:, 1] >= 0.5).astype(int)
-xgb_pred = (X_test[:, 2] >= 0.5).astype(int)
+# Individual model predictions (threshold = 0.85)
+# Tüm modeller aynı standartta test ediliyor
+prog_pred = (X_test[:, 0] >= CONFIDENCE_THRESHOLD).astype(int)
+ultra_pred = (X_test[:, 1] >= CONFIDENCE_THRESHOLD).astype(int)
+xgb_pred = (X_test[:, 2] >= CONFIDENCE_THRESHOLD).astype(int)
 
 prog_acc = accuracy_score(y_test, prog_pred)
 ultra_acc = accuracy_score(y_test, ultra_pred)
 xgb_acc = accuracy_score(y_test, xgb_pred)
 
-print(f"\n📊 Test Set Accuracy:")
+print(f"\n📊 Test Set Accuracy (Eşik: {CONFIDENCE_THRESHOLD}):")
 print(f"Progressive:  {prog_acc*100:.2f}%")
 print(f"Ultra:        {ultra_acc*100:.2f}%")
 print(f"XGBoost:      {xgb_acc*100:.2f}%")
@@ -521,7 +524,7 @@ axes[1, 1].hist(y_pred_proba[:, 1], bins=50, alpha=0.7, color='#3498db', edgecol
 axes[1, 1].set_title('Meta-Model Prediction Distribution')
 axes[1, 1].set_xlabel('Probability of 1.5+')
 axes[1, 1].set_ylabel('Frequency')
-axes[1, 1].axvline(x=0.5, color='red', linestyle='--', label='Threshold')
+axes[1, 1].axvline(x=CONFIDENCE_THRESHOLD, color='red', linestyle='--', label='Threshold (0.85)')
 axes[1, 1].legend()
 
 plt.tight_layout()
@@ -591,7 +594,7 @@ print("\n" + "="*70)
 print("🎉 META-MODEL TRAINING TAMAMLANDI!")
 print("="*70)
 
-print(f"\n📊 SONUÇLAR:")
+print(f"\n📊 SONUÇLAR (Eşik: {CONFIDENCE_THRESHOLD}):")
 print(f"✅ Test Accuracy: {test_acc*100:.2f}%")
 print(f"✅ 1.5 Altı Accuracy: {below_acc*100:.2f}%")
 print(f"✅ Para Kaybı Riski: {money_loss_risk*100:.1f}%" if cm[0,0] + cm[0,1] > 0 else "")
