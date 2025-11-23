@@ -4,6 +4,10 @@ JetX Predictor - Tahmin Motoru
 Bu modül eğitilmiş modeli yükler ve tahmin yapar.
 Hem kategorik hem de değer tahmini yapar.
 CatBoost ve Neural Network modellerini destekler.
+
+GÜNCELLEME: 
+- %85 ve %95 Güven Eşiği ("Keskin Nişancı" Modu) uygulandı.
+- Feature Schema Validation eklendi.
 """
 
 import numpy as np
@@ -256,7 +260,7 @@ class JetXPredictor:
         
         Args:
             history: Geçmiş değerler listesi (en az 1000 değer gerekli)
-            mode: Tahmin modu ('normal', 'rolling', 'aggressive')
+            mode: Tahmin modu ('normal', 'rolling')
             
         Returns:
             Tahmin sonuçları dictionary
@@ -384,7 +388,7 @@ class JetXPredictor:
         category = CategoryDefinitions.get_category(predicted_value)
         detailed_category = CategoryDefinitions.get_detailed_category(predicted_value)
         
-        # Mod bazlı öneri
+        # Mod bazlı öneri (GÜNCELLENDİ - %85/%95)
         recommendation = self._get_recommendation(confidence, mode, above_threshold)
         
         # Uyarılar
@@ -432,7 +436,7 @@ class JetXPredictor:
         category = CategoryDefinitions.get_category(predicted_value)
         detailed_category = CategoryDefinitions.get_detailed_category(predicted_value)
         
-        # Öneri
+        # Öneri (GÜNCELLENDİ - %85/%95)
         recommendation = self._get_recommendation(confidence, mode, above_threshold)
         
         # Uyarılar
@@ -482,22 +486,29 @@ class JetXPredictor:
         mode: str,
         above_threshold: bool
     ) -> str:
-        """Mod bazlı öneri verir (GÜNCELLENDİ)"""
-        # Config'den veya category_definitions'dan gelen değeri al, yoksa 0.85 kullan
+        """Mod bazlı öneri verir (GÜNCELLENDİ - %85/%95 Standartları)"""
+        
+        # Config'den veya category_definitions'dan gelen değeri al
+        # Bulamazsa varsayılan olarak en düşük güvenli eşik olan 0.85'i kullan
         threshold = CONFIDENCE_THRESHOLDS.get(mode, 0.85)
         
+        # 1. Kural: Güven skoru eşiğin altındaysa BEKLE
         if confidence < threshold:
             return 'BEKLE'
         
+        # 2. Kural: Tahmin 1.5x altındaysa BEKLE
         if not above_threshold:
             return 'BEKLE'
         
+        # 3. Kural: Eşikler geçildiyse OYNA
         if confidence >= threshold and above_threshold:
-            if mode == 'rolling': # %95 ve üzeri
+            if mode == 'rolling':
+                # %95 ve üzeri - Çok güvenli
                 return 'OYNA (GÜVENLİ)'
-            elif mode == 'normal': # %85 ve üzeri
+            elif mode == 'normal':
+                # %85 ve üzeri
                 return 'OYNA'
-            # Aggressive modu kaldırıldı
+            # 'aggressive' modu artık yok, o yüzden kaldırıldı.
         
         return 'BEKLE'
     
