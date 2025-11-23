@@ -2,16 +2,16 @@
 """
 🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim Stratejisi
 
-AMAÇ: 1.5 altı değerleri tahmin edebilen model eğitmek
+AMAÇ: 1.5 altı değerleri tahmin edebilen model eğitmek (Yüksek Güvenli)
 
 STRATEJI:
 ├── AŞAMA 1: Foundation Training (100 epoch) - Threshold baştan aktif
 ├── AŞAMA 2: Threshold Fine-Tuning (80 epoch) - Yumuşak class weights (5x)
 └── AŞAMA 3: Full Model Fine-Tuning (80 epoch) - Dengeli final (7x)
 
-HEDEFLER:
-- 1.5 ALTI Doğruluk: %70-80%+
-- 1.5 ÜSTÜ Doğruluk: %75-85%+
+HEDEFLER (GÜNCELLENDİ - %85 Güven Eşiği İle):
+- 1.5 ALTI Doğruluk: %75+ (Eşik 0.85)
+- 1.5 ÜSTÜ Doğruluk: %75+ (Eşik 0.85)
 - Para kaybı riski: %20 altı
 - MAE: < 2.0
 
@@ -25,7 +25,7 @@ import time
 from datetime import datetime
 
 print("="*80)
-print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim")
+print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim (Keskin Nişancı Modu)")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print()
@@ -78,6 +78,10 @@ from utils.advanced_bankroll import AdvancedBankrollManager
 from utils.custom_losses import balanced_threshold_killer_loss, balanced_focal_loss, create_weighted_binary_crossentropy, percentage_aware_regression_loss
 from utils.virtual_bankroll_callback import VirtualBankrollCallback
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
+
+# KRITIK GÜVEN EŞİĞİ
+CONFIDENCE_THRESHOLD = 0.85
+
 # =============================================================================
 # TRANSFORMER LAYERS (YENİ - FAZ 2)
 # =============================================================================
@@ -551,8 +555,7 @@ def build_progressive_model(n_features):
 class DynamicWeightCallback(callbacks.Callback):
     """
     Eğitim sırasında 1.5 altı doğruluğunu izler ve class weight'i otomatik ayarlar.
-    
-    Hedef: Model dengeli tahminler yapana kadar weight'i dinamik olarak artır/azalt
+    GÜNCELLEME: Başarıyı 0.85 eşiğine göre ölçer.
     """
     def __init__(self, stage_name, initial_weight=3.0, target_below_acc=0.70):
         super().__init__()
@@ -567,7 +570,8 @@ class DynamicWeightCallback(callbacks.Callback):
         if epoch % 5 == 0:  # Her 5 epoch'ta bir kontrol et
             # VALIDATION seti üzerinde threshold metrics (test leakage önlendi!)
             p = self.model.predict([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], verbose=0)[2].flatten()
-            p_thr = (p >= 0.5).astype(int)
+            # GÜNCELLEME: 0.85 Güven eşiği
+            p_thr = (p >= CONFIDENCE_THRESHOLD).astype(int)
             t_thr = (y_reg_val >= 1.5).astype(int)
             
             below_mask = t_thr == 0
@@ -614,8 +618,8 @@ class DynamicWeightCallback(callbacks.Callback):
             print(f"\n{'='*70}")
             print(f"📊 {self.stage_name} - Epoch {epoch+1} - DYNAMIC WEIGHT ADJUSTMENT")
             print(f"{'='*70}")
-            print(f"🔴 1.5 ALTI: {below_acc*100:.1f}%")
-            print(f"🟢 1.5 ÜSTÜ: {above_acc*100:.1f}%")
+            print(f"🔴 1.5 ALTI: {below_acc*100:.1f}% (Eşik: 0.85)")
+            print(f"🟢 1.5 ÜSTÜ: {above_acc*100:.1f}% (Eşik: 0.85)")
             print(f"⚖️  Weight Ayarlaması: {old_weight:.2f} → {self.current_weight:.2f} ({adjustment})")
             print(f"🏆 En İyi 1.5 Altı: {self.best_below_acc*100:.1f}% (Weight: {self.best_weight:.2f})")
             print(f"{'='*70}\n")
@@ -633,7 +637,8 @@ class ProgressiveMetricsCallback(callbacks.Callback):
         if epoch % 5 == 0:
             # VALIDATION seti üzerinde threshold metrics (test leakage önlendi!)
             p = self.model.predict([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], verbose=0)[2].flatten()
-            p_thr = (p >= 0.5).astype(int)
+            # GÜNCELLEME: 0.85 Güven eşiği
+            p_thr = (p >= CONFIDENCE_THRESHOLD).astype(int)
             t_thr = (y_reg_val >= 1.5).astype(int)
             
             below_mask = t_thr == 0
@@ -676,7 +681,7 @@ class ProgressiveMetricsCallback(callbacks.Callback):
             print(f"   └─ Hedef: <%20 (şu an: {'GÜVENLİ! ✅' if risk < 0.20 else f'%{(risk*100-20):.1f} daha fazla risk var'})")
             
             # Model Durumu Özeti
-            print(f"\n🎯 MODEL DURUMU:")
+            print(f"\n🎯 MODEL DURUMU (Eşik: 0.85):")
             if below_acc >= 0.75 and above_acc >= 0.75 and risk < 0.20:
                 print(f"   ✅ ✅ ✅ MÜKEMMEL! Model kullanıma hazır!")
             elif below_acc >= 0.60 and risk < 0.30:
@@ -686,19 +691,6 @@ class ProgressiveMetricsCallback(callbacks.Callback):
                 print(f"      → Model dengesiz öğreniyor, class weight ayarlanmalı")
             else:
                 print(f"   ⚠️ ORTA - Devam ediyor...")
-            
-            # Dengesizlik Uyarısı
-            if below_acc == 0.0 and above_acc > 0.95:
-                print(f"\n⚠️ UYARI: Model sadece '1.5 üstü' tahmin ediyor!")
-                print(f"   → Class weight çok DÜŞÜK veya model 'lazy learning' yapıyor")
-                print(f"   → Öneri: Class weight'i artırın (5x → 7x)")
-            elif below_acc > 0.95 and above_acc == 0.0:
-                print(f"\n⚠️ UYARI: Model sadece '1.5 altı' tahmin ediyor!")
-                print(f"   → Class weight çok YÜKSEK!")
-                print(f"   → Öneri: Class weight'i azaltın (örn: 25x → 5x)")
-            elif abs(below_acc - above_acc) > 0.40:
-                print(f"\n⚠️ UYARI: Model dengesiz! (Fark: %{abs(below_acc - above_acc)*100:.1f})")
-                print(f"   → Bir sınıfa aşırı öğreniyor, diğerini ihmal ediyor")
             
             # Sanal Kasa Simülasyonu
             print(f"\n💰 SANAL KASA SİMÜLASYONU (Test Seti):")
@@ -712,10 +704,10 @@ class ProgressiveMetricsCallback(callbacks.Callback):
             
             # Test verileri üzerinde simülasyon
             for i in range(len(p_thr)):
-                model_pred = p_thr[i]  # Model tahmini (1.5 üstü mü?)
+                model_pred = p_thr[i]  # Model tahmini (1.5 üstü ve güvenli mi?)
                 actual_value = y_reg_te[i]  # Gerçek değer
                 
-                # Model "1.5 üstü" diyorsa bahis yap
+                # Model "1.5 üstü" diyorsa (zaten 0.85 üstü filtrelendi)
                 if model_pred == 1:
                     wallet -= bet_amount  # Bahis yap
                     total_bets += 1
@@ -1228,7 +1220,8 @@ print(f"  RMSE: {rmse_final:.4f}")
 
 # Threshold metrics
 thr_true = (y_reg_te >= 1.5).astype(int)
-thr_pred = (p_thr >= 0.5).astype(int)
+# GÜNCELLEME: %85 Güven Eşiği
+thr_pred = (p_thr >= CONFIDENCE_THRESHOLD).astype(int)
 thr_acc = accuracy_score(thr_true, thr_pred)
 
 below_mask = thr_true == 0
@@ -1236,7 +1229,7 @@ above_mask = thr_true == 1
 below_acc = accuracy_score(thr_true[below_mask], thr_pred[below_mask]) if below_mask.sum() > 0 else 0
 above_acc = accuracy_score(thr_true[above_mask], thr_pred[above_mask]) if above_mask.sum() > 0 else 0
 
-print(f"\n🎯 THRESHOLD (1.5x):")
+print(f"\n🎯 THRESHOLD (1.5x) - Eşik: {CONFIDENCE_THRESHOLD}:")
 print(f"  Genel Accuracy: {thr_acc*100:.2f}%")
 print(f"\n🔴 1.5 ALTI:")
 print(f"  Doğruluk: {below_acc*100:.2f}%", end="")
@@ -1294,7 +1287,7 @@ print()
 print("="*80)
 print("💰 KASA 1: 1.5x EŞİK SİSTEMİ")
 print("="*80)
-print("Strateji: Model 1.5x üstü tahmin ederse → 1.5x'te çıkış")
+print("Strateji: Model 1.5x üstü tahmin ederse (Güven > %85) → 1.5x'te çıkış")
 print()
 
 kasa1_wallet = initial_bankroll
@@ -1303,8 +1296,8 @@ kasa1_total_wins = 0
 kasa1_total_losses = 0
 
 # Model tahminlerini al (threshold output'tan)
-y_cls_proba = p_thr  # Threshold probabilities
-threshold_predictions = (y_cls_proba >= 0.5).astype(int)  # 1.5 üstü tahmin
+# GÜNCELLEME: thr_pred zaten 0.85 eşiğine göre filtrelendi
+threshold_predictions = thr_pred 
 
 for i in range(len(y_reg_te)):
     model_pred_cls = threshold_predictions[i]  # 0 veya 1
@@ -1352,7 +1345,7 @@ print(f"{'='*70}\n")
 print("="*80)
 print("💰 KASA 2: %80 ÇIKIŞ SİSTEMİ (Yüksek Tahminler)")
 print("="*80)
-print("Strateji: Model 2.0x+ tahmin ederse → Tahmin × 0.80'de çıkış")
+print("Strateji: Model 2.0x+ tahmin ederse VE Güven > %85 → Tahmin × 0.80'de çıkış")
 print()
 
 kasa2_wallet = initial_bankroll
@@ -1367,9 +1360,10 @@ y_reg_pred = p_reg
 for i in range(len(y_reg_te)):
     model_pred_value = y_reg_pred[i]  # Tahmin edilen değer
     actual_value = y_reg_te[i]
+    is_confident = threshold_predictions[i] == 1 # %85 güvenli mi?
     
-    # SADECE 2.0x ve üzeri tahminlerde oyna
-    if model_pred_value >= 2.0:
+    # SADECE 2.0x ve üzeri tahminlerde VE Yüksek güvende oyna
+    if model_pred_value >= 2.0 and is_confident:
         kasa2_wallet -= bet_amount  # Bahis yap
         kasa2_total_bets += 1
         
