@@ -1,25 +1,21 @@
 #!/usr/bin/env python3
 """
-🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim Stratejisi (v5.0 MONOLITHIC)
+🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim Stratejisi (v5.0 ULTIMATE MONOLITH)
 
-AMAÇ: 1.5 altı değerleri tahmin edebilen model eğitmek (Yüksek Güvenli)
+BU DOSYA TEK BAŞINA ÇALIŞIR (STANDALONE).
+Tüm yardımcı sınıflar, loss fonksiyonları ve katmanlar içine gömülmüştür.
 
-GÜNCELLEME:
+MİMARİ:
+- Inputs: Features + 4 Sequence (50, 200, 500, 1000)
+- Layers: N-Beats + TCN + Transformer Encoder + Fusion
+- Outputs: Regression (Değer), Classification (3 Sınıf), Threshold (Binary)
+
+GÜNCELLEME (v5.0):
 - 2 MODLU YAPI: Normal (0.85) ve Rolling (0.95)
 - Sanal kasalar bu modlara göre optimize edildi.
-- TÜM BAĞIMLILIKLAR İÇERİ GÖMÜLDÜ (Standalone)
+- Lazy Learning önleyici dinamik ağırlıklar.
 
-STRATEJI:
-├── AŞAMA 1: Foundation Training (100 epoch) - Threshold baştan aktif
-├── AŞAMA 2: Threshold Fine-Tuning (80 epoch) - Yumuşak class weights
-└── AŞAMA 3: Full Model Fine-Tuning (80 epoch) - Dengeli final
-
-HEDEFLER:
-- Normal Mod Doğruluk: %80+ (Eşik 0.85)
-- Rolling Mod Doğruluk: %90+ (Eşik 0.95)
-- MAE: < 2.0
-
-SÜRE: ~2.0 saat (GPU ile)
+SÜRE: ~2.5 - 3.0 saat (GPU ile)
 """
 
 import subprocess
@@ -38,9 +34,15 @@ import random
 warnings.filterwarnings('ignore')
 
 print("="*80)
-print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim (v5.0 MONOLITHIC)")
+print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim (v5.0 ULTIMATE)")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print()
+print("🔧 SİSTEM KONFIGURASYONU:")
+print("   Normal Mod Eşik: 0.85")
+print("   Rolling Mod Eşik: 0.95")
+print("   Mimari: Hybrid (LSTM + TCN + Transformer)")
+print("   Yapı: Standalone (Tüm modüller dahil)")
 print()
 
 # -----------------------------------------------------------------------------
@@ -72,7 +74,16 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score, confusion_matrix, classification_report
 from tqdm.auto import tqdm
 
+# Proje kök dizinini ayarla
+if not os.path.exists('jetxpredictor') and not os.path.exists('jetx_data.db'):
+    print("\n📥 Proje klonlanıyor...")
+    subprocess.check_call(["git", "clone", "https://github.com/onndd/jetxpredictor.git"])
+    os.chdir('jetxpredictor')
+
+sys.path.append(os.getcwd())
+
 # GPU Ayarları (Manuel Entegrasyon)
+print("\n🚀 GPU Ayarları Yapılandırılıyor...")
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
@@ -91,10 +102,20 @@ THRESHOLD_NORMAL = 0.85
 THRESHOLD_ROLLING = 0.95
 
 # =============================================================================
-# 2. YARDIMCI SINIFLAR VE FONKSİYONLAR (GÖMÜLÜ)
+# 2. GÖMÜLÜ YARDIMCI MODÜLLER (UTILS İÇİNE ALINANLAR BURAYA TAŞINDI)
 # =============================================================================
 
-# --- A. FEATURE ENGINEERING ---
+# --- A. FEATURE ENGINEERING & DEFINITIONS ---
+class CategoryDefinitions:
+    """Kategori tanımları"""
+    CRITICAL_THRESHOLD = 1.5
+    
+    @staticmethod
+    def get_category_numeric(val): 
+        if val < 1.5: return 0
+        elif val < 2.0: return 1
+        else: return 2
+
 class FeatureEngineering:
     """Özellik çıkarma fonksiyonları"""
     
@@ -121,12 +142,16 @@ class FeatureEngineering:
             features['volatility_20'] = np.std(recent_20) / (np.mean(recent_20) + 1e-8)
         else:
             features['volatility_20'] = 0.0
-            
+        
+        # Son değerler
+        features['last_val'] = history[-1]
+        features['diff_1'] = history[-1] - history[-2] if len(history) > 1 else 0
+        
         return features
 
 # --- B. CUSTOM LOSS FUNCTIONS ---
 def percentage_aware_regression_loss(y_true, y_pred):
-    """Yüzde hataya dayalı regression loss"""
+    """Yüzde hataya dayalı regression loss - Büyük değer hatalarını cezalandırır"""
     epsilon = K.epsilon()
     percentage_error = K.abs(y_true - y_pred) / (K.abs(y_true) + epsilon)
     # Yüksek değerler (5x+) için ekstra ceza
@@ -144,7 +169,7 @@ def balanced_focal_loss(gamma=2.0, alpha=0.7):
     return loss
 
 def create_weighted_binary_crossentropy(weight_0, weight_1):
-    """Ağırlıklı Binary Crossentropy"""
+    """Ağırlıklı Binary Crossentropy - Lazy Learning'i önler"""
     def loss(y_true, y_pred):
         y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
         bce = -(y_true * K.log(y_pred) + (1 - y_true) * K.log(1 - y_pred))
@@ -152,7 +177,7 @@ def create_weighted_binary_crossentropy(weight_0, weight_1):
         return K.mean(bce * weights)
     return loss
 
-# --- C. TRANSFORMER LAYERS ---
+# --- C. ATTENTION & TRANSFORMER LAYERS ---
 class PositionalEncoding(layers.Layer):
     """Transformer için Positional Encoding"""
     def __init__(self, max_seq_len=1000, d_model=256, **kwargs):
@@ -334,7 +359,7 @@ class ProgressiveMetricsCallback(callbacks.Callback):
             pass
 
 class VirtualBankrollCallback(callbacks.Callback):
-    """Her epoch'ta sanal kasa simülasyonu"""
+    """Her epoch'ta sanal kasa simülasyonu (Normal Mod için)"""
     def __init__(self, stage_name, starting_capital=1000.0, bet_amount=10.0):
         super().__init__()
         self.stage_name = stage_name
@@ -663,6 +688,16 @@ def load_checkpoint(stage):
 model = build_progressive_model(X_f.shape[1])
 print(f"\n🏗️ Model oluşturuldu: {model.count_params():,} parametre")
 
+# Callback'ler
+class AdaptiveLRCallback(callbacks.Callback):
+    def __init__(self, scheduler):
+        super().__init__()
+        self.scheduler = scheduler
+    def on_epoch_end(self, epoch, logs=None):
+        if logs is None: logs = {}
+        current_lr = self.scheduler(epoch, logs)
+        K.set_value(self.model.optimizer.learning_rate, current_lr)
+
 # --- AŞAMA 1: Foundation ---
 print("\n" + "="*60)
 print("🔥 AŞAMA 1: FOUNDATION TRAINING (100 Epoch)")
@@ -672,6 +707,10 @@ chk1 = load_checkpoint(1)
 if chk1: 
     model.set_weights(chk1['weights'])
     print("🔄 AŞAMA 1 Checkpoint yüklendi.")
+
+# Adaptive Scheduler
+adaptive_scheduler = AdaptiveLearningRateScheduler(initial_lr=0.001, patience=5)
+lr_callback = AdaptiveLRCallback(adaptive_scheduler)
 
 model.compile(
     optimizer=Adam(0.0001),
@@ -689,7 +728,7 @@ hist1 = model.fit(
         DynamicWeightCallback(initial_weight=25.0),
         ProgressiveMetricsCallback(),
         VirtualBankrollCallback("AŞAMA 1", starting_capital=1000.0),
-        AdaptiveLearningRateScheduler(initial_lr=0.001, patience=5),
+        lr_callback,
         callbacks.EarlyStopping(patience=15, restore_best_weights=True),
         callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
     ],
@@ -741,7 +780,7 @@ model.compile(
     metrics={'threshold': ['accuracy']}
 )
 
-# Weighted Checkpoint Callback
+# Weighted Checkpoint
 checkpoint_callback = WeightedModelCheckpoint(
     filepath='jetx_progressive_final.h5',
     X_val=[X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val],
