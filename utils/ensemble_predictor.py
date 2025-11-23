@@ -50,7 +50,7 @@ class EnsemblePredictor:
         strategy: VotingStrategy = VotingStrategy.WEIGHTED,
         weights: Optional[Dict[str, float]] = None,
         threshold: float = 1.5,
-        min_confidence: float = 0.5
+        min_confidence: float = 0.85  # GÜNCELLENDİ: Varsayılan 0.5 -> 0.85
     ):
         """
         Args:
