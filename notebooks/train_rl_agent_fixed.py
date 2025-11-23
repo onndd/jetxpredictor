@@ -9,6 +9,10 @@ Fixed Issues:
 2. Google API client pathlib fix
 3. Better error handling and graceful degradation
 4. CPU fallback when GPU fails
+
+GÜNCELLEME:
+- 3 Mod -> 2 Mod (Normal/Rolling) yapısına geçildi.
+- Güven eşikleri: Normal >= 0.85, Rolling >= 0.95.
 """
 
 import numpy as np
@@ -92,7 +96,7 @@ class RLAgentTrainer:
     def __init__(
         self,
         state_dim: int = 200,
-        action_dim: int = 4,
+        action_dim: int = 4, # 0: Bekle, 1: Rolling, 2: Normal, 3: Normal (Yedek)
         learning_rate: float = 0.001,
         batch_size: int = 32,
         gamma: float = 0.99,  # Discount factor
@@ -239,6 +243,9 @@ class RLAgentTrainer:
     ) -> float:
         """
         Reward hesapla - Enhanced with better reward scaling
+        
+        Args:
+            action: Seçilen action (0: Bekle, 1: Rolling, 2: Normal, 3: Normal)
         """
         if action == 0:  # BEKLE
             # Beklemek için küçük reward (risk yok)
@@ -250,25 +257,21 @@ class RLAgentTrainer:
         # BAHIS YAP
         if actual_value >= 1.5:
             # Kazandık
-            if action == 1:  # Konservatif
+            if action == 1:  # Rolling (Güvenli Liman)
                 exit_multiplier = 1.5
                 profit = bet_amount * (exit_multiplier - 1.0)
                 reward = profit / bankroll * 5.0  # Reduced scaling
-            elif action == 2:  # Normal
+                
+            elif action == 2 or action == 3:  # Normal (Dengeli)
                 exit_multiplier = min(predicted_value * 0.8, 2.5)
                 if actual_value >= exit_multiplier:
                     profit = bet_amount * (exit_multiplier - 1.0)
-                    reward = profit / bankroll * 5.0
+                    reward = profit / bankroll * 8.0 # Daha yüksek potansiyel ödül
                 else:
                     # Çıkış noktasına ulaşamadık, kayıp
                     reward = -bet_amount / bankroll * 3.0  # Reduced penalty
-            else:  # Agresif
-                exit_multiplier = min(predicted_value * 0.85, 5.0)
-                if actual_value >= exit_multiplier:
-                    profit = bet_amount * (exit_multiplier - 1.0)
-                    reward = profit / bankroll * 8.0  # Higher reward
-                else:
-                    reward = -bet_amount / bankroll * 5.0  # Higher penalty
+            else:
+                reward = 0
         else:
             # Kaybettik
             reward = -bet_amount / bankroll * 5.0  # Kayıp cezası
@@ -311,7 +314,7 @@ class RLAgentTrainer:
             try:
                 bankroll_manager = AdvancedBankrollManager(
                     initial_bankroll=virtual_bankroll,
-                    risk_tolerance='moderate'
+                    risk_tolerance='normal' # Ortak risk toleransı
                 )
             except Exception as e:
                 logger.warning(f"⚠️ BankrollManager failed: {e}")
@@ -370,34 +373,31 @@ class RLAgentTrainer:
                     if len(state_vector) != self.state_dim:
                         state_vector = np.random.random(self.state_dim)
                     
-                    # Optimal action hesapla (basit rule-based)
+                    # Optimal action hesapla (YENİ 2 MODLU YAPI)
                     consensus_pred = model_predictions.get('consensus')
+                    
+                    optimal_action = 0 # Varsayılan: BEKLE
+
                     if consensus_pred and consensus_pred.get('above_threshold', False):
                         confidence = consensus_pred.get('confidence', 0.5)
-                        prediction = consensus_pred.get('prediction', 1.5)
                         
-                        if confidence >= 0.8:
-                            if prediction >= 2.5:
-                                optimal_action = 3  # Agresif
-                            else:
-                                optimal_action = 2  # Normal
-                        elif confidence >= 0.65:
-                            optimal_action = 1  # Konservatif
+                        # Yeni Eşikler: Rolling >= 0.95, Normal >= 0.85
+                        if confidence >= 0.95:
+                            optimal_action = 1  # ROLLING (En güvenli)
+                        elif confidence >= 0.85:
+                            optimal_action = 2  # NORMAL (Yüksek güven)
                         else:
-                            optimal_action = 0  # BEKLE
+                            optimal_action = 0  # BEKLE (Güven yetersiz)
                     else:
                         optimal_action = 0  # BEKLE
                     
                     # Reward hesapla
+                    bet_amount = 0.0
                     if optimal_action > 0:
-                        if optimal_action == 1:
-                            bet_amount = virtual_bankroll * 0.02
-                        elif optimal_action == 2:
-                            bet_amount = virtual_bankroll * 0.04
-                        else:
-                            bet_amount = virtual_bankroll * 0.06
-                    else:
-                        bet_amount = 0.0
+                        if optimal_action == 1: # Rolling
+                            bet_amount = virtual_bankroll * 0.02 # %2
+                        elif optimal_action == 2 or optimal_action == 3: # Normal
+                            bet_amount = virtual_bankroll * 0.04 # %4
                     
                     reward = self.calculate_reward(
                         action=optimal_action,
