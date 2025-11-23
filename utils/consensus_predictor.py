@@ -1,12 +1,14 @@
 """
 Consensus Predictor - NN ve CatBoost Ensemble Modellerinin Consensus Tahminleri
 
-Bu modül, Progressive NN ve CatBoost modellerinin tahminlerini birleştirir ve
-sadece iki model de hemfikir olduğunda (ve GÜVENLİ olduğunda) bahis önerisi yapar.
+Bu modül, Progressive NN ve CatBoost modellerinin tahminlerini birleştirir.
+YENİ 2 MODLU YAPI:
+- Normal Mod: Her iki model de ≥ 0.85 güven veriyorsa.
+- Rolling Mod: Her iki model de ≥ 0.95 güven veriyorsa.
 
 GÜNCELLEME:
-- Consensus kararı için %85 güven eşiği ("Keskin Nişancı" Modu) şart koşuldu.
-- CatBoost için predict_proba kullanılarak hassas olasılık ölçümü eklendi.
+- %85 Normal, %95 Rolling Eşikleri.
+- Simülasyonlar bu modlara göre ayrıştırıldı.
 """
 
 import numpy as np
@@ -64,282 +66,149 @@ class ConsensusPredictor:
         self.catboost_classifiers = {}
         self.catboost_scalers = {}
         
-        # KRITIK: Güven Eşiği (Sniper Mode)
-        self.CONFIDENCE_THRESHOLD = 0.85
+        # KRITIK EŞİKLER
+        self.THRESHOLD_NORMAL = 0.85
+        self.THRESHOLD_ROLLING = 0.95
         
-        logger.info(f"ConsensusPredictor initialized (Threshold: {self.CONFIDENCE_THRESHOLD})")
-        logger.info(f"  NN model directory: {nn_model_dir}")
-        logger.info(f"  CatBoost model directory: {catboost_model_dir}")
-        logger.info(f"  Window sizes: {window_sizes}")
+        logger.info(f"ConsensusPredictor initialized")
+        logger.info(f"  Normal Threshold: {self.THRESHOLD_NORMAL}")
+        logger.info(f"  Rolling Threshold: {self.THRESHOLD_ROLLING}")
     
     def load_nn_models(self):
         """Progressive NN modellerini yükle"""
         if not TF_AVAILABLE:
             raise RuntimeError("TensorFlow is not available. Cannot load NN models.")
         
-        logger.info("\n" + "="*70)
-        logger.info("LOADING PROGRESSIVE NN MODELS")
-        logger.info("="*70)
+        logger.info("\nLOADING PROGRESSIVE NN MODELS")
         
         for window_size in self.window_sizes:
             model_path = os.path.join(self.nn_model_dir, f'model_window_{window_size}.h5')
             scaler_path = os.path.join(self.nn_model_dir, f'scaler_window_{window_size}.pkl')
             
-            if not os.path.exists(model_path):
-                logger.warning(f"⚠️  NN model not found: {model_path}")
+            if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+                logger.warning(f"⚠️  NN files not found for window {window_size}")
                 continue
             
-            if not os.path.exists(scaler_path):
-                logger.warning(f"⚠️  NN scaler not found: {scaler_path}")
-                continue
-            
-            # Model yükle - Lambda katmanı desteğiyle
             try:
-                # İlk önce compile=False ile dene
                 self.nn_models[window_size] = models.load_model(model_path, compile=False)
+                self.nn_scalers[window_size] = joblib.load(scaler_path)
                 logger.info(f"✅ Loaded NN model for window {window_size}")
             except Exception as e:
-                # Eğer Lambda hatası varsa, custom_objects ile tekrar dene
-                logger.warning(f"⚠️  Initial load failed, trying with Lambda support...")
-                try:
-                    from tensorflow.keras import backend as K
-                    custom_objects = {
-                        'lambda': lambda x: K.sum(x, axis=1)
-                    }
-                    self.nn_models[window_size] = models.load_model(
-                        model_path, 
-                        compile=False,
-                        custom_objects=custom_objects
-                    )
-                    logger.info(f"✅ Loaded NN model for window {window_size} (with Lambda support)")
-                except Exception as e2:
-                    logger.error(f"❌ Failed to load NN model for window {window_size}: {e2}")
-                    continue
-            
-            # Scaler yükle
-            self.nn_scalers[window_size] = joblib.load(scaler_path)
-        
-        logger.info(f"Total NN models loaded: {len(self.nn_models)}")
-        logger.info("="*70 + "\n")
+                logger.error(f"❌ Failed to load NN model {window_size}: {e}")
     
     def load_catboost_models(self):
         """CatBoost modellerini yükle"""
         if not CATBOOST_AVAILABLE:
             raise RuntimeError("CatBoost is not available. Cannot load CatBoost models.")
         
-        logger.info("\n" + "="*70)
-        logger.info("LOADING CATBOOST MODELS")
-        logger.info("="*70)
+        logger.info("\nLOADING CATBOOST MODELS")
         
         for window_size in self.window_sizes:
             reg_path = os.path.join(self.catboost_model_dir, f'regressor_window_{window_size}.cbm')
             cls_path = os.path.join(self.catboost_model_dir, f'classifier_window_{window_size}.cbm')
             scaler_path = os.path.join(self.catboost_model_dir, f'scaler_window_{window_size}.pkl')
             
-            if not os.path.exists(reg_path):
-                logger.warning(f"⚠️  CatBoost regressor not found: {reg_path}")
+            if not (os.path.exists(reg_path) and os.path.exists(cls_path) and os.path.exists(scaler_path)):
+                logger.warning(f"⚠️  CatBoost files not found for window {window_size}")
                 continue
             
-            if not os.path.exists(cls_path):
-                logger.warning(f"⚠️  CatBoost classifier not found: {cls_path}")
-                continue
-            
-            if not os.path.exists(scaler_path):
-                logger.warning(f"⚠️  CatBoost scaler not found: {scaler_path}")
-                continue
-            
-            # Modelleri yükle
-            self.catboost_regressors[window_size] = CatBoostRegressor()
-            self.catboost_regressors[window_size].load_model(reg_path)
-            
-            self.catboost_classifiers[window_size] = CatBoostClassifier()
-            self.catboost_classifiers[window_size].load_model(cls_path)
-            
-            # Scaler yükle
-            self.catboost_scalers[window_size] = joblib.load(scaler_path)
-            
-            logger.info(f"✅ Loaded CatBoost models for window {window_size}")
-        
-        logger.info(f"Total CatBoost model pairs loaded: {len(self.catboost_regressors)}")
-        logger.info("="*70 + "\n")
+            try:
+                self.catboost_regressors[window_size] = CatBoostRegressor().load_model(reg_path)
+                self.catboost_classifiers[window_size] = CatBoostClassifier().load_model(cls_path)
+                self.catboost_scalers[window_size] = joblib.load(scaler_path)
+                logger.info(f"✅ Loaded CatBoost models for window {window_size}")
+            except Exception as e:
+                logger.error(f"❌ Failed to load CatBoost models {window_size}: {e}")
     
     def extract_features(self, data: np.ndarray, window_size: int) -> np.ndarray:
-        """
-        Veri için feature extraction yap
-        
-        Args:
-            data: Geçmiş veri
-            window_size: Pencere boyutu
-            
-        Returns:
-            Feature vector
-        """
-        # Son window_size veriyi al
+        """Veri için feature extraction yap"""
         if len(data) < window_size:
             raise ValueError(f"Data length ({len(data)}) < window size ({window_size})")
         
-        # Feature engineering
         feats = FeatureEngineering.extract_all_features(data.tolist())
         features = np.array(list(feats.values())).reshape(1, -1)
-        
         return features
     
     def predict_nn_ensemble(self, data: np.ndarray) -> Dict:
-        """
-        NN ensemble tahminini yap
-        
-        Args:
-            data: Geçmiş veri
-            
-        Returns:
-            Dict with predictions
-        """
-        if not self.nn_models:
-            raise RuntimeError("NN models not loaded. Call load_nn_models() first.")
+        """NN ensemble tahminini yap"""
+        if not self.nn_models: return {'regression': 0, 'threshold_prob': 0}
         
         ensemble_reg = []
         ensemble_thr = []
         
         for window_size in self.window_sizes:
-            if window_size not in self.nn_models:
-                continue
+            if window_size not in self.nn_models: continue
             
-            # Feature extraction
             features = self.extract_features(data, window_size)
-            
-            # Normalizasyon
             features = self.nn_scalers[window_size].transform(features)
             
-            # Sequence (son window_size değer)
             sequence = data[-window_size:].reshape(1, window_size, 1)
             sequence = np.log10(sequence + 1e-8)
             
-            # Tahmin
             pred = self.nn_models[window_size].predict([features, sequence], verbose=0)
-            p_reg = pred[0][0][0]  # Regression output
-            p_thr = pred[2][0][0]  # Threshold output (sigmoid probability)
-            
-            ensemble_reg.append(p_reg)
-            ensemble_thr.append(p_thr)
-        
-        # Ensemble ortalama
-        avg_reg = np.mean(ensemble_reg)
-        avg_thr = np.mean(ensemble_thr)
-        
-        # GÜNCELLEME: Threshold: 1.5 üstü mü? (Sadece %85 güven ile)
-        threshold_prediction = 1 if avg_thr >= self.CONFIDENCE_THRESHOLD else 0
+            ensemble_reg.append(pred[0][0][0])
+            ensemble_thr.append(pred[2][0][0])
         
         return {
-            'regression': float(avg_reg),
-            'threshold': threshold_prediction,
-            'threshold_prob': float(avg_thr),
-            'individual_predictions': {
-                'regression': ensemble_reg,
-                'threshold': ensemble_thr
-            }
+            'regression': float(np.mean(ensemble_reg)),
+            'threshold_prob': float(np.mean(ensemble_thr))
         }
     
     def predict_catboost_ensemble(self, data: np.ndarray) -> Dict:
-        """
-        CatBoost ensemble tahminini yap
-        
-        Args:
-            data: Geçmiş veri
-            
-        Returns:
-            Dict with predictions
-        """
-        if not self.catboost_regressors:
-            raise RuntimeError("CatBoost models not loaded. Call load_catboost_models() first.")
+        """CatBoost ensemble tahminini yap"""
+        if not self.catboost_regressors: return {'regression': 0, 'threshold_prob': 0}
         
         ensemble_reg = []
-        ensemble_cls_probs = [] # Olasılıkları saklayacağız
+        ensemble_cls_probs = []
         
         for window_size in self.window_sizes:
-            if window_size not in self.catboost_regressors:
-                continue
+            if window_size not in self.catboost_regressors: continue
             
-            # Feature extraction
             features = self.extract_features(data, window_size)
-            
-            # Normalizasyon
             features = self.catboost_scalers[window_size].transform(features)
             
-            # Regressor Tahmini
             p_reg = self.catboost_regressors[window_size].predict(features)[0]
-            
-            # Classifier Tahmini (Olasılık bazlı)
             try:
-                # Olasılığı al (1. sınıf yani "Üst" olasılığı)
                 p_cls_prob = self.catboost_classifiers[window_size].predict_proba(features)[0][1]
             except:
-                # Fallback: Eğer predict_proba çalışmazsa normal predict (0 veya 1)
                 p_cls_prob = float(self.catboost_classifiers[window_size].predict(features)[0])
             
             ensemble_reg.append(p_reg)
             ensemble_cls_probs.append(p_cls_prob)
         
-        # Ensemble ortalama
-        avg_reg = np.mean(ensemble_reg)
-        avg_cls_prob = np.mean(ensemble_cls_probs)
-        
-        # GÜNCELLEME: Threshold kararı (%85 güven eşiği)
-        threshold_prediction = 1 if avg_cls_prob >= self.CONFIDENCE_THRESHOLD else 0
-        
         return {
-            'regression': float(avg_reg),
-            'threshold': threshold_prediction,
-            'threshold_prob': float(avg_cls_prob),
-            'individual_predictions': {
-                'regression': ensemble_reg,
-                'threshold': ensemble_cls_probs
-            }
+            'regression': float(np.mean(ensemble_reg)),
+            'threshold_prob': float(np.mean(ensemble_cls_probs))
         }
     
     def predict_consensus(self, data: np.ndarray) -> Dict:
         """
-        Consensus tahmin yap
-        
-        Args:
-            data: Geçmiş veri
-            
-        Returns:
-            Consensus prediction dict
+        Consensus tahmin yap (Normal ve Rolling Mod)
         """
-        # NN tahminini al
+        # NN ve CatBoost tahminlerini al
         nn_result = self.predict_nn_ensemble(data)
-        
-        # CatBoost tahminini al
         catboost_result = self.predict_catboost_ensemble(data)
         
-        # Consensus kontrolü: İki model de "1" mi diyor?
-        # Not: Yukarıdaki fonksiyonlar zaten 0.85 eşiğine göre 1 veya 0 döndü.
-        nn_threshold = nn_result['threshold']
-        catboost_threshold = catboost_result['threshold']
+        nn_prob = nn_result['threshold_prob']
+        cb_prob = catboost_result['threshold_prob']
         
-        # İki model de "Kesinlikle Üst" (%85+) diyorsa consensus sağlanmıştır
-        consensus = (nn_threshold == 1 and catboost_threshold == 1)
+        # Normal Mod Consensus (Her ikisi de >= 0.85)
+        consensus_normal = (nn_prob >= self.THRESHOLD_NORMAL) and (cb_prob >= self.THRESHOLD_NORMAL)
         
-        # Ortalama tahmin
-        avg_prediction = (nn_result['regression'] + catboost_result['regression']) / 2
+        # Rolling Mod Consensus (Her ikisi de >= 0.95)
+        consensus_rolling = (nn_prob >= self.THRESHOLD_ROLLING) and (cb_prob >= self.THRESHOLD_ROLLING)
         
-        # Kasa 2 için çıkış noktası: Ortalama × 0.70
-        exit_point_70 = avg_prediction * 0.70
+        avg_pred = (nn_result['regression'] + catboost_result['regression']) / 2
         
-        result = {
-            'consensus': consensus,
-            'should_bet': consensus,  # Sadece consensus varsa oyna
+        return {
+            'consensus_normal': consensus_normal,
+            'consensus_rolling': consensus_rolling,
+            'nn_confidence': nn_prob,
+            'catboost_confidence': cb_prob,
             'nn_prediction': nn_result['regression'],
             'catboost_prediction': catboost_result['regression'],
-            'average_prediction': avg_prediction,
-            'exit_point_70': exit_point_70,
-            'nn_threshold': nn_threshold,
-            'catboost_threshold': catboost_threshold,
-            'nn_threshold_prob': nn_result['threshold_prob'],
-            'catboost_threshold_prob': catboost_result.get('threshold_prob', 0.0)
+            'average_prediction': avg_pred
         }
-        
-        return result
 
 
 def simulate_consensus_bankroll(
@@ -348,73 +217,46 @@ def simulate_consensus_bankroll(
     bet_amount: float = 10.0
 ) -> Dict:
     """
-    Consensus tahminleri ile sanal kasa simülasyonu
-    
-    Args:
-        predictions: Consensus tahminleri listesi
-        actuals: Gerçek değerler
-        bet_amount: Bahis tutarı
-        
-    Returns:
-        Simülasyon sonuçları
+    Consensus tahminleri ile sanal kasa simülasyonu (2 Modlu)
     """
     initial_bankroll = len(actuals) * bet_amount
     
-    # Kasa 1: 1.5x EŞİK
-    wallet1 = initial_bankroll
-    total_bets1 = 0
-    total_wins1 = 0
+    # Kasa 1: Normal Mod (Dinamik Çıkış)
+    w1, b1, w_cnt1 = initial_bankroll, 0, 0
     
-    # Kasa 2: %70 ÇIKIŞ
-    wallet2 = initial_bankroll
-    total_bets2 = 0
-    total_wins2 = 0
+    # Kasa 2: Rolling Mod (Güvenli Çıkış)
+    w2, b2, w_cnt2 = initial_bankroll, 0, 0
     
-    for pred, actual in zip(predictions, actuals):
-        if pred['should_bet']: # Consensus (%85+) sağlandıysa
-            # KASA 1
-            wallet1 -= bet_amount
-            total_bets1 += 1
+    for i, (pred, actual) in enumerate(zip(predictions, actuals)):
+        
+        # KASA 1: NORMAL MOD
+        if pred['consensus_normal']:
+            w1 -= bet_amount
+            b1 += 1
+            # Dinamik çıkış: Tahminin %80'i, min 1.5, max 2.5
+            exit_pt = min(max(1.5, pred['average_prediction'] * 0.8), 2.5)
             
+            if actual >= exit_pt:
+                w1 += bet_amount * exit_pt
+                w_cnt1 += 1
+        
+        # KASA 2: ROLLING MOD
+        if pred['consensus_rolling']:
+            w2 -= bet_amount
+            b2 += 1
+            # Güvenli çıkış: 1.5x Sabit
             if actual >= 1.5:
-                wallet1 += 1.5 * bet_amount
-                total_wins1 += 1
-            
-            # KASA 2
-            wallet2 -= bet_amount
-            total_bets2 += 1
-            
-            exit_point = pred['exit_point_70']
-            if actual >= exit_point:
-                wallet2 += exit_point * bet_amount
-                total_wins2 += 1
+                w2 += bet_amount * 1.5
+                w_cnt2 += 1
     
     # Metrikler
-    profit1 = wallet1 - initial_bankroll
-    roi1 = (profit1 / initial_bankroll) * 100 if total_bets1 > 0 else 0
-    win_rate1 = (total_wins1 / total_bets1 * 100) if total_bets1 > 0 else 0
-    
-    profit2 = wallet2 - initial_bankroll
-    roi2 = (profit2 / initial_bankroll) * 100 if total_bets2 > 0 else 0
-    win_rate2 = (total_wins2 / total_bets2 * 100) if total_bets2 > 0 else 0
+    def calc_metrics(wallet, bets, wins):
+        profit = wallet - initial_bankroll
+        roi = (profit / initial_bankroll) * 100 if bets > 0 else 0
+        wr = (wins / bets * 100) if bets > 0 else 0
+        return {'final': wallet, 'profit': profit, 'roi': roi, 'win_rate': wr, 'total_bets': bets, 'total_wins': wins}
     
     return {
-        'kasa_1': {
-            'initial': initial_bankroll,
-            'final': wallet1,
-            'profit': profit1,
-            'roi': roi1,
-            'total_bets': total_bets1,
-            'total_wins': total_wins1,
-            'win_rate': win_rate1
-        },
-        'kasa_2': {
-            'initial': initial_bankroll,
-            'final': wallet2,
-            'profit': profit2,
-            'roi': roi2,
-            'total_bets': total_bets2,
-            'total_wins': total_wins2,
-            'win_rate': win_rate2
-        }
+        'kasa_1': {**calc_metrics(w1, b1, w_cnt1), 'initial': initial_bankroll},
+        'kasa_2': {**calc_metrics(w2, b2, w_cnt2), 'initial': initial_bankroll}
     }
