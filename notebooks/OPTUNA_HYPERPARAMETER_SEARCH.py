@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-🔍 JetX Hyperparameter Optimization with Optuna
+🔍 JetX Hyperparameter Optimization with Optuna (v2.1 - 2 MODLU)
+
+GÜNCELLEME:
+- Hedef Fonksiyonu: ROI ve Precision Odaklı (Yeni 2 Modlu Sistem)
+- Eşikler: Normal (0.85) ve Rolling (0.95)
+- Loss: Balanced Threshold Killer + Focal Loss
 
 Optuna ile otomatik hyperparameter search. En iyi kombinasyonu bulur:
 - Class weights
 - Learning rate
 - Dropout rates
-- Model architecture parameters
-- Loss function parameters
+- Model architecture parameters (N-Beats, TCN)
+- Focal Loss parameters
 
 KULLANIM:
 1. Google Colab'da çalıştır
@@ -36,7 +41,7 @@ from tensorflow.keras import layers, models, callbacks, backend as K
 from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, mean_absolute_error
+from sklearn.metrics import accuracy_score, mean_absolute_error, precision_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 import sqlite3
@@ -44,6 +49,10 @@ import json
 from typing import Dict, Tuple
 import warnings
 warnings.filterwarnings('ignore')
+
+# Kritik Eşikler
+THRESHOLD_NORMAL = 0.85
+THRESHOLD_ROLLING = 0.95
 
 # GPU ayarları
 gpus = tf.config.list_physical_devices('GPU')
@@ -58,7 +67,7 @@ else:
 if not os.path.exists('jetxpredictor'):
     print("📥 Proje klonlanıyor...")
     subprocess.check_call(["git", "clone", "https://github.com/onndd/jetxpredictor.git"])
-
+    
 os.chdir('jetxpredictor')
 sys.path.append(os.getcwd())
 
@@ -122,9 +131,11 @@ tr_idx, val_idx = train_test_split(idx, test_size=0.2, shuffle=False)
 
 X_f_tr, X_50_tr, X_200_tr, X_500_tr = X_f[tr_idx], X_50[tr_idx], X_200[tr_idx], X_500[tr_idx]
 y_thr_tr = y_thr[tr_idx]
+y_reg_tr = y_reg[tr_idx]
 
 X_f_val, X_50_val, X_200_val, X_500_val = X_f[val_idx], X_50[val_idx], X_200[val_idx], X_500[val_idx]
 y_thr_val = y_thr[val_idx]
+y_reg_val = y_reg[val_idx]
 
 print(f"Train: {len(X_f_tr)}, Validation: {len(X_f_val)}")
 
@@ -133,26 +144,19 @@ print(f"Train: {len(X_f_tr)}, Validation: {len(X_f_val)}")
 # =============================================================================
 
 # Global best trial tracker
-best_trial_accuracy = 0.0
+best_trial_score = -float('inf')
 best_trial_params = {}
 
 def create_model(trial: optuna.Trial, n_features: int) -> models.Model:
     """
     Optuna trial'dan model oluştur
-    
-    Trial parametreleri:
-    - n_blocks: N-BEATS blok sayısı
-    - block_units: N-BEATS blok unit sayısı
-    - tcn_filters: TCN filter sayısı
-    - dropout: Dropout rate
-    - fusion_units: Fusion layer unit sayısı
     """
     # Hyperparameters
-    n_blocks = trial.suggest_int('n_blocks', 3, 10)
+    n_blocks = trial.suggest_int('n_blocks', 3, 8)
     block_units = trial.suggest_int('block_units', 64, 256, step=64)
     tcn_filters = trial.suggest_int('tcn_filters', 128, 512, step=128)
     dropout = trial.suggest_float('dropout', 0.1, 0.4)
-    fusion_units = trial.suggest_int('fusion_units', 256, 1024, step=256)
+    fusion_units = trial.suggest_int('fusion_units', 256, 512, step=128)
     
     # Inputs
     inp_f = layers.Input((n_features,), name='features')
@@ -186,7 +190,7 @@ def create_model(trial: optuna.Trial, n_features: int) -> models.Model:
     tcn = inp_500
     for i, dilation in enumerate([1, 2, 4, 8]):
         tcn = layers.Conv1D(tcn_filters, 3, dilation_rate=dilation, 
-                           padding='causal', activation='relu')(tcn)
+                            padding='causal', activation='relu')(tcn)
         tcn = layers.BatchNormalization()(tcn)
         tcn = layers.Dropout(dropout)(tcn)
     
@@ -213,35 +217,25 @@ def create_model(trial: optuna.Trial, n_features: int) -> models.Model:
 def objective(trial: optuna.Trial) -> float:
     """
     Optuna objective function
-    
-    Returns:
-        Validation threshold accuracy (maximize edilecek)
+    Hedef: Weighted Score (ROI + Precision) maximize etmek
     """
-    global best_trial_accuracy, best_trial_params
+    global best_trial_score, best_trial_params
     
     print(f"\n{'='*70}")
     print(f"TRIAL #{trial.number}")
     print(f"{'='*70}")
     
     # Hyperparameters to optimize
-    class_weight_multiplier = trial.suggest_float('class_weight', 1.5, 5.0)
+    class_weight_multiplier = trial.suggest_float('class_weight', 2.0, 10.0) # Artırıldı
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-3, log=True)
-    focal_gamma = trial.suggest_float('focal_gamma', 1.0, 4.0)
+    focal_gamma = trial.suggest_float('focal_gamma', 2.0, 5.0)
     focal_alpha = trial.suggest_float('focal_alpha', 0.6, 0.9)
     
     # Model architecture
     n_features = X_f_tr.shape[1]
     model = create_model(trial, n_features)
     
-    # Loss fonksiyonları
-    def threshold_killer_loss(y_true, y_pred):
-        mae = K.abs(y_true - y_pred)
-        false_positive = K.cast(tf.logical_and(y_true < 0.5, y_pred >= 0.5), 'float32') * 2.0
-        false_negative = K.cast(tf.logical_and(y_true >= 0.5, y_pred < 0.5), 'float32') * 1.5
-        weight = K.maximum(false_positive, false_negative)
-        weight = K.maximum(weight, 1.0)
-        return K.mean(mae * weight)
-    
+    # Loss fonksiyonları (GÖMÜLÜ)
     def focal_loss(gamma, alpha):
         def loss(y_true, y_pred):
             y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
@@ -268,16 +262,13 @@ def objective(trial: optuna.Trial) -> float:
     print(f"\n🎯 Trial Parameters:")
     print(f"  Class weight: {class_weight_multiplier:.2f}x → w0={w0:.2f}, w1={w1:.2f}")
     print(f"  Learning rate: {learning_rate:.6f}")
-    print(f"  Focal gamma: {focal_gamma:.2f}")
-    print(f"  Focal alpha: {focal_alpha:.2f}")
-    print(f"  Model params: {model.count_params():,}")
     
     # Callbacks
     early_stop = callbacks.EarlyStopping(
-        monitor='val_accuracy',
+        monitor='val_loss',
         patience=5,
         restore_best_weights=True,
-        mode='max'
+        mode='min'
     )
     
     # Train (hızlı trial için 20 epoch)
@@ -293,28 +284,51 @@ def objective(trial: optuna.Trial) -> float:
             verbose=0
         )
         
-        # Validation accuracy
-        val_acc = max(history.history['val_accuracy'])
-        
-        # Below/Above threshold accuracy
+        # Prediction
         y_pred = model.predict([X_f_val, X_50_val, X_200_val, X_500_val], verbose=0)
-        y_pred_class = (y_pred >= 0.5).astype(int).flatten()
+        
+        # Normal Mod (0.85) Analizi
+        y_pred_class = (y_pred >= THRESHOLD_NORMAL).astype(int).flatten()
         y_true_class = y_thr_val.flatten().astype(int)
         
-        below_mask = y_true_class == 0
-        above_mask = y_true_class == 1
+        # ROI Simülasyonu (Normal Mod)
+        initial_bankroll = 1000.0
+        wallet = initial_bankroll
+        total_bets = 0
+        wins = 0
         
-        below_acc = (y_pred_class[below_mask] == y_true_class[below_mask]).mean() if below_mask.sum() > 0 else 0
-        above_acc = (y_pred_class[above_mask] == y_true_class[above_mask]).mean() if above_mask.sum() > 0 else 0
+        for pred, actual_val in zip(y_pred.flatten(), y_reg_val):
+            if pred >= THRESHOLD_NORMAL:
+                total_bets += 1
+                wallet -= 10
+                if actual_val >= 1.5:
+                    wallet += 15
+                    wins += 1
         
-        print(f"\n📊 Results:")
-        print(f"  Val Accuracy: {val_acc*100:.2f}%")
-        print(f"  Below 1.5: {below_acc*100:.2f}%")
-        print(f"  Above 1.5: {above_acc*100:.2f}%")
+        roi = ((wallet - initial_bankroll) / initial_bankroll) * 100 if total_bets > 0 else 0
+        
+        # Precision
+        tp = np.sum((y_true_class == 1) & (y_pred_class == 1))
+        fp = np.sum((y_true_class == 0) & (y_pred_class == 1))
+        precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0
+        
+        # Weighted Score (Optimizasyon Hedefi)
+        # ROI %60 + Precision %40
+        # Negatif ROI cezalandırılır
+        roi_score = max(0, roi + 50) / 1.5  # -50% ROI = 0 puan, 100% ROI = 100 puan
+        precision_score_val = precision * 100
+        
+        weighted_score = 0.6 * roi_score + 0.4 * precision_score_val
+        
+        print(f"\n📊 Results (Normal Mod - 0.85):")
+        print(f"  ROI: {roi:.2f}%")
+        print(f"  Precision: {precision_score_val:.2f}%")
+        print(f"  Weighted Score: {weighted_score:.2f}")
+        print(f"  Total Bets: {total_bets}")
         
         # Update best trial
-        if val_acc > best_trial_accuracy:
-            best_trial_accuracy = val_acc
+        if weighted_score > best_trial_score:
+            best_trial_score = weighted_score
             best_trial_params = {
                 'class_weight': class_weight_multiplier,
                 'learning_rate': learning_rate,
@@ -326,16 +340,16 @@ def objective(trial: optuna.Trial) -> float:
                 'dropout': trial.params['dropout'],
                 'fusion_units': trial.params['fusion_units']
             }
-            print(f"\n🎉 NEW BEST TRIAL! Accuracy: {val_acc*100:.2f}%")
+            print(f"\n🎉 NEW BEST TRIAL! Score: {weighted_score:.2f}")
         
-        # Cleanup - GPU belleği tam temizleme
+        # Cleanup
         K.clear_session()
         del model
         tf.keras.backend.clear_session()
         import gc
         gc.collect()
         
-        return val_acc
+        return weighted_score
         
     except Exception as e:
         print(f"\n❌ Trial failed: {e}")
@@ -343,7 +357,7 @@ def objective(trial: optuna.Trial) -> float:
         tf.keras.backend.clear_session()
         import gc
         gc.collect()
-        return 0.0
+        return -100.0 # Ceza puanı
 
 
 # =============================================================================
@@ -380,7 +394,7 @@ print("="*70)
 
 print(f"\n🏆 BEST TRIAL:")
 print(f"  Trial #: {study.best_trial.number}")
-print(f"  Accuracy: {study.best_value*100:.2f}%")
+print(f"  Weighted Score: {study.best_value:.2f}")
 
 print(f"\n🎯 BEST PARAMETERS:")
 for key, value in study.best_params.items():
@@ -388,13 +402,6 @@ for key, value in study.best_params.items():
         print(f"  {key}: {value:.6f}")
     else:
         print(f"  {key}: {value}")
-
-# Statistical summary
-print(f"\n📈 STATISTICS:")
-print(f"  Total trials: {len(study.trials)}")
-print(f"  Best accuracy: {study.best_value*100:.2f}%")
-print(f"  Mean accuracy: {np.mean([t.value for t in study.trials if t.value is not None])*100:.2f}%")
-print(f"  Std accuracy: {np.std([t.value for t in study.trials if t.value is not None])*100:.2f}%")
 
 # =============================================================================
 # VISUALIZATION
@@ -407,9 +414,9 @@ fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 ax = axes[0, 0]
 values = [t.value for t in study.trials if t.value is not None]
 ax.plot(values, marker='o', linestyle='-', alpha=0.6)
-ax.axhline(y=study.best_value, color='r', linestyle='--', label=f'Best: {study.best_value*100:.2f}%')
+ax.axhline(y=study.best_value, color='r', linestyle='--', label=f'Best: {study.best_value:.2f}')
 ax.set_xlabel('Trial')
-ax.set_ylabel('Accuracy')
+ax.set_ylabel('Weighted Score')
 ax.set_title('Optimization History')
 ax.legend()
 ax.grid(True, alpha=0.3)
@@ -429,26 +436,26 @@ except:
     axes[0, 1].text(0.5, 0.5, 'Not enough trials\nfor importance', 
                     ha='center', va='center', transform=axes[0, 1].transAxes)
 
-# 3. Learning Rate vs Accuracy
+# 3. Learning Rate vs Score
 ax = axes[1, 0]
 lrs = [t.params['learning_rate'] for t in study.trials if t.value is not None]
 accs = [t.value for t in study.trials if t.value is not None]
 ax.scatter(lrs, accs, alpha=0.6, c=accs, cmap='viridis')
 ax.set_xlabel('Learning Rate (log scale)')
-ax.set_ylabel('Accuracy')
+ax.set_ylabel('Score')
 ax.set_xscale('log')
-ax.set_title('Learning Rate vs Accuracy')
-ax.colorbar(ax.scatter(lrs, accs, alpha=0.6, c=accs, cmap='viridis'), ax=ax, label='Accuracy')
+ax.set_title('Learning Rate vs Score')
+ax.colorbar(ax.scatter(lrs, accs, alpha=0.6, c=accs, cmap='viridis'), ax=ax, label='Score')
 ax.grid(True, alpha=0.3)
 
-# 4. Class Weight vs Accuracy
+# 4. Class Weight vs Score
 ax = axes[1, 1]
 weights = [t.params['class_weight'] for t in study.trials if t.value is not None]
 ax.scatter(weights, accs, alpha=0.6, c=accs, cmap='viridis')
 ax.set_xlabel('Class Weight Multiplier')
-ax.set_ylabel('Accuracy')
-ax.set_title('Class Weight vs Accuracy')
-ax.colorbar(ax.scatter(weights, accs, alpha=0.6, c=accs, cmap='viridis'), ax=ax, label='Accuracy')
+ax.set_ylabel('Score')
+ax.set_title('Class Weight vs Score')
+ax.colorbar(ax.scatter(weights, accs, alpha=0.6, c=accs, cmap='viridis'), ax=ax, label='Score')
 ax.grid(True, alpha=0.3)
 
 plt.tight_layout()
@@ -480,19 +487,19 @@ print("\n💾 Sonuçlar kaydediliyor...")
 results = {
     'best_trial': {
         'number': study.best_trial.number,
-        'accuracy': float(study.best_value),
+        'score': float(study.best_value),
         'params': study.best_params
     },
     'statistics': {
         'total_trials': len(study.trials),
-        'best_accuracy': float(study.best_value),
-        'mean_accuracy': float(np.mean([t.value for t in study.trials if t.value is not None])),
-        'std_accuracy': float(np.std([t.value for t in study.trials if t.value is not None]))
+        'best_score': float(study.best_value),
+        'mean_score': float(np.mean([t.value for t in study.trials if t.value is not None])),
+        'std_score': float(np.std([t.value for t in study.trials if t.value is not None]))
     },
     'all_trials': [
         {
             'number': t.number,
-            'accuracy': float(t.value) if t.value is not None else None,
+            'score': float(t.value) if t.value is not None else None,
             'params': t.params
         }
         for t in study.trials
@@ -526,8 +533,7 @@ print("\n" + "="*70)
 print("🎉 OPTUNA HYPERPARAMETER SEARCH TAMAMLANDI!")
 print("="*70)
 
-print(f"\n📊 BEST CONFIGURATION:")
-print(f"✅ Accuracy: {study.best_value*100:.2f}%")
+print(f"\n📊 BEST CONFIGURATION SCORE: {study.best_value:.2f}")
 print(f"\n🎯 Önerilen parametreler:")
 print(json.dumps(study.best_params, indent=2))
 
@@ -535,10 +541,5 @@ print(f"\n📁 Sonraki adımlar:")
 print(f"1. optuna_results.json dosyasındaki best_params'ı kullanın")
 print(f"2. Bu parametrelerle full training yapın (Progressive veya Ultra)")
 print(f"3. Full epoch ile daha iyi sonuçlar bekleyebilirsiniz")
-print(f"4. optuna_importance.html'de hangi parametrelerin önemli olduğunu görün")
-
-print("\n💡 ÖNEMLİ NOT:")
-print("Bu search sadece 20 epoch ile yapıldı (hızlı test için).")
-print("Full training'de 100-300 epoch ile daha iyi sonuçlar alabilirsiniz!")
 
 print("\n" + "="*70)
