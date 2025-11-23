@@ -5,10 +5,11 @@ Bu modül eğitilmiş modeli yükler ve tahmin yapar.
 Hem kategorik hem de değer tahmini yapar.
 CatBoost ve Neural Network modellerini destekler.
 
-GÜNCELLEME: 
+GÜNCELLEME:
 - %85 (Normal) ve %95 (Rolling) Güven Eşiği ("Keskin Nişancı" Modu) uygulandı.
 - Feature Schema Validation eklendi (Veri tutarlılığı için).
 - İstatistiksel trend analizi matematiksel başabaş noktasına göre düzeltildi.
+- Threshold Manager entegrasyonu tamamlandı.
 """
 
 import numpy as np
@@ -17,15 +18,16 @@ from typing import Dict, Tuple, List, Optional
 import os
 import sys
 import logging
+import json
 
 # Kategori tanımlarını import et
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from category_definitions import (
     CategoryDefinitions,
-    FeatureEngineering,
-    CONFIDENCE_THRESHOLDS
+    FeatureEngineering
 )
 from utils.custom_losses import CUSTOM_OBJECTS
+from utils.threshold_manager import get_threshold_manager
 
 # Logging ayarla
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +59,11 @@ class JetXPredictor:
         # CatBoost için ek modeller
         self.regressor = None
         self.classifier = None
+        
+        # Threshold Manager
+        self.tm = get_threshold_manager()
+        self.THRESHOLD_NORMAL = self.tm.get_normal_threshold()
+        self.THRESHOLD_ROLLING = self.tm.get_rolling_threshold()
         
         # CatBoost kullanılıyorsa dosya yollarını güncelle
         if model_type == 'catboost':
@@ -149,7 +156,6 @@ class JetXPredictor:
                 return
             
             # Metadata'yı yükle
-            import json
             with open(meta_path, 'r') as f:
                 metadata = json.load(f)
                 expected_features = metadata.get("feature_names", [])
@@ -489,9 +495,8 @@ class JetXPredictor:
     ) -> str:
         """Mod bazlı öneri verir (GÜNCELLENDİ - %85/%95 Standartları)"""
         
-        # Config'den veya category_definitions'dan gelen değeri al
-        # Bulamazsa varsayılan olarak en düşük güvenli eşik olan 0.85'i kullan
-        threshold = CONFIDENCE_THRESHOLDS.get(mode, 0.85)
+        # Mod bazlı eşik belirle
+        threshold = self.THRESHOLD_ROLLING if mode == 'rolling' else self.THRESHOLD_NORMAL
         
         # 1. Kural: Güven skoru eşiğin altındaysa BEKLE
         if confidence < threshold:
@@ -504,13 +509,10 @@ class JetXPredictor:
         # 3. Kural: Eşikler geçildiyse OYNA
         if confidence >= threshold and above_threshold:
             if mode == 'rolling':
-                # %95 ve üzeri - Çok güvenli
-                return 'OYNA (GÜVENLİ)'
+                return 'OYNA (GÜVENLİ)' # %95+
             elif mode == 'normal':
-                # %85 ve üzeri
-                return 'OYNA'
-            # 'aggressive' modu artık yok, o yüzden kaldırıldı.
-        
+                return 'OYNA' # %85+
+            
         return 'BEKLE'
     
     def _generate_warnings(
@@ -570,9 +572,8 @@ class JetXPredictor:
         above_count = sum(1 for v in recent_50 if v >= 1.5)
         probability = above_count / len(recent_50)
         
-        # GÜNCELLEME: Burada da matematiksel başabaş noktasının üzerindeki
-        # %85 güvenli eşiği kullanıyoruz.
+        # GÜNCELLEME: Normal Mod (%85) eşiği kullanılır
         return {
             'above_threshold_probability': round(probability, 2),
-            'recommendation': 'OYNA' if probability > 0.85 else 'BEKLE'
+            'recommendation': 'OYNA' if probability > self.THRESHOLD_NORMAL else 'BEKLE'
         }
