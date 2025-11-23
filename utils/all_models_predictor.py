@@ -1,6 +1,11 @@
 """
 All Models Predictor - Tüm 5 modelin tahminlerini birleştiren sistem
 
+GÜNCELLEME: 
+- Hardcoded güven skorları kaldırıldı, gerçek 'predict_proba' değerleri kullanılıyor.
+- %85 ve %95 eşik standartları uygulandı.
+- Consensus mantığı "Ağırlıklı Güven > %85" olarak sıkılaştırıldı.
+
 Bu modül şu modelleri yönetir:
 1. Progressive NN (Multi-Scale)
 2. CatBoost Ensemble
@@ -66,7 +71,10 @@ class AllModelsPredictor:
         # Window sizes for multi-scale models
         self.window_sizes = [500, 250, 100, 50, 20]
         
-        logger.info("AllModelsPredictor başlatıldı")
+        # Kritik Güven Eşiği (Normal Mod)
+        self.CRITICAL_CONFIDENCE_THRESHOLD = 0.85
+        
+        logger.info("AllModelsPredictor başlatıldı (Eşik: %85)")
     
     def load_progressive_nn(self) -> bool:
         """Progressive NN modellerini yükle"""
@@ -83,7 +91,16 @@ class AllModelsPredictor:
                 scaler_path = os.path.join(self.paths['progressive_nn'], f'scaler_window_{window_size}.pkl')
                 
                 if os.path.exists(model_path) and os.path.exists(scaler_path):
-                    nn_models[window_size] = models.load_model(model_path, compile=False)
+                    # Lambda layer hatası için önlem
+                    try:
+                        nn_models[window_size] = models.load_model(model_path, compile=False)
+                    except:
+                        from tensorflow.keras import backend as K
+                        nn_models[window_size] = models.load_model(
+                            model_path, 
+                            compile=False,
+                            custom_objects={'lambda': lambda x: K.sum(x, axis=1)}
+                        )
                     nn_scalers[window_size] = joblib.load(scaler_path)
             
             if nn_models:
@@ -231,14 +248,17 @@ class AllModelsPredictor:
                 ensemble_thr.append(pred[2][0][0])
             
             avg_reg = np.mean(ensemble_reg)
-            avg_thr = np.mean(ensemble_thr)
+            avg_thr = np.mean(ensemble_thr) # Bu 0-1 arası bir olasılıktır
+            
+            # GÜNCELLEME: Threshold eşiği 0.85
+            is_above = avg_thr >= self.CRITICAL_CONFIDENCE_THRESHOLD
             
             return {
                 'prediction': float(avg_reg),
                 'threshold_prob': float(avg_thr),
-                'above_threshold': avg_thr >= 0.5,
-                'confidence': float(abs(avg_thr - 0.5) * 2),  # 0-1 arası normalize
-                'category': CategoryDefinitions.get_category_name(avg_reg)
+                'above_threshold': is_above,
+                'confidence': float(avg_thr), # Güven skoru direkt olasılıktır
+                'category': CategoryDefinitions.get_category(avg_reg)
             }
         except Exception as e:
             logger.error(f"Progressive NN tahmin hatası: {e}")
@@ -252,7 +272,7 @@ class AllModelsPredictor:
         try:
             model_data = self.models['catboost']
             ensemble_reg = []
-            ensemble_cls = []
+            ensemble_cls_probs = [] # Sınıf tahmini yerine olasılık
             
             for window_size in model_data['loaded_windows']:
                 # Feature extraction
@@ -262,20 +282,30 @@ class AllModelsPredictor:
                 
                 # Predictions
                 p_reg = model_data['regressors'][window_size].predict(features)[0]
-                p_cls = model_data['classifiers'][window_size].predict(features)[0]
+                
+                # GÜNCELLEME: predict_proba ile gerçek güven skorunu al
+                try:
+                    probs = model_data['classifiers'][window_size].predict_proba(features)[0]
+                    p_cls_prob = probs[1] # 1. sınıf (1.5 üstü) olasılığı
+                except AttributeError:
+                    # Fallback
+                    p_cls_prob = float(model_data['classifiers'][window_size].predict(features)[0])
                 
                 ensemble_reg.append(p_reg)
-                ensemble_cls.append(p_cls)
+                ensemble_cls_probs.append(p_cls_prob)
             
             avg_reg = np.mean(ensemble_reg)
-            avg_cls = np.round(np.mean(ensemble_cls)).astype(int)
+            avg_cls_prob = np.mean(ensemble_cls_probs)
+            
+            # GÜNCELLEME: Threshold eşiği 0.85
+            is_above = avg_cls_prob >= self.CRITICAL_CONFIDENCE_THRESHOLD
             
             return {
                 'prediction': float(avg_reg),
-                'threshold_prob': float(avg_cls),
-                'above_threshold': avg_cls == 1,
-                'confidence': 0.75,  # CatBoost genelde güvenilir
-                'category': CategoryDefinitions.get_category_name(avg_reg)
+                'threshold_prob': float(avg_cls_prob),
+                'above_threshold': is_above,
+                'confidence': float(avg_cls_prob), # Gerçek güven skoru
+                'category': CategoryDefinitions.get_category(avg_reg)
             }
         except Exception as e:
             logger.error(f"CatBoost tahmin hatası: {e}")
@@ -291,18 +321,27 @@ class AllModelsPredictor:
             feats = FeatureEngineering.extract_all_features(history.tolist())
             X = pd.DataFrame([feats])
             
-            # Predict
-            pred = self.models['autogluon']['predictor'].predict(X)[0]
+            # Predict Probabilities
             pred_proba = self.models['autogluon']['predictor'].predict_proba(X)
+            # Sınıf 1 (1.5 üstü) olasılığını al
+            if 1 in pred_proba.columns:
+                prob_above = float(pred_proba.iloc[0][1])
+            else:
+                # Eğer binary değilse en yüksek olasılığı al ama dikkatli ol
+                prob_above = float(pred_proba.iloc[0].max()) if self.models['autogluon']['predictor'].predict(X)[0] == 1 else 0.0
             
-            confidence = float(pred_proba.iloc[0].max())
+            # Prediction Value (tahmini)
+            pred_val = 1.8 if prob_above >= 0.5 else 1.2
+            
+            # GÜNCELLEME: Threshold eşiği 0.85
+            is_above = prob_above >= self.CRITICAL_CONFIDENCE_THRESHOLD
             
             return {
-                'prediction': 1.8 if pred == 1 else 1.2,  # Basitleştirilmiş
-                'threshold_prob': float(pred),
-                'above_threshold': pred == 1,
-                'confidence': confidence,
-                'category': 'Orta' if pred == 1 else 'Düşük'
+                'prediction': pred_val,
+                'threshold_prob': prob_above,
+                'above_threshold': is_above,
+                'confidence': prob_above, # Gerçek güven skoru
+                'category': 'Orta' if is_above else 'Düşük'
             }
         except Exception as e:
             logger.error(f"AutoGluon tahmin hatası: {e}")
@@ -319,26 +358,40 @@ class AllModelsPredictor:
             features = np.array(list(feats.values())).reshape(1, -1)
             features = self.models['tabnet']['scaler'].transform(features)
             
-            # Predict
-            pred = self.models['tabnet']['model'].predict(features)[0]
+            # Predict Proba
+            probs = self.models['tabnet']['model'].predict_proba(features)[0]
+            pred_class = np.argmax(probs)
             
-            # 0: Düşük, 1: Orta, 2: Yüksek, 3: Mega
+            # 0: Düşük (<1.2), 1: Orta (1.2-1.8), 2: Yüksek, 3: Mega
+            # 1.5 üstü olma ihtimali = Class 1 (kısmen), 2 ve 3'ün toplamı
+            # Basitleştirme: Class 1, 2, 3'ü "Yüksek" kabul edelim (veya Class 0 dışındakiler)
+            # Daha güvenli olması için sadece Class 2 ve 3'e odaklanabiliriz ama
+            # Class 1 (1.2-1.8) 1.5'i kapsıyor.
+            
+            # 1.5 üstü olasılığı (yaklaşık):
+            prob_above = np.sum(probs[1:]) # Class 0 haricindekiler
+            
+            value_map = {0: 1.1, 1: 1.6, 2: 4.0, 3: 15.0}
+            pred_value = value_map.get(pred_class, 1.5)
+            
             category_map = {0: 'Düşük', 1: 'Orta', 2: 'Yüksek', 3: 'Mega'}
-            value_map = {0: 1.2, 1: 1.8, 2: 5.0, 3: 20.0}
+            
+            # GÜNCELLEME: Threshold eşiği 0.85
+            is_above = prob_above >= self.CRITICAL_CONFIDENCE_THRESHOLD
             
             return {
-                'prediction': float(value_map.get(pred, 1.5)),
-                'threshold_prob': 1.0 if pred >= 1 else 0.0,
-                'above_threshold': pred >= 1,
-                'confidence': 0.70,
-                'category': category_map.get(pred, 'Orta')
+                'prediction': float(pred_value),
+                'threshold_prob': float(prob_above),
+                'above_threshold': is_above,
+                'confidence': float(prob_above), # Gerçek güven skoru
+                'category': category_map.get(pred_class, 'Orta')
             }
         except Exception as e:
             logger.error(f"TabNet tahmin hatası: {e}")
             return None
     
     def predict_all(self, history: np.ndarray) -> Dict:
-        """Tüm modellerden tahmin al"""
+        """Tüm modellerden tahmin al ve birleştir"""
         predictions = {}
         
         # Her modelden tahmin al
@@ -358,7 +411,7 @@ class AllModelsPredictor:
         valid_predictions = {k: v for k, v in predictions.items() if v is not None}
         
         if len(valid_predictions) >= 2:
-            # Weighted consensus
+            # Ağırlıklar
             weights = {
                 'progressive_nn': 0.30,
                 'catboost': 0.35,
@@ -366,24 +419,35 @@ class AllModelsPredictor:
                 'tabnet': 0.15
             }
             
-            total_weight = sum(weights[k] for k in valid_predictions.keys())
+            # Normalize weights for valid models
+            current_weights = {k: weights.get(k, 0.25) for k in valid_predictions.keys()}
+            total_weight = sum(current_weights.values())
             
+            # Weighted Prediction Value
             weighted_pred = sum(
-                valid_predictions[k]['prediction'] * weights.get(k, 0.25)
-                for k in valid_predictions.keys()
+                valid_predictions[k]['prediction'] * w
+                for k, w in current_weights.items()
             ) / total_weight
             
-            above_count = sum(1 for v in valid_predictions.values() if v['above_threshold'])
-            consensus_above = above_count >= len(valid_predictions) / 2
+            # Weighted Confidence (Probability)
+            weighted_prob = sum(
+                valid_predictions[k]['threshold_prob'] * w
+                for k, w in current_weights.items()
+            ) / total_weight
             
-            avg_confidence = np.mean([v['confidence'] for v in valid_predictions.values()])
+            # GÜNCELLEME: Consensus Kararı (Strict %85)
+            # Artık sadece "çoğunluk" değil, "ağırlıklı güvenin" eşiği geçmesi gerekiyor
+            consensus_above = weighted_prob >= self.CRITICAL_CONFIDENCE_THRESHOLD
+            
+            # Model Agreement (Kaç model %85 üstü dedi?)
+            above_count = sum(1 for v in valid_predictions.values() if v['above_threshold'])
             
             predictions['consensus'] = {
                 'prediction': float(weighted_pred),
-                'threshold_prob': float(above_count / len(valid_predictions)),
-                'above_threshold': consensus_above,
-                'confidence': float(avg_confidence),
-                'category': CategoryDefinitions.get_category_name(weighted_pred),
+                'threshold_prob': float(weighted_prob),
+                'above_threshold': consensus_above, # Strict result
+                'confidence': float(weighted_prob), # Ağırlıklı ortalama güven
+                'category': CategoryDefinitions.get_category(weighted_pred),
                 'agreement': float(above_count / len(valid_predictions)),
                 'models_agreed': above_count,
                 'total_models': len(valid_predictions)
