@@ -61,12 +61,11 @@ class AdaptiveThresholdManager:
         
         # Threshold haritası (confidence range -> threshold)
         self.threshold_map = {
-            (0.90, 1.00): 1.50,  # Çok yüksek güven
-            (0.80, 0.90): 1.55,  # Yüksek güven
-            (0.70, 0.80): 1.60,  # Orta-yüksek güven
-            (0.60, 0.70): 1.65,  # Orta güven
-            (0.50, 0.60): 1.70,  # Düşük güven
-            (0.00, 0.50): None   # Çok düşük → bahse girme
+            (0.98, 1.00): 1.50,  # Mükemmel güven
+            (0.95, 0.98): 1.55,  # Rolling seviyesi
+            (0.90, 0.95): 1.60,  # Çok Yüksek
+            (0.85, 0.90): 1.65,  # Normal seviyesi (Sınır)
+            (0.00, 0.85): None   # %85 altı -> ASLA BAHSE GİRME
         }
         
         # Performans geçmişi
