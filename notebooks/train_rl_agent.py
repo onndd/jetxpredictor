@@ -3,6 +3,10 @@ RL Agent Training Script
 
 Reinforcement Learning Agent'ı eğitir.
 Policy Gradient (REINFORCE) algoritması kullanır.
+
+GÜNCELLEME:
+- 3 Mod -> 2 Mod (Normal/Rolling) yapısına geçildi.
+- Güven eşikleri: Normal >= 0.85, Rolling >= 0.95.
 """
 
 import numpy as np
@@ -42,7 +46,7 @@ class RLAgentTrainer:
     def __init__(
         self,
         state_dim: int = 200,
-        action_dim: int = 4,
+        action_dim: int = 4, # 0: Bekle, 1: Rolling, 2: Normal, 3: Normal (Yedek/Ext)
         learning_rate: float = 0.001,
         batch_size: int = 32,
         gamma: float = 0.99  # Discount factor
@@ -50,7 +54,7 @@ class RLAgentTrainer:
         """
         Args:
             state_dim: State vector boyutu
-            action_dim: Action space boyutu (4)
+            action_dim: Action space boyutu (4) - 2 aktif mod + bekle
             learning_rate: Öğrenme oranı
             batch_size: Batch boyutu
             gamma: Discount factor (gelecek ödülleri için)
@@ -124,7 +128,7 @@ class RLAgentTrainer:
         Reward hesapla
         
         Args:
-            action: Seçilen action (0-3)
+            action: Seçilen action (0: Bekle, 1: Rolling, 2: Normal, 3: Normal)
             predicted_value: Tahmin edilen değer
             actual_value: Gerçekleşen değer
             bet_amount: Bahis miktarı
@@ -143,27 +147,26 @@ class RLAgentTrainer:
         # BAHIS YAP
         if actual_value >= 1.5:
             # Kazandık
-            if action == 1:  # Konservatif
+            if action == 1:  # ROLLING (Güvenli Liman)
                 exit_multiplier = 1.5
                 profit = bet_amount * (exit_multiplier - 1.0)
-                reward = profit / bankroll * 10.0  # Normalize
-            elif action == 2:  # Normal
+                # Rolling için daha istikrarlı küçük ödül
+                reward = profit / bankroll * 10.0
+                
+            elif action == 2 or action == 3:  # NORMAL (Dengeli)
+                # Normal modda tahmine dayalı çıkış (max 2.5x)
                 exit_multiplier = min(predicted_value * 0.8, 2.5)
                 if actual_value >= exit_multiplier:
                     profit = bet_amount * (exit_multiplier - 1.0)
-                    reward = profit / bankroll * 10.0
+                    # Daha yüksek risk, daha yüksek ödül potansiyeli
+                    reward = profit / bankroll * 12.0
                 else:
                     # Çıkış noktasına ulaşamadık, kayıp
-                    reward = -bet_amount / bankroll * 5.0
-            else:  # Agresif
-                exit_multiplier = min(predicted_value * 0.85, 5.0)
-                if actual_value >= exit_multiplier:
-                    profit = bet_amount * (exit_multiplier - 1.0)
-                    reward = profit / bankroll * 15.0  # Daha yüksek reward
-                else:
-                    reward = -bet_amount / bankroll * 8.0  # Daha yüksek ceza
+                    reward = -bet_amount / bankroll * 6.0
+            else:
+                reward = 0
         else:
-            # Kaybettik
+            # Kaybettik (1.5 altı geldi)
             reward = -bet_amount / bankroll * 10.0  # Kayıp cezası
         
         return reward
@@ -197,9 +200,10 @@ class RLAgentTrainer:
         
         # Virtual bankroll
         virtual_bankroll = 1000.0
+        # Rolling ve Normal modlar için ortak bankroll manager
         bankroll_manager = AdvancedBankrollManager(
             initial_bankroll=virtual_bankroll,
-            risk_tolerance='moderate'
+            risk_tolerance='normal' 
         )
         
         # RL Agent (state vector oluşturmak için)
@@ -225,34 +229,32 @@ class RLAgentTrainer:
                     bankroll_manager=bankroll_manager
                 )
                 
-                # Optimal action hesapla (basit rule-based)
+                # Optimal action hesapla (YENİ 2 MODLU YAPI)
                 consensus_pred = model_predictions.get('consensus')
+                
+                optimal_action = 0 # Varsayılan: BEKLE
+                
                 if consensus_pred and consensus_pred.get('above_threshold', False):
                     confidence = consensus_pred.get('confidence', 0.5)
                     prediction = consensus_pred.get('prediction', 1.5)
                     
-                    if confidence >= 0.8:
-                        if prediction >= 2.5:
-                            optimal_action = 3  # Agresif
-                        else:
-                            optimal_action = 2  # Normal
-                    elif confidence >= 0.65:
-                        optimal_action = 1  # Konservatif
+                    # Yeni Eşikler: Rolling >= 0.95, Normal >= 0.85
+                    if confidence >= 0.95:
+                        optimal_action = 1  # ROLLING (En güvenli)
+                    elif confidence >= 0.85:
+                        optimal_action = 2  # NORMAL (Yüksek güven)
                     else:
-                        optimal_action = 0  # BEKLE
+                        optimal_action = 0  # BEKLE (Güven yetersiz)
                 else:
                     optimal_action = 0  # BEKLE
                 
                 # Reward hesapla
+                bet_amount = 0.0
                 if optimal_action > 0:
-                    if optimal_action == 1:
-                        bet_amount = virtual_bankroll * 0.02
-                    elif optimal_action == 2:
-                        bet_amount = virtual_bankroll * 0.04
-                    else:
-                        bet_amount = virtual_bankroll * 0.06
-                else:
-                    bet_amount = 0.0
+                    if optimal_action == 1: # Rolling
+                        bet_amount = virtual_bankroll * 0.02 # %2
+                    elif optimal_action == 2 or optimal_action == 3: # Normal
+                        bet_amount = virtual_bankroll * 0.04 # %4
                 
                 reward = self.calculate_reward(
                     action=optimal_action,
@@ -285,6 +287,7 @@ class RLAgentTrainer:
         
         # Convert to numpy
         states = np.array(states)
+        # Action dim 4 olarak korunuyor (3. action kullanılmasa bile)
         actions_onehot = tf.keras.utils.to_categorical(actions, num_classes=self.action_dim)
         rewards = np.array(rewards)
         
@@ -450,7 +453,7 @@ def main():
     # Model info
     model_info = {
         'model': 'RL_Agent',
-        'version': '1.0',
+        'version': '2.0',
         'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'state_dim': trainer.state_dim,
         'action_dim': trainer.action_dim,
@@ -469,4 +472,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
