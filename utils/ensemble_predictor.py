@@ -1,6 +1,9 @@
 """
 Ensemble Predictor - CatBoost + Progressive NN Hybrid
 Birden fazla modeli birleştirerek daha güvenilir tahminler yapar.
+
+GÜNCELLEME:
+- Varsayılan minimum güven skoru %85'e (0.85) yükseltildi.
 """
 
 import numpy as np
@@ -50,7 +53,7 @@ class EnsemblePredictor:
         strategy: VotingStrategy = VotingStrategy.WEIGHTED,
         weights: Optional[Dict[str, float]] = None,
         threshold: float = 1.5,
-        min_confidence: float = 0.85  # GÜNCELLENDİ: Varsayılan 0.5 -> 0.85
+        min_confidence: float = 0.85  # GÜNCELLENDİ: Varsayılan 0.5 -> 0.85 (Keskin Nişancı)
     ):
         """
         Args:
@@ -58,7 +61,7 @@ class EnsemblePredictor:
             strategy: Oylama stratejisi
             weights: Model ağırlıkları (opsiyonel)
             threshold: Eşik değeri (varsayılan: 1.5)
-            min_confidence: Minimum güven skoru (varsayılan: 0.5)
+            min_confidence: Minimum güven skoru (varsayılan: 0.85)
         """
         self.models = models
         self.strategy = strategy
