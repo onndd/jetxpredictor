@@ -3,7 +3,7 @@ JetX Predictor - Reinforcement Learning Agent
 
 RL Ajanı, tüm model çıktılarını birleştirerek en kârlı aksiyonu seçer.
 State vector: Model tahminleri + Risk analizi + Psikolojik analiz + Anomali tespit + Finansal metrikler
-Action space: BEKLE, BAHIS YAP (Konservatif, Normal, Agresif)
+Action space: BEKLE, BAHIS YAP (Konservatif, Normal, Yüksek Risk)
 """
 
 import numpy as np
@@ -40,7 +40,7 @@ class RLAgent:
         0: {'name': 'BEKLE', 'description': 'Bahis yapma', 'risk': 'LOW'},
         1: {'name': 'BAHIS_YAP_KONSERVATIF', 'description': '1.5x çıkış, %2 bahis', 'risk': 'LOW'},
         2: {'name': 'BAHIS_YAP_NORMAL', 'description': 'Dinamik çıkış, %4 bahis', 'risk': 'MEDIUM'},
-        3: {'name': 'BAHIS_YAP_AGRESIF', 'description': 'Yüksek çıkış, %6 bahis', 'risk': 'HIGH'}
+        3: {'name': 'BAHIS_YAP_YUKSEK_RISK', 'description': 'Yüksek çıkış, %6 bahis', 'risk': 'HIGH'}
     }
     
     def __init__(self, model_path: str = 'models/rl_agent_model.h5', threshold: float = 1.5):
@@ -536,7 +536,7 @@ class RLAgent:
             if consensus_pred:
                 result['reasoning'].append(f"Consensus tahmin: {consensus_pred.get('prediction', 0):.2f}x")
         
-        elif action == 3:  # AGRESIF
+        elif action == 3:  # YUKSEK RISK
             if consensus_pred:
                 pred_value = consensus_pred.get('prediction', 1.5)
                 result['exit_multiplier'] = min(pred_value * 0.85, 5.0)
@@ -546,7 +546,7 @@ class RLAgent:
             # Bankroll yoksa varsayılan değer kullan
             default_bankroll = bankroll if bankroll else 1000.0
             result['bet_amount'] = default_bankroll * 0.06
-            result['reasoning'].append("Agresif strateji: Yüksek risk, yüksek getiri")
+            result['reasoning'].append("Yüksek Risk stratejisi: Yüksek risk, yüksek getiri")
             if consensus_pred:
                 result['reasoning'].append(f"Consensus tahmin: {consensus_pred.get('prediction', 0):.2f}x")
         
@@ -568,4 +568,3 @@ def create_rl_agent(model_path: str = 'models/rl_agent_model.h5', threshold: flo
     agent = RLAgent(model_path=model_path, threshold=threshold)
     agent.load_model()
     return agent
-
