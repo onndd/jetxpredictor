@@ -385,7 +385,7 @@ with st.sidebar:
             
             3. **AdvancedBankrollManager** (Production)
                - Kelly Criterion (optimal bahis)
-               - Risk stratejileri (conservative, moderate, aggressive)
+               - Risk stratejileri (normal, rolling)
                - Stop-loss & Take-profit
                - Streak tracking
             
@@ -681,7 +681,7 @@ with main_col1:
                             if rl_action:
                                 st.subheader("4. RL Agent Action Probabilities")
                                 prob_df = pd.DataFrame({
-                                    'Action': ['BEKLE', 'Konservatif', 'Normal', 'Agresif'],
+                                    'Action': ['BEKLE', 'Konservatif', 'Normal', 'Yüksek Risk'],
                                     'Probability': rl_action.get('probabilities', [0, 0, 0, 0])
                                 })
                                 st.bar_chart(prob_df.set_index('Action'))
@@ -1094,8 +1094,7 @@ st.markdown("""
 - 🚨 **Bu sistem %100 doğru değildir**
 - 💰 **Para kaybedebilirsiniz**
 - 🎯 **1.5x kritik eşiktir**: Altı kayıp, üstü kazanç
-- 🛡️ **Rolling modu** en güvenlidir (%80+ güven)
-- ⚡ **Agresif mod** çok risklidir
+- 🛡️ **Rolling modu** en güvenlidir (%95+ güven)
 
 **Sorumlu oynayın!**
 """)
