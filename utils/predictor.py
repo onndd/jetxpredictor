@@ -8,7 +8,7 @@ CatBoost ve Neural Network modellerini destekler.
 GÜNCELLEME: 
 - %85 (Normal) ve %95 (Rolling) Güven Eşiği ("Keskin Nişancı" Modu) uygulandı.
 - Feature Schema Validation eklendi (Veri tutarlılığı için).
-- Basit istatistik fonksiyonu da %85 eşiğine çekildi.
+- İstatistiksel trend analizi matematiksel başabaş noktasına göre düzeltildi.
 """
 
 import numpy as np
@@ -570,8 +570,9 @@ class JetXPredictor:
         above_count = sum(1 for v in recent_50 if v >= 1.5)
         probability = above_count / len(recent_50)
         
+        # GÜNCELLEME: Burada da matematiksel başabaş noktasının üzerindeki
+        # %85 güvenli eşiği kullanıyoruz.
         return {
             'above_threshold_probability': round(probability, 2),
-            # GÜNCELLEME: Burası da %85 eşiğine çekildi
             'recommendation': 'OYNA' if probability > 0.85 else 'BEKLE'
         }
