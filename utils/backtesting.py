@@ -97,8 +97,8 @@ class BacktestEngine:
         bet_size: float = 10.0,
         threshold: float = 1.5,
         strategy: BettingStrategy = BettingStrategy.FIXED,
-        min_confidence: float = 0.5,
-        risk_per_trade: float = 0.02  # Sermayenin %2'si
+        min_confidence: float = 0.85,  # GÜNCELLENDİ: Varsayılan 0.5 -> 0.85
+        risk_per_trade: float = 0.02
     ):
         """
         Args:
