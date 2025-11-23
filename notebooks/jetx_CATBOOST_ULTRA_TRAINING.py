@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
-🚀 JetX CATBOOST ULTRA TRAINING - Maksimum Performans (v3.0)
+🚀 JetX CATBOOST ULTRA TRAINING - Maksimum Performans (v3.1)
 
 SEÇENEK C: ULTRA AGGRESSIVE
-- 10,000 iterations (1,500 → 10,000, 6.5x artış!)
-- 10 Model Ensemble (farklı seed/subsample ile)
+- 10,000 iterations
+- 10 Model Ensemble
 - GPU desteği
+- 2 MODLU YAPI (Normal & Rolling)
 - Advanced hyperparameters
-- 5-Fold Cross-Validation (opsiyonel)
-- 3 Sanal Kasa Sistemi
-- Data Augmentation
-- Extensive performance tracking
+- Google Drive Yedekleme
 
-HEDEF: %85-90 accuracy, MAE < 1.2, ROI > %40
+GÜNCELLEME (v3.1):
+- 3 Mod -> 2 Mod (Normal/Rolling) yapısına geçildi.
+- Normal Mod Eşik: 0.85
+- Rolling Mod Eşik: 0.95
+
+HEDEF: %85-90 accuracy, ROI > %40
 
 SÜRE: 4-6 saat (GPU ile)
 """
@@ -27,7 +30,7 @@ import shutil
 from pathlib import Path
 
 print("="*80)
-print("🚀 JetX CATBOOST ULTRA TRAINING (v3.0 - SEÇENEK C)")
+print("🚀 JetX CATBOOST ULTRA TRAINING (v3.1 - 2 MODLU YAPI)")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print()
@@ -70,6 +73,10 @@ print()
 from category_definitions import CategoryDefinitions, FeatureEngineering
 from utils.catboost_ensemble import CatBoostEnsemble, CrossValidatedEnsemble
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
+
+# YENİ EŞİKLER
+THRESHOLD_NORMAL = 0.85
+THRESHOLD_ROLLING = 0.95
 
 # =============================================================================
 # VERİ YÜKLEME
@@ -175,33 +182,26 @@ reg_start = time.time()
 
 # Base parametreler (ULTRA AGGRESSIVE)
 base_reg_params = {
-    'iterations': 10000,  # 1500 → 10000 (6.5x)
-    'depth': 14,  # 10 → 14 (daha derin)
-    'learning_rate': 0.05,  # 0.03 → 0.05
-    'l2_leaf_reg': 3,  # 5 → 3 (daha az regularization)
-    'random_strength': 1.5,  # YENİ
-    'border_count': 254,  # Maksimum feature splits
-    'leaf_estimation_iterations': 10,  # YENİ
+    'iterations': 10000,  # 1500 -> 10000
+    'depth': 14,  # 10 -> 14
+    'learning_rate': 0.05,
+    'l2_leaf_reg': 3,
+    'random_strength': 1.5,
+    'border_count': 254,
+    'leaf_estimation_iterations': 10,
     'loss_function': 'MAE',
     'eval_metric': 'MAE',
-    'bootstrap_type': 'Bernoulli',  # Bernoulli (subsample ile uyumlu)
-    'subsample': 0.8,  # YENİ - Bernoulli ile uyumlu
+    'bootstrap_type': 'Bernoulli',
+    'subsample': 0.8,
     'verbose': 100,
-    **catboost_gpu_config  # GPU konfigürasyonunu ekle
+    **catboost_gpu_config
 }
 
 print("📊 ULTRA AGGRESSIVE Parametreler:")
-print(f"  iterations: 10,000 (1,500 → 10,000, 6.5x artış!)")
-print(f"  depth: 14 (10 → 14)")
-print(f"  learning_rate: 0.05 (0.03 → 0.05)")
-print(f"  l2_leaf_reg: 3 (5 → 3, daha az regularization)")
-print(f"  random_strength: 1.5 (YENİ)")
-print(f"  border_count: 254 (maksimum)")
-print(f"  leaf_estimation_iterations: 10 (YENİ)")
+print(f"  iterations: 10,000")
+print(f"  depth: 14")
+print(f"  learning_rate: 0.05")
 print(f"  task_type: GPU (AKTIF!)")
-print(f"  bootstrap_type: Bernoulli (subsample ile uyumlu)")
-print(f"  subsample: 0.8 (YENİ)")
-print(f"  ⚠️  bagging_temperature: KALDIRILDI (Bernoulli ile uyumsuz)")
 print()
 
 # Ensemble oluştur
@@ -235,7 +235,6 @@ print(f"\n📊 REGRESSOR ENSEMBLE PERFORMANSI:")
 print(f"  MAE: {mae_reg:.4f} (Hedef: < 1.2)")
 print(f"  RMSE: {rmse_reg:.4f}")
 print(f"  Ortalama Ensemble Confidence: {reg_confidence.mean():.4f}")
-print(f"  Ensemble Agreement (std): {reg_results['std_score']:.4f}")
 
 # Feature importance (ilk modelden)
 feature_names = list(FeatureEngineering.extract_all_features(all_values[:1000].tolist()).keys())
@@ -257,8 +256,8 @@ cls_start = time.time()
 
 # Base parametreler
 base_cls_params = {
-    'iterations': 10000,  # 1500 → 10000
-    'depth': 12,  # 9 → 12
+    'iterations': 10000,
+    'depth': 12,
     'learning_rate': 0.05,
     'l2_leaf_reg': 3,
     'random_strength': 1.5,
@@ -266,19 +265,16 @@ base_cls_params = {
     'leaf_estimation_iterations': 10,
     'loss_function': 'Logloss',
     'eval_metric': 'Accuracy',
-    'bootstrap_type': 'Bernoulli',  # Bernoulli (subsample ile uyumlu)
-    'subsample': 0.8,  # YENİ - Bernoulli ile uyumlu
+    'bootstrap_type': 'Bernoulli',
+    'subsample': 0.8,
     'auto_class_weights': 'Balanced',
     'verbose': 100,
-    **catboost_gpu_config  # GPU konfigürasyonunu ekle
+    **catboost_gpu_config
 }
 
 print("📊 ULTRA AGGRESSIVE Parametreler:")
-print(f"  iterations: 10,000 (classifier için)")
-print(f"  depth: 12 (9 → 12)")
-print(f"  bootstrap_type: Bernoulli (subsample ile uyumlu)")
-print(f"  subsample: 0.8 (YENİ)")
-print(f"  auto_class_weights: Balanced")
+print(f"  iterations: 10,000")
+print(f"  depth: 12")
 print()
 
 # Ensemble oluştur
@@ -301,32 +297,26 @@ cls_results = classifier_ensemble.train_ensemble(
 cls_time = time.time() - cls_start
 print(f"\n✅ Classifier Ensemble eğitimi tamamlandı! Süre: {cls_time/60:.1f} dakika")
 
-# Test performansı - GÜNCELLENDİ: %85 EŞİK
-# y_cls_pred (sınıf tahmini) yerine probability kullanıyoruz
+# Test performansı - NORMAL ve ROLLING EŞİKLERİNE GÖRE
 y_cls_proba, y_cls_proba_variance = classifier_ensemble.predict_proba(X_test, return_variance=True)
-# Olasılık 0.85'in üzerindeyse 1 (üst), değilse 0 (alt/belirsiz)
-y_cls_pred = (y_cls_proba[:, 1] >= 0.85).astype(int)
-
 cls_confidence = classifier_ensemble.get_confidence(X_test)
 
-cls_acc = accuracy_score(y_cls_test, y_cls_pred)
+# Normal Mod Tahminleri (Eşik 0.85)
+y_cls_pred_normal = (y_cls_proba[:, 1] >= THRESHOLD_NORMAL).astype(int)
+acc_normal = accuracy_score(y_cls_test, y_cls_pred_normal)
 
-# Sınıf bazında accuracy
-below_mask = y_cls_test == 0
-above_mask = y_cls_test == 1
+# Rolling Mod Tahminleri (Eşik 0.95)
+y_cls_pred_rolling = (y_cls_proba[:, 1] >= THRESHOLD_ROLLING).astype(int)
+acc_rolling = accuracy_score(y_cls_test, y_cls_pred_rolling)
 
-below_acc = accuracy_score(y_cls_test[below_mask], y_cls_pred[below_mask]) if below_mask.sum() > 0 else 0
-above_acc = accuracy_score(y_cls_test[above_mask], y_cls_pred[above_mask]) if above_mask.sum() > 0 else 0
-
-print(f"\n📊 CLASSIFIER ENSEMBLE PERFORMANSI (Eşik: 0.85):")
-print(f"  Genel Accuracy: {cls_acc*100:.2f}% (Hedef: > 85%)")
-print(f"  🔴 1.5 Altı Doğruluk: {below_acc*100:.2f}%")
-print(f"  🟢 1.5 Üstü Doğruluk: {above_acc*100:.2f}%")
+print(f"\n📊 CLASSIFIER ENSEMBLE PERFORMANSI:")
+print(f"  NORMAL MOD (≥ {THRESHOLD_NORMAL}) Accuracy: {acc_normal*100:.2f}%")
+print(f"  ROLLING MOD (≥ {THRESHOLD_ROLLING}) Accuracy: {acc_rolling*100:.2f}%")
 print(f"  Ortalama Ensemble Confidence: {cls_confidence.mean():.4f}")
 
-# Confusion Matrix
-cm = confusion_matrix(y_cls_test, y_cls_pred)
-print(f"\n📋 CONFUSION MATRIX (0.85 Eşik):")
+# Confusion Matrix (Normal Mod için)
+cm = confusion_matrix(y_cls_test, y_cls_pred_normal)
+print(f"\n📋 CONFUSION MATRIX (Normal Mod - {THRESHOLD_NORMAL}):")
 print(f"                Tahmin")
 print(f"Gerçek   1.5 Altı | 1.5 Üstü")
 print(f"1.5 Altı {cm[0,0]:6d}   | {cm[0,1]:6d}  ⚠️ PARA KAYBI")
@@ -334,19 +324,13 @@ print(f"1.5 Üstü {cm[1,0]:6d}   | {cm[1,1]:6d}")
 
 if cm[0,0] + cm[0,1] > 0:
     fpr = cm[0,1] / (cm[0,0] + cm[0,1])
-    print(f"\n💰 PARA KAYBI RİSKİ: {fpr*100:.1f}%", end="")
-    if fpr < 0.15:
-        print(" ✅✅ MÜKEMMEL!")
-    elif fpr < 0.20:
-        print(" ✅ ÇOK İYİ!")
-    else:
-        print(f" (Hedef: <20%)")
+    print(f"\n💰 PARA KAYBI RİSKİ: {fpr*100:.1f}% (Hedef: <20%)")
 
 # =============================================================================
-# 3 SANAL KASA SİMÜLASYONU
+# 2 SANAL KASA SİMÜLASYONU (YENİ SİSTEM)
 # =============================================================================
 print("\n" + "="*80)
-print("💰 3 SANAL KASA SİMÜLASYONU (ULTRA - %85 GÜVEN)")
+print("💰 SANAL KASA SİMÜLASYONU (2 MODLU YAPI)")
 print("="*80)
 
 test_count = len(y_reg_test)
@@ -358,10 +342,10 @@ print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL")
 print(f"💵 Bahis Tutarı: {bet_amount:.2f} TL\n")
 
 # =============================================================================
-# KASA 1: 1.5x EŞİK SİSTEMİ (Güven Filtreli)
+# KASA 1: NORMAL MOD (0.85+)
 # =============================================================================
 print("="*80)
-print("💰 KASA 1: 1.5x EŞİK SİSTEMİ")
+print(f"💰 KASA 1: NORMAL MOD (Güven ≥ {THRESHOLD_NORMAL})")
 print("="*80)
 
 kasa1_wallet = initial_bankroll
@@ -370,14 +354,16 @@ kasa1_total_wins = 0
 kasa1_total_losses = 0
 
 for i in range(len(y_reg_test)):
-    # Model %85 üzerinde "üst" diyorsa oyna
-    if y_cls_pred[i] == 1:
+    # Normal Mod Eşiği
+    if y_cls_proba[i, 1] >= THRESHOLD_NORMAL:
         kasa1_wallet -= bet_amount
         kasa1_total_bets += 1
         
-        exit_point = 1.5
+        # Dinamik Çıkış (Regressor'a göre, max 2.5x)
+        predicted_val = y_reg_pred[i]
+        exit_point = min(max(1.5, predicted_val * 0.8), 2.5)
         
-        if actual_value >= exit_point:
+        if y_reg_test[i] >= exit_point:
             kasa1_wallet += exit_point * bet_amount
             kasa1_total_wins += 1
         else:
@@ -397,10 +383,10 @@ print(f"📈 Net Kar/Zarar: {kasa1_profit_loss:+,.2f} TL")
 print(f"📊 ROI: {kasa1_roi:+.2f}%")
 
 # =============================================================================
-# KASA 2: %80 ÇIKIŞ SİSTEMİ
+# KASA 2: ROLLING MOD (0.95+)
 # =============================================================================
 print("\n" + "="*80)
-print("💰 KASA 2: %80 ÇIKIŞ SİSTEMİ (Güvenli)")
+print(f"💰 KASA 2: ROLLING MOD (Güven ≥ {THRESHOLD_ROLLING})")
 print("="*80)
 
 kasa2_wallet = initial_bankroll
@@ -409,17 +395,15 @@ kasa2_total_wins = 0
 kasa2_total_losses = 0
 
 for i in range(len(y_reg_test)):
-    model_pred_value = y_reg_pred[i]
-    actual_value = y_reg_test[i]
-    
-    # Hem değer tahmini yüksek hem de sınıflandırma güvenli olmalı
-    if model_pred_value >= 2.0 and y_cls_pred[i] == 1:
+    # Rolling Mod Eşiği
+    if y_cls_proba[i, 1] >= THRESHOLD_ROLLING:
         kasa2_wallet -= bet_amount
         kasa2_total_bets += 1
         
-        exit_point = model_pred_value * 0.80
+        # Güvenli Çıkış (Sabit 1.5x)
+        exit_point = 1.5
         
-        if actual_value >= exit_point:
+        if y_reg_test[i] >= exit_point:
             kasa2_wallet += exit_point * bet_amount
             kasa2_total_wins += 1
         else:
@@ -439,78 +423,18 @@ print(f"📈 Net Kar/Zarar: {kasa2_profit_loss:+,.2f} TL")
 print(f"📊 ROI: {kasa2_roi:+.2f}%")
 
 # =============================================================================
-# KASA 3: ENSEMBLE CONFIDENCE-BASED (YENİ!)
-# =============================================================================
-print("\n" + "="*80)
-print("💰 KASA 3: ENSEMBLE CONFIDENCE-BASED (Keskin Nişancı)")
-print("="*80)
-print("Strateji: Sadece model agreement > %85 olduğunda bahis")
-print("Çıkış: Ensemble tahmininin ortalaması\n")
-
-kasa3_wallet = initial_bankroll
-kasa3_total_bets = 0
-kasa3_total_wins = 0
-kasa3_total_losses = 0
-# GÜNCELLEME: Eşik 0.85
-confidence_threshold = 0.85
-
-for i in range(len(y_reg_test)):
-    # Hem regressor hem classifier confidence'ı kullan
-    combined_confidence = (reg_confidence[i] + cls_confidence[i]) / 2
-    
-    # Sadece yüksek güvende bahis yap (0.85 üstü)
-    if combined_confidence >= confidence_threshold:
-        # Classifier 1.5 üstü tahmin ediyorsa (ve olasılığı yüksekse)
-        if y_cls_proba[i, 1] >= 0.85:
-            kasa3_wallet -= bet_amount
-            kasa3_total_bets += 1
-            
-            # Exit point: regressor tahmini × 0.85 (güvenli)
-            exit_point = max(1.5, y_reg_pred[i] * 0.85)
-            actual_value = y_reg_test[i]
-            
-            if actual_value >= exit_point:
-                kasa3_wallet += exit_point * bet_amount
-                kasa3_total_wins += 1
-            else:
-                kasa3_total_losses += 1
-
-kasa3_profit_loss = kasa3_wallet - initial_bankroll
-kasa3_roi = (kasa3_profit_loss / initial_bankroll) * 100
-kasa3_win_rate = (kasa3_total_wins / kasa3_total_bets * 100) if kasa3_total_bets > 0 else 0
-
-print(f"\n📊 KASA 3 SONUÇLARI:")
-print(f"{'='*70}")
-print(f"Toplam Oyun: {kasa3_total_bets:,} (sadece yüksek güven)")
-print(f"✅ Kazanan: {kasa3_total_wins:,} ({kasa3_win_rate:.1f}%)")
-print(f"❌ Kaybeden: {kasa3_total_losses:,}")
-print(f"💰 Final Kasa: {kasa3_wallet:,.2f} TL")
-print(f"📈 Net Kar/Zarar: {kasa3_profit_loss:+,.2f} TL")
-print(f"📊 ROI: {kasa3_roi:+.2f}%")
-print(f"🎯 Ortalama Confidence: {np.mean([reg_confidence[i] + cls_confidence[i] for i in range(len(reg_confidence))])/2:.2f}")
-
-# =============================================================================
 # KARŞILAŞTIRMA
 # =============================================================================
 print("\n" + "="*80)
 print("📊 KASA KARŞILAŞTIRMASI")
 print("="*80)
-print(f"{'Metrik':<25} {'Kasa 1':<15} {'Kasa 2':<15} {'Kasa 3':<15}")
-print(f"{'-'*70}")
-print(f"{'Toplam Oyun':<25} {kasa1_total_bets:<15,} {kasa2_total_bets:<15,} {kasa3_total_bets:<15,}")
-print(f"{'Kazanma Oranı':<25} {kasa1_win_rate:<15.1f}% {kasa2_win_rate:<15.1f}% {kasa3_win_rate:<15.1f}%")
-print(f"{'Net Kar/Zarar':<25} {kasa1_profit_loss:<15,.2f} {kasa2_profit_loss:<15,.2f} {kasa3_profit_loss:<15,.2f}")
-print(f"{'ROI':<25} {kasa1_roi:<15.2f}% {kasa2_roi:<15.2f}% {kasa3_roi:<15.2f}%")
-print(f"{'-'*70}")
-
-# En karlı kasa
-profits = [
-    ('KASA 1 (1.5x)', kasa1_profit_loss),
-    ('KASA 2 (%80)', kasa2_profit_loss),
-    ('KASA 3 (Confidence)', kasa3_profit_loss)
-]
-best_kasa = max(profits, key=lambda x: x[1])
-print(f"🏆 EN KARLI: {best_kasa[0]} (+{best_kasa[1]:,.2f} TL)")
+print(f"{'Metrik':<25} {'Normal Mod':<15} {'Rolling Mod':<15}")
+print(f"{'-'*55}")
+print(f"{'Toplam Oyun':<25} {kasa1_total_bets:<15,} {kasa2_total_bets:<15,}")
+print(f"{'Kazanma Oranı':<25} {kasa1_win_rate:<15.1f}% {kasa2_win_rate:<15.1f}%")
+print(f"{'Net Kar/Zarar':<25} {kasa1_profit_loss:<15,.2f} {kasa2_profit_loss:<15,.2f}")
+print(f"{'ROI':<25} {kasa1_roi:<15.2f}% {kasa2_roi:<15.2f}%")
+print(f"{'-'*55}")
 
 # =============================================================================
 # MODEL KAYDETME
@@ -540,62 +464,36 @@ print(f"✅ Scaler kaydedildi: catboost_ultra_scaler.pkl")
 total_time = reg_time + cls_time
 info = {
     'model': 'CatBoost_Ultra_Ensemble',
-    'version': '3.0',
+    'version': '3.1',
     'date': datetime.now().strftime('%Y-%m-%d'),
-    'architecture': {
-        'regressor': '10-Model Ensemble',
-        'classifier': '10-Model Ensemble',
-        'type': 'CatBoost'
+    'architecture': '2-Mode Structure (Normal/Rolling)',
+    'thresholds': {
+        'normal': THRESHOLD_NORMAL,
+        'rolling': THRESHOLD_ROLLING
     },
-    'training_time_minutes': round(total_time/60, 1),
-    'training_time_hours': round(total_time/3600, 1),
-    'model_times': {
-        'regressor': round(reg_time/60, 1),
-        'classifier': round(cls_time/60, 1)
-    },
-    'feature_count': X.shape[1],
     'metrics': {
         'regression': {
             'mae': float(mae_reg),
-            'rmse': float(rmse_reg),
-            'ensemble_agreement': float(reg_results['std_score'])
+            'rmse': float(rmse_reg)
         },
         'classification': {
-            'accuracy': float(cls_acc),
-            'below_15_accuracy': float(below_acc),
-            'above_15_accuracy': float(above_acc),
-            'money_loss_risk': float(fpr) if cm[0,0] + cm[0,1] > 0 else 0.0,
-            'ensemble_agreement': float(cls_results['std_score'])
+            'accuracy_normal': float(acc_normal),
+            'accuracy_rolling': float(acc_rolling),
+            'money_loss_risk': float(fpr) if cm[0,0] + cm[0,1] > 0 else 0.0
         }
     },
-    'hyperparameters': {
-        'regressor': base_reg_params,
-        'classifier': base_cls_params
-    },
-    'ensemble_config': {
-        'n_models': 10,
-        'ensemble_type': 'weighted_average',
-        'confidence_based': True
-    },
-    'triple_bankroll_performance': {
-        'kasa_1_15x': {
+    'simulation_results': {
+        'normal_mode': {
             'roi': float(kasa1_roi),
             'win_rate': float(kasa1_win_rate),
             'total_bets': int(kasa1_total_bets),
             'profit_loss': float(kasa1_profit_loss)
         },
-        'kasa_2_80percent': {
+        'rolling_mode': {
             'roi': float(kasa2_roi),
             'win_rate': float(kasa2_win_rate),
             'total_bets': int(kasa2_total_bets),
             'profit_loss': float(kasa2_profit_loss)
-        },
-        'kasa_3_confidence': {
-            'roi': float(kasa3_roi),
-            'win_rate': float(kasa3_win_rate),
-            'total_bets': int(kasa3_total_bets),
-            'profit_loss': float(kasa3_profit_loss),
-            'confidence_threshold': confidence_threshold
         }
     },
     'top_features': [{'name': feat, 'importance': float(imp)} for feat, imp in top_features]
@@ -612,7 +510,7 @@ print("\n" + "="*80)
 print("📦 MODELLER ZIP'LENIYOR")
 print("="*80)
 
-zip_filename = 'jetx_models_catboost_ultra_v3.0'
+zip_filename = 'jetx_models_catboost_ultra_v3.1'
 shutil.make_archive(zip_filename, 'zip', 'models')
 
 print(f"✅ ZIP dosyası oluşturuldu: {zip_filename}.zip")
@@ -686,12 +584,12 @@ else:
     targets_met.append(f"⚠️ MAE: {mae_reg:.4f} (Hedef: < 1.2)")
 
 # Hedef: Accuracy (0.85 eşiğine göre)
-if cls_acc >= 0.85:
-    targets_met.append(f"✅ Accuracy ≥ 85%: {cls_acc*100:.1f}%")
+if acc_normal >= 0.85:
+    targets_met.append(f"✅ Accuracy ≥ 85%: {acc_normal*100:.1f}%")
 else:
-    targets_met.append(f"⚠️ Accuracy: {cls_acc*100:.1f}% (Hedef: ≥ 85%)")
+    targets_met.append(f"⚠️ Accuracy: {acc_normal*100:.1f}% (Hedef: ≥ 85%)")
 
-best_roi = max(kasa1_roi, kasa2_roi, kasa3_roi)
+best_roi = max(kasa1_roi, kasa2_roi)
 if best_roi >= 40:
     targets_met.append(f"✅ ROI ≥ 40%: {best_roi:.1f}%")
 else:
