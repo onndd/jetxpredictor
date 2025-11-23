@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
 """
-🎯 JetX Meta-Model Training Script - GPU ENHANCED VERSION
+🎯 JetX Meta-Model Training Script - GPU ENHANCED VERSION (v2.1)
+
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) entegrasyonu.
+- Güven Eşiği: %85 (Normal Mod).
+- GPU Optimizasyonları korundu.
 
 Meta-model, base modellerin (Progressive, Ultra, XGBoost) tahminlerini input olarak alır
 ve final kararı verir. Hangi modele ne zaman güveneceğini öğrenir.
-
-GPU ENHANCEMENTS:
-- PyTorch/TabNet GPU optimizasyonu
-- GPU optimizer entegrasyonu
-- Performance monitoring ve benchmarking
-- Colab özel optimizasyonlar
-
-KULLANIM:
-1. Base modelleri Google Colab'da eğit (Progressive, Ultra, XGBoost)
-2. Bu scripti çalıştır (lokal veya Colab'da)
-3. Meta-model train edilir ve kaydedilir
-4. Ensemble sistemi artık stacking ile çalışır
 
 Süre: ~30 dakika
 """
@@ -43,6 +36,10 @@ import sqlite3
 from typing import Dict, List, Tuple
 import warnings
 warnings.filterwarnings('ignore')
+
+# Kritik Güven Eşikleri
+THRESHOLD_NORMAL = 0.85
+THRESHOLD_ROLLING = 0.95
 
 # =============================================================================
 # GPU OPTIMIZER ENTEGRASYONU
@@ -144,7 +141,7 @@ CUSTOM_OBJECTS = {
     'percentage_aware_regression_loss': percentage_aware_regression_loss
 }
 
-print("✅ Proje yüklendi")
+print(f"✅ Proje yüklendi - Eşik: {THRESHOLD_NORMAL}")
 
 # =============================================================================
 # VERİ YÜKLE
@@ -271,7 +268,6 @@ try:
         # GPU optimizasyonu
         if device and device.type == 'cuda':
             print("🔥 TabNet GPU optimizasyonu aktif...")
-            # TabNet'i GPU'ya taşı (eğer destekliyorsa)
             try:
                 tabnet_model.device = device
                 print(f"✅ TabNet GPU device: {device}")
@@ -294,7 +290,6 @@ except Exception as e:
 
 if len(loaded_models) == 0:
     print("\n❌ HATA: Hiçbir base model yüklenemedi!")
-    print("Önce base modelleri Google Colab'da eğitin.")
     sys.exit(1)
 
 print(f"\n✅ {len(loaded_models)} base model yüklendi: {list(loaded_models.keys())}")
@@ -468,27 +463,15 @@ print(f"\n✅ {len(y_true)} tahmin toplandı")
 print(f"⏱️  Toplam tahmin süresi: {total_prediction_time:.2f}s")
 print(f"⏱️  Ortalama tahmin süresi: {avg_prediction_time*1000:.2f}ms")
 
-if prediction_times:
-    avg_tabnet_time = np.mean(prediction_times)
-    print(f"⏱️  TabNet ortalama tahmin süresi: {avg_tabnet_time*1000:.2f}ms")
-
-print(f"1.5 altı: {(y_true == 0).sum()} ({(y_true == 0).sum() / len(y_true) * 100:.1f}%)")
-print(f"1.5 üstü: {(y_true == 1).sum()} ({(y_true == 1).sum() / len(y_true) * 100:.1f}%)")
-
 # =============================================================================
 # META-MODEL INPUT OLUŞTUR
 # =============================================================================
 print("\n📊 Meta-model input oluşturuluyor...")
 
-# Meta-model input: [progressive_prob, ultra_prob, xgboost_prob, autogluon_prob, tabnet_high_x_prob]
-# 5 modelin birleşimi: 3 mevcut model + AutoGluon + TabNet (yüksek X specialist)
 X_meta = np.concatenate([X_progressive, X_ultra, X_xgboost, X_autogluon, X_tabnet], axis=1)
-
 print(f"Meta-model input shape: {X_meta.shape}")
-print(f"Features: Progressive prob, Ultra prob, XGBoost prob, AutoGluon prob, TabNet high X prob")
 
-# KRONOLOJİK SPLIT - TEST DATA LEAKAGE ÖNLENDİ
-# Model test verisini eğitimde GÖRMEYECEK
+# KRONOLOJİK SPLIT
 print(f"\n⚠️ UYARI: Shuffle KAPALI - Meta model kronolojik split kullanıyor!")
 
 test_size = int(len(X_meta) * 0.2)
@@ -500,15 +483,15 @@ y_train = y_true[:train_end]
 y_test = y_true[train_end:]
 
 print(f"\n✅ Kronolojik Split Tamamlandı:")
-print(f"Train: {len(X_train):,} (ilk %80)")
-print(f"Test: {len(X_test):,} (son %20 - modelin görmediği veri)")
+print(f"Train: {len(X_train):,}")
+print(f"Test: {len(X_test):,}")
 
 # =============================================================================
 # META-MODEL TRAINING (XGBoost) - GPU ENHANCED
 # =============================================================================
 print("\n🎯 Meta-model eğitiliyor...")
 
-# XGBoost Classifier (1.5 eşik tahmini için)
+# XGBoost Classifier
 meta_model = xgb.XGBClassifier(
     n_estimators=300,
     max_depth=6,
@@ -520,7 +503,7 @@ meta_model = xgb.XGBClassifier(
     random_state=42,
     eval_metric='logloss',
     tree_method='hist',  # GPU optimizasyonu için
-    predictor='gpu_predictor' if torch.cuda.is_available() else 'cpu_predictor'  # GPU tahmin
+    predictor='gpu_predictor' if torch.cuda.is_available() else 'cpu_predictor'
 )
 
 # GPU kontrolü
@@ -565,15 +548,14 @@ print("="*70)
 
 # Test predictions
 test_start = time.time()
-y_pred = meta_model.predict(X_test)
 y_pred_proba = meta_model.predict_proba(X_test)
+# GÜNCELLEME: 0.85 EŞİĞİ
+y_pred = (y_pred_proba[:, 1] >= THRESHOLD_NORMAL).astype(int)
 test_time = time.time() - test_start
-
-print(f"⏱️  Test tahmin süresi: {test_time:.3f}s")
 
 # Accuracy
 test_acc = accuracy_score(y_test, y_pred)
-print(f"\n✅ Test Accuracy: {test_acc*100:.2f}%")
+print(f"\n✅ Test Accuracy (Normal Mod - 0.85): {test_acc*100:.2f}%")
 
 # Below/Above threshold accuracy
 below_mask = y_test == 0
@@ -587,8 +569,8 @@ print(f"🟢 1.5 ÜSTÜ Accuracy: {above_acc*100:.2f}%")
 
 # Confusion Matrix
 cm = confusion_matrix(y_test, y_pred)
-print(f"\n📋 CONFUSION MATRIX:")
-print(f"                  Tahmin")
+print(f"\n📋 CONFUSION MATRIX (Normal Mod):")
+print(f"                Tahmin")
 print(f"Gerçek    1.5 Altı | 1.5 Üstü")
 print(f"1.5 Altı  {cm[0,0]:6d}   | {cm[0,1]:6d}  ⚠️ PARA KAYBI")
 print(f"1.5 Üstü  {cm[1,0]:6d}   | {cm[1,1]:6d}")
@@ -597,10 +579,6 @@ print(f"1.5 Üstü  {cm[1,0]:6d}   | {cm[1,1]:6d}")
 if cm[0,0] + cm[0,1] > 0:
     money_loss_risk = cm[0,1] / (cm[0,0] + cm[0,1])
     print(f"\n💰 PARA KAYBI RİSKİ: {money_loss_risk*100:.1f}%")
-
-# Classification Report
-print(f"\n📊 DETAYLI RAPOR:")
-print(classification_report(y_test, y_pred, target_names=['1.5 Altı', '1.5 Üstü']))
 
 # Feature Importance
 print(f"\n🎯 MODEL FEATURE IMPORTANCE:")
@@ -614,13 +592,13 @@ for name, imp in zip(feature_names, importance):
 # BASE MODELS vs META-MODEL COMPARISON
 # =============================================================================
 print("\n" + "="*70)
-print("📊 BASE MODELS vs META-MODEL KARŞILAŞTIRMASI")
+print("📊 BASE MODELS vs META-MODEL KARŞILAŞTIRMASI (Eşik: 0.85)")
 print("="*70)
 
-# Individual model predictions (threshold = 0.5)
-prog_pred = (X_test[:, 0] >= 0.5).astype(int)
-ultra_pred = (X_test[:, 1] >= 0.5).astype(int)
-xgb_pred = (X_test[:, 2] >= 0.5).astype(int)
+# Individual model predictions (threshold = 0.85)
+prog_pred = (X_test[:, 0] >= THRESHOLD_NORMAL).astype(int)
+ultra_pred = (X_test[:, 1] >= THRESHOLD_NORMAL).astype(int)
+xgb_pred = (X_test[:, 2] >= THRESHOLD_NORMAL).astype(int)
 
 prog_acc = accuracy_score(y_test, prog_pred)
 ultra_acc = accuracy_score(y_test, ultra_pred)
@@ -632,89 +610,11 @@ print(f"Ultra:        {ultra_acc*100:.2f}%")
 print(f"XGBoost:      {xgb_acc*100:.2f}%")
 print(f"Meta-Model:   {test_acc*100:.2f}% ⭐")
 
-if test_acc > max(prog_acc, ultra_acc, xgb_acc):
-    improvement = (test_acc - max(prog_acc, ultra_acc, xgb_acc)) * 100
-    print(f"\n✨ Meta-model en iyi base modelden {improvement:.1f}% daha iyi!")
-
-# =============================================================================
-# PERFORMANCE RAPORU
-# =============================================================================
-print("\n" + "="*70)
-print("⚡ GPU PERFORMANCE RAPORU")
-print("="*70)
-
-print(f"\n🔥 GPU OPTİMİZASYON BAŞARILARI:")
-print(f"✅ PyTorch GPU: {'Aktif' if device and device.type == 'cuda' else 'Pasif'}")
-print(f"✅ TensorFlow GPU: {'Aktif' if len(tf.config.list_physical_devices('GPU')) > 0 else 'Pasif'}")
-print(f"✅ XGBoost GPU: {'Aktif' if torch.cuda.is_available() else 'Pasif'}")
-print(f"✅ TabNet GPU: {'Aktif' if device and device.type == 'cuda' else 'Pasif'}")
-
-print(f"\n⏱️  PERFORMANS METRİKLERİ:")
-print(f"   Tahmin süresi: {avg_prediction_time*1000:.2f}ms / örnek")
-print(f"   CV süresi: {cv_time:.2f}s")
-print(f"   Training süresi: {train_time:.2f}s")
-print(f"   Test süresi: {test_time:.3f}s")
-
-if gpu_optimizer:
-    try:
-        # GPU memory usage
-        memory_info = gpu_optimizer.get_gpu_memory_usage()
-        if memory_info:
-            print(f"\n💾 GPU MEMORY KULLANIMI:")
-            for system, info in memory_info.items():
-                if isinstance(info, dict) and 'allocated' in info:
-                    print(f"   {system.title()}: {info['allocated']:.2f}GB / {info.get('total', 0):.2f}GB")
-    except Exception as e:
-        print(f"\n⚠️ GPU memory bilgisi alınamadı: {e}")
-
-# =============================================================================
-# VISUALIZATION
-# =============================================================================
-print("\n📊 Görselleştirmeler oluşturuluyor...")
-
-fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-
-# 1. Confusion Matrix
-sns.heatmap(cm, annot=True, fmt='d', cmap='RdYlGn', ax=axes[0, 0])
-axes[0, 0].set_title('Meta-Model Confusion Matrix')
-axes[0, 0].set_xlabel('Predicted')
-axes[0, 0].set_ylabel('Actual')
-
-# 2. Accuracy Comparison
-models = ['Progressive', 'Ultra', 'XGBoost', 'Meta-Model']
-accuracies = [prog_acc*100, ultra_acc*100, xgb_acc*100, test_acc*100]
-colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
-
-axes[0, 1].bar(models, accuracies, color=colors)
-axes[0, 1].set_title('Model Accuracy Comparison')
-axes[0, 1].set_ylabel('Accuracy (%)')
-axes[0, 1].set_ylim([0, 100])
-for i, v in enumerate(accuracies):
-    axes[0, 1].text(i, v + 1, f'{v:.1f}%', ha='center')
-
-# 3. Feature Importance
-axes[1, 0].barh(feature_names, importance, color='#3498db')
-axes[1, 0].set_title('Meta-Model Feature Importance')
-axes[1, 0].set_xlabel('Importance')
-
-# 4. Prediction Distribution
-axes[1, 1].hist(y_pred_proba[:, 1], bins=50, alpha=0.7, color='#3498db', edgecolor='black')
-axes[1, 1].set_title('Meta-Model Prediction Distribution')
-axes[1, 1].set_xlabel('Probability of 1.5+')
-axes[1, 1].set_ylabel('Frequency')
-axes[1, 1].axvline(x=0.5, color='red', linestyle='--', label='Threshold')
-axes[1, 1].legend()
-
-plt.tight_layout()
-plt.savefig('meta_model_evaluation_gpu_enhanced.png', dpi=300, bbox_inches='tight')
-print("✅ Görselleştirme kaydedildi: meta_model_evaluation_gpu_enhanced.png")
-
 # =============================================================================
 # SAVE META-MODEL
 # =============================================================================
 print("\n💾 Meta-model kaydediliyor...")
 
-# Modeli kaydet
 os.makedirs('models', exist_ok=True)
 meta_model.save_model('models/meta_model_gpu_enhanced.json')
 
@@ -728,55 +628,29 @@ import json
 
 model_info = {
     'model': 'XGBoost Meta-Model - GPU Enhanced',
-    'version': '2.0-GPU',
+    'version': '2.1-GPU',
     'training_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-    'n_estimators': 300,
-    'max_depth': 6,
-    'learning_rate': 0.05,
-    'gpu_optimizations': {
-        'pytorch_gpu': device.type == 'cuda' if device else False,
-        'tensorflow_gpu': len(tf.config.list_physical_devices('GPU')) > 0,
-        'xgboost_gpu': torch.cuda.is_available(),
-        'tabnet_gpu': device.type == 'cuda' if device else False
-    },
+    'thresholds': {'normal': THRESHOLD_NORMAL, 'rolling': THRESHOLD_ROLLING},
     'performance_metrics': {
-        'cv_accuracy': float(cv_scores.mean()),
-        'cv_std': float(cv_scores.std()),
         'test_accuracy': float(test_acc),
         'below_15_accuracy': float(below_acc),
         'above_15_accuracy': float(above_acc),
-        'money_loss_risk': float(money_loss_risk) if cm[0,0] + cm[0,1] > 0 else 0.0,
-        'avg_prediction_time_ms': float(avg_prediction_time * 1000),
-        'training_time_seconds': float(train_time),
-        'cv_time_seconds': float(cv_time)
+        'money_loss_risk': float(money_loss_risk) if cm[0,0] + cm[0,1] > 0 else 0.0
     },
     'base_models': list(loaded_models.keys()),
-    'feature_importance': {
-        name: float(imp) for name, imp in zip(feature_names, importance)
-    },
-    'comparison': {
-        'progressive_accuracy': float(prog_acc),
-        'ultra_accuracy': float(ultra_acc),
-        'xgboost_accuracy': float(xgb_acc),
-        'meta_model_accuracy': float(test_acc)
-    },
     'gpu_info': gpu_info
 }
 
 with open('models/meta_model_gpu_enhanced_info.json', 'w') as f:
     json.dump(model_info, f, indent=2)
 
-print("✅ Dosyalar kaydedildi:")
-print("- models/meta_model_gpu_enhanced.json")
-print("- models/meta_model_gpu_enhanced_info.json")
-print("- meta_model_evaluation_gpu_enhanced.png")
+print("✅ Dosyalar kaydedildi.")
 
 # Google Colab'da ise indir
 try:
     from google.colab import files
     files.download('models/meta_model_gpu_enhanced.json')
     files.download('models/meta_model_gpu_enhanced_info.json')
-    files.download('meta_model_evaluation_gpu_enhanced.png')
     print("\n✅ Dosyalar indirildi!")
 except:
     print("\n⚠️ Colab dışında - dosyalar sadece kaydedildi")
@@ -787,35 +661,3 @@ except:
 print("\n" + "="*70)
 print("🎉 GPU-ENHANCED META-MODEL TRAINING TAMAMLANDI!")
 print("="*70)
-
-print(f"\n📊 SONUÇLAR:")
-print(f"✅ Test Accuracy: {test_acc*100:.2f}%")
-print(f"✅ 1.5 Altı Accuracy: {below_acc*100:.2f}%")
-print(f"✅ Para Kaybı Riski: {money_loss_risk*100:.1f}%" if cm[0,0] + cm[0,1] > 0 else "")
-
-print(f"\n🚀 GPU OPTİMİZASYON BAŞARILARI:")
-gpu_count = sum([
-    device.type == 'cuda' if device else False,
-    len(tf.config.list_physical_devices('GPU')) > 0,
-    torch.cuda.is_available(),
-    device.type == 'cuda' if device else False
-])
-print(f"   Aktif GPU optimizasyonları: {gpu_count}/4")
-
-print(f"\n⚡ PERFORMANCE İYİLEŞTİRMELERİ:")
-print(f"   Ortalama tahmin süresi: {avg_prediction_time*1000:.2f}ms")
-print(f"   Training süresi: {train_time:.2f}s")
-
-if test_acc > max(prog_acc, ultra_acc, xgb_acc):
-    print(f"\n🚀 Meta-model tüm base modellerden daha iyi!")
-    print(f"En iyi base model: {max(prog_acc, ultra_acc, xgb_acc)*100:.2f}%")
-    print(f"Meta-model: {test_acc*100:.2f}%")
-    print(f"İyileştirme: +{(test_acc - max(prog_acc, ultra_acc, xgb_acc))*100:.1f}%")
-
-print(f"\n📁 Sonraki adımlar:")
-print(f"1. models/meta_model_gpu_enhanced.json dosyasını projenize ekleyin")
-print(f"2. Ensemble sistemi artık GPU-enhanced stacking ile çalışacak")
-print(f"3. Model Karşılaştırma dashboard'ında sonuçları izleyin")
-print(f"4. GPU performans raporunu inceleyin")
-
-print("\n" + "="*70)
