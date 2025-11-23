@@ -2,8 +2,11 @@
 Virtual Bankroll Callback - Her Epoch İçin Sanal Kasa Gösterimi
 Progressive NN ve CatBoost eğitimleri için
 
-GÜNCELLEME: Threshold değerleri artık config'den alınıyor
-"Raporlama vs. Eylem" tutarsızlıkları önleniyor
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) entegre edildi.
+- Kasa 1: Normal Mod (0.85+ Güven, Dinamik Çıkış)
+- Kasa 2: Rolling Mod (0.95+ Güven, Sabit 1.5x Çıkış)
+- Threshold Manager entegrasyonu
 """
 
 import numpy as np
@@ -18,40 +21,33 @@ from .threshold_manager import get_threshold_manager
 class VirtualBankrollCallback(callbacks.Callback):
     """
     TensorFlow/Keras için Virtual Bankroll Callback
-    Her epoch sonunda 2 sanal kasa simülasyonu gösterir:
-    - Kasa 1: 1.5x eşik sistemi (Güvenli)
-    - Kasa 2: %70 çıkış sistemi (Yüksek tahminler + Yüksek güven)
+    Her epoch sonunda 2 sanal kasa simülasyonu gösterir.
     """
     
-    def __init__(self, stage_name, X_test, y_test, threshold=1.5, 
-                 starting_capital=1000.0, bet_amount=10.0, exit_multiplier=0.70):
+    def __init__(self, stage_name, X_test, y_test, starting_capital=1000.0, bet_amount=10.0):
         """
         Args:
             stage_name: Aşama adı (örn: "AŞAMA 1")
             X_test: Test verileri (list of arrays)
             y_test: Test hedef değerleri
-            threshold: Eşik değeri (varsayılan: 1.5)
             starting_capital: Başlangıç sermayesi
             bet_amount: Bahis tutarı
-            exit_multiplier: Kasa 2 için çıkış çarpanı (varsayılan: 0.70)
         """
         super().__init__()
         self.stage_name = stage_name
         self.X_test = X_test
         self.y_test = y_test
-        self.threshold = threshold
         self.starting_capital = starting_capital
         self.bet_amount = bet_amount
-        self.win_amount = threshold * bet_amount
-        self.exit_multiplier = exit_multiplier
         
-        # Kasa 1 için tracking
-        self.best_roi_kasa1 = -float('inf')
-        self.best_epoch_kasa1 = 0
+        # Threshold Manager'dan eşikleri al
+        tm = get_threshold_manager()
+        self.threshold_normal = tm.get_normal_threshold()   # 0.85
+        self.threshold_rolling = tm.get_rolling_threshold() # 0.95
         
-        # Kasa 2 için tracking
-        self.best_roi_kasa2 = -float('inf')
-        self.best_epoch_kasa2 = 0
+        # Kasa takibi
+        self.best_roi_normal = -float('inf')
+        self.best_roi_rolling = -float('inf')
         
     def on_epoch_end(self, epoch, logs=None):
         """Her epoch sonunda çağrılır - 2 kasa simülasyonu yapar"""
@@ -61,316 +57,132 @@ class VirtualBankrollCallback(callbacks.Callback):
         # Regression output (birinci output)
         p_reg = predictions[0].flatten() if len(predictions) > 0 else None
         
-        # Threshold output'u al (üçüncü output)
+        # Threshold output'u al (üçüncü output, genelde binary prob)
+        # Eğer model tek çıktılıysa (sadece reg veya sadece thr) ona göre davran
         p_thr = predictions[2].flatten() if len(predictions) > 2 else predictions[0].flatten()
         
-        # GÜNCELLEME: Threshold değerini config'den al (Merkezi Yönetim)
-        try:
-            threshold_manager = get_threshold_manager()
-            # Config'den 'virtual_bankroll' eşiğini al (Hedef: 0.85)
-            decision_threshold = threshold_manager.get_threshold('virtual_bankroll')
-        except Exception as e:
-            # Fallback: Config'den alınamazsa güvenli varsayılanı kullan
-            # print(f"⚠️ Threshold manager hatası: {e}, varsayılan 0.85 kullanılıyor")
-            decision_threshold = 0.85
-        
-        # Binary predictions - Config'den gelen eşiğe göre karar ver
-        p_thr_binary = (p_thr >= decision_threshold).astype(int)
-        t_thr = (self.y_test >= self.threshold).astype(int)
-        
-        # Debug info
-        if epoch == 0:  # Sadece ilk epoch'ta göster
-            print(f"🎯 VirtualBankroll Threshold: {decision_threshold:.2f} (Config'den alındı)")
+        # Gerçek değerler (Regression target)
+        # Eğer y_test sadece binary ise (0/1), simülasyon için gerçek değerlere ihtiyacımız var.
+        # Ancak burada y_test genellikle regression target olarak geliyor.
+        actual_values = self.y_test
         
         # ========================================================================
-        # KASA 1: 1.5x EŞİK SİSTEMİ (Güven Filtreli)
+        # KASA 1: NORMAL MOD (0.85+ Güven, Dinamik Çıkış)
         # ========================================================================
         wallet1 = self.starting_capital
-        total_bets1 = 0
-        total_wins1 = 0
-        total_losses1 = 0
+        bets1 = 0
+        wins1 = 0
         
-        for i in range(len(p_thr_binary)):
-            model_pred = p_thr_binary[i]
-            actual_value = self.y_test[i]
-            
-            # Model "1.5 üstü" diyorsa (ve güven eşiğini geçtiyse) bahse gir
-            if model_pred == 1:
+        for i in range(len(p_thr)):
+            # Güven kontrolü
+            if p_thr[i] >= self.threshold_normal:
                 wallet1 -= self.bet_amount
-                total_bets1 += 1
+                bets1 += 1
                 
-                if actual_value >= self.threshold:
-                    # Kazandık!
-                    wallet1 += self.win_amount
-                    total_wins1 += 1
+                # Dinamik çıkış: Tahminin %80'i, min 1.5, max 2.5
+                # Eğer p_reg yoksa (sadece classifier ise) 1.5 sabit
+                if p_reg is not None:
+                    exit_pt = min(max(1.5, p_reg[i] * 0.8), 2.5)
                 else:
-                    # Kaybettik
-                    total_losses1 += 1
+                    exit_pt = 1.5
+                
+                if actual_values[i] >= exit_pt:
+                    wallet1 += self.bet_amount * exit_pt
+                    wins1 += 1
         
-        # Kasa 1 sonuçları
-        profit_loss1 = wallet1 - self.starting_capital
-        roi1 = (profit_loss1 / self.starting_capital) * 100 if total_bets1 > 0 else 0
-        win_rate1 = (total_wins1 / total_bets1 * 100) if total_bets1 > 0 else 0
-        
-        # En iyi ROI'yi takip et
-        if roi1 > self.best_roi_kasa1:
-            self.best_roi_kasa1 = roi1
-            self.best_epoch_kasa1 = epoch + 1
-        
-        # Emoji seçimi
-        if profit_loss1 > 100:
-            wallet_emoji1 = "🚀"
-        elif profit_loss1 > 0:
-            wallet_emoji1 = "✅"
-        elif profit_loss1 > -100:
-            wallet_emoji1 = "⚠️"
-        else:
-            wallet_emoji1 = "❌"
+        roi1 = (wallet1 - self.starting_capital) / self.starting_capital * 100 if bets1 > 0 else 0
+        if roi1 > self.best_roi_normal: self.best_roi_normal = roi1
         
         # ========================================================================
-        # KASA 2: %70 ÇIKIŞ SİSTEMİ (Yüksek Tahmin + Yüksek Güven)
+        # KASA 2: ROLLING MOD (0.95+ Güven, Sabit 1.5x Çıkış)
         # ========================================================================
         wallet2 = self.starting_capital
-        total_bets2 = 0
-        total_wins2 = 0
-        total_losses2 = 0
-        exit_points = []
+        bets2 = 0
+        wins2 = 0
         
-        if p_reg is not None:
-            for i in range(len(p_reg)):
-                model_pred_value = p_reg[i]
-                model_confidence = p_thr[i] # Modelin güven olasılığı
-                actual_value = self.y_test[i]
+        for i in range(len(p_thr)):
+            # Güven kontrolü
+            if p_thr[i] >= self.threshold_rolling:
+                wallet2 -= self.bet_amount
+                bets2 += 1
                 
-                # GÜNCELLEME: Sadece 2.0+ tahminlerde VE Yüksek Güven varsa oyna
-                if model_pred_value >= 2.0 and model_confidence >= decision_threshold:
-                    wallet2 -= self.bet_amount
-                    total_bets2 += 1
-                    
-                    # Çıkış noktası: tahmin × 0.70
-                    exit_point = model_pred_value * self.exit_multiplier
-                    exit_points.append(exit_point)
-                    
-                    if actual_value >= exit_point:
-                        # Kazandık!
-                        wallet2 += exit_point * self.bet_amount
-                        total_wins2 += 1
-                    else:
-                        # Kaybettik
-                        total_losses2 += 1
+                # Sabit güvenli çıkış
+                if actual_values[i] >= 1.5:
+                    wallet2 += self.bet_amount * 1.5
+                    wins2 += 1
         
-        # Kasa 2 sonuçları
-        profit_loss2 = wallet2 - self.starting_capital
-        roi2 = (profit_loss2 / self.starting_capital) * 100 if total_bets2 > 0 else 0
-        win_rate2 = (total_wins2 / total_bets2 * 100) if total_bets2 > 0 else 0
-        avg_exit = np.mean(exit_points) if exit_points else 0
+        roi2 = (wallet2 - self.starting_capital) / self.starting_capital * 100 if bets2 > 0 else 0
+        if roi2 > self.best_roi_rolling: self.best_roi_rolling = roi2
         
-        # En iyi ROI'yi takip et
-        if roi2 > self.best_roi_kasa2:
-            self.best_roi_kasa2 = roi2
-            self.best_epoch_kasa2 = epoch + 1
+        # RAPORLAMA
+        print(f"\n💰 {self.stage_name} - Epoch {epoch+1} BANKROLL:")
         
-        # Emoji seçimi
-        if profit_loss2 > 100:
-            wallet_emoji2 = "🚀"
-        elif profit_loss2 > 0:
-            wallet_emoji2 = "✅"
-        elif profit_loss2 > -100:
-            wallet_emoji2 = "⚠️"
-        else:
-            wallet_emoji2 = "❌"
+        # Kasa 1 Raporu
+        emoji1 = "🚀" if roi1 > 0 else "❌"
+        print(f"   🎯 Normal ({self.threshold_normal}): ROI {roi1:+.2f}% | Win {wins1}/{bets1} ({0 if bets1==0 else wins1/bets1*100:.1f}%) {emoji1}")
         
-        # ========================================================================
-        # DETAYLI RAPOR - KASA 1
-        # ========================================================================
-        print(f"\n{'='*80}")
-        print(f"💰 {self.stage_name} - Epoch {epoch+1} - KASA 1 (1.5x EŞİK - Güven: >{decision_threshold:.2f})")
-        print(f"{'='*80}")
-        print(f"   📊 Test Seti: {len(self.y_test):,} örnek")
-        print(f"   🎯 Model Tahmini: {total_bets1} oyunda '1.5 üstü' dedi")
-        print(f"   ")
-        print(f"   📈 SONUÇLAR:")
-        print(f"      ✅ Kazanan: {total_wins1} oyun ({win_rate1:.1f}%)")
-        print(f"      ❌ Kaybeden: {total_losses1} oyun")
-        print(f"   ")
-        print(f"   💰 KASA DURUMU:")
-        print(f"      Başlangıç: {self.starting_capital:,.0f} TL")
-        print(f"      Final: {wallet1:,.0f} TL")
-        print(f"      Net: {profit_loss1:+,.0f} TL | ROI: {roi1:+.2f}% {wallet_emoji1}")
-        print(f"   ")
-        print(f"   🎯 DEĞERLENDİRME:")
-        if total_bets1 == 0:
-            print(f"      ⚠️ Model hiç '1.5 üstü' tahmin etmedi (Yüksek güvenli tahmin yok)!")
-        elif win_rate1 >= 66.7:
-            print(f"      ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
-        else:
-            print(f"      ❌ Kazanma oranı başabaş noktasının ALTINDA (Hedef: %66.7)")
-        print(f"   ")
-        print(f"   🏆 En İyi: Epoch {self.best_epoch_kasa1} (ROI: {self.best_roi_kasa1:+.2f}%)")
-        print(f"{'='*80}\n")
-        
-        # ========================================================================
-        # DETAYLI RAPOR - KASA 2
-        # ========================================================================
-        print(f"{'='*80}")
-        print(f"💰 {self.stage_name} - Epoch {epoch+1} - KASA 2 (%{int(self.exit_multiplier*100)} ÇIKIŞ + Yüksek Güven)")
-        print(f"{'='*80}")
-        print(f"   📊 Test Seti: {len(self.y_test):,} örnek")
-        print(f"   🎯 Model Tahmini: {total_bets2} oyunda '2.0+ ve Güvenli' dedi")
-        print(f"   ")
-        print(f"   📈 SONUÇLAR:")
-        print(f"      ✅ Kazanan: {total_wins2} oyun ({win_rate2:.1f}%)")
-        print(f"      ❌ Kaybeden: {total_losses2} oyun")
-        print(f"      📊 Ortalama Çıkış: {avg_exit:.2f}x")
-        print(f"   ")
-        print(f"   💰 KASA DURUMU:")
-        print(f"      Başlangıç: {self.starting_capital:,.0f} TL")
-        print(f"      Final: {wallet2:,.0f} TL")
-        print(f"      Net: {profit_loss2:+,.0f} TL | ROI: {roi2:+.2f}% {wallet_emoji2}")
-        print(f"   ")
-        print(f"   🎯 DEĞERLENDİRME:")
-        if total_bets2 == 0:
-            print(f"      ⚠️ Model hiç uygun pozisyon bulamadı!")
-        elif win_rate2 >= 66.7:
-            print(f"      ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
-        else:
-            print(f"      ❌ Kazanma oranı başabaş noktasının ALTINDA (Hedef: %66.7)")
-        print(f"   ")
-        print(f"   🏆 En İyi: Epoch {self.best_epoch_kasa2} (ROI: {self.best_roi_kasa2:+.2f}%)")
-        print(f"{'='*80}\n")
+        # Kasa 2 Raporu
+        emoji2 = "🚀" if roi2 > 0 else "❌"
+        print(f"   🛡️ Rolling ({self.threshold_rolling}): ROI {roi2:+.2f}% | Win {wins2}/{bets2} ({0 if bets2==0 else wins2/bets2*100:.1f}%) {emoji2}")
+        print("-" * 60)
 
 
 class CatBoostBankrollCallback:
     """
     CatBoost için Virtual Bankroll Callback
-    Her 10 iteration'da bir sanal kasa gösterir
+    Her N iteration'da bir sanal kasa gösterir
     """
     
-    def __init__(self, X_test, y_test, threshold=1.5, 
-                 starting_capital=1000.0, bet_amount=10.0, 
-                 model_type='regressor', interval=10):
-        """
-        Args:
-            X_test: Test verileri
-            y_test: Test hedef değerleri
-            threshold: Eşik değeri (varsayılan: 1.5)
-            starting_capital: Başlangıç sermayesi
-            bet_amount: Bahis tutarı
-            model_type: 'regressor' veya 'classifier'
-            interval: Kaç iteration'da bir göster (varsayılan: 10)
-        """
+    def __init__(self, X_test, y_test, starting_capital=1000.0, bet_amount=10.0, interval=50):
         self.X_test = X_test
         self.y_test = y_test
-        self.threshold = threshold
         self.starting_capital = starting_capital
         self.bet_amount = bet_amount
-        self.win_amount = threshold * bet_amount
-        self.model_type = model_type
         self.interval = interval
-        self.best_roi = -float('inf')
-        self.best_iteration = 0
+        
+        tm = get_threshold_manager()
+        self.threshold_normal = tm.get_normal_threshold()
+        self.threshold_rolling = tm.get_rolling_threshold()
         
     def after_iteration(self, info):
-        """
-        CatBoost iteration callback
-        info.iteration: 0-based iteration number
-        """
-        iteration = info.iteration
+        if info.iteration % self.interval != 0: return True
         
-        # Sadece belirli aralıklarda rapor et
-        if iteration % self.interval != 0:
-            return True  # Devam et
-        
-        # Threshold Manager'dan güncel eşik değerini al
+        # CatBoost classifier tahmini (Olasılık)
+        # Not: CatBoost callback içinde model erişimi bazen kısıtlıdır,
+        # bu yüzden basit predict kullanıyoruz. Eğer raw prediction ise sigmoid gerekebilir.
+        # Burada standart predict (class) varsayıyoruz, ancak olasılık erişimi varsa daha iyi.
         try:
-            threshold_manager = get_threshold_manager()
-            decision_threshold = threshold_manager.get_threshold('virtual_bankroll')
+            probs = info.model.predict_proba(self.X_test)[:, 1]
         except:
-            decision_threshold = 0.85  # Fallback to 0.85
-            
-        # Model tahminlerini al
-        if self.model_type == 'regressor':
-            # Regressor: direkt değer tahmini
-            predictions = info.model.predict(self.X_test)
-            p_binary = (predictions >= self.threshold).astype(int)
-        else:
-            # Classifier: sınıf tahmini
-            # Eğer predict_proba varsa onu kullanıp eşik kontrolü yapmalıyız
-            # Ancak CatBoost callback içinde modelin predict_proba metoduna erişim
-            # her zaman düzgün çalışmayabilir. Standart predict sınıf (0/1) döner.
-            # Eğitim scriptinde Focal Loss kullanıldığında raw values dönebilir.
-            # Basitlik için standart predict kullanıyoruz, ancak classifier eğitiminde
-            # zaten class_weights ve loss function ile eşik ayarlanmış oluyor.
-            predictions = info.model.predict(self.X_test)
-            
-            # Eğer probabilities alabiliyorsak:
-            try:
-                probs = info.model.predict_proba(self.X_test)[:, 1]
-                p_binary = (probs >= decision_threshold).astype(int)
-            except:
-                p_binary = predictions  # Zaten 0 veya 1
+            # Eğer proba yoksa (regressor ise)
+            probs = info.model.predict(self.X_test)
+            # Regressor çıktısını proba gibi 0-1 arasına sıkıştırmak veya direkt kullanmak?
+            # Regressor ise bu değer 'tahmin edilen çarpan'dır.
+            # Bu durumda threshold mantığı değişir. 
+            # Basitlik için: Regressor 1.5 üstü tahmin ediyorsa prob=1, yoksa 0 varsayalım.
+            probs = (probs >= 1.5).astype(float)
+
+        actuals = self.y_test
         
-        t_binary = (self.y_test >= self.threshold).astype(int)
+        # Kasa 1 (Normal - Basitleştirilmiş: 1.5 üstü tahmin edilirse gir, 1.5'te çık)
+        # CatBoost eğitiminde genellikle ya regressor ya classifier tek tek eğitilir.
+        # Bu yüzden karmaşık "regressor'dan al, classifier'dan onayla" yapısını burada kurmak zor.
+        # Basit bir simülasyon yapıyoruz:
         
-        # Sanal kasa simülasyonu
         wallet = self.starting_capital
-        total_bets = 0
-        total_wins = 0
-        total_losses = 0
+        bets = 0
+        wins = 0
         
-        for i in range(len(p_binary)):
-            model_pred = p_binary[i]
-            actual_value = self.y_test[i]
-            
-            # Model "1.5 üstü" diyorsa bahse gir
-            if model_pred == 1:
+        for i in range(len(probs)):
+            # Eğer model 1.5 üstü olacağına %85+ ihtimal veriyorsa (veya regressor 1.5+ dediyse)
+            if probs[i] >= self.threshold_normal:
                 wallet -= self.bet_amount
-                total_bets += 1
-                
-                if actual_value >= self.threshold:
-                    # Kazandık!
-                    wallet += self.win_amount
-                    total_wins += 1
-                else:
-                    # Kaybettik
-                    total_losses += 1
+                bets += 1
+                if actuals[i] >= 1.5:
+                    wallet += self.bet_amount * 1.5
+                    wins += 1
         
-        # Sonuçları hesapla
-        profit_loss = wallet - self.starting_capital
-        roi = (profit_loss / self.starting_capital) * 100 if total_bets > 0 else 0
-        win_rate = (total_wins / total_bets * 100) if total_bets > 0 else 0
+        roi = (wallet - self.starting_capital) / self.starting_capital * 100 if bets > 0 else 0
         
-        # En iyi ROI'yi takip et
-        if roi > self.best_roi:
-            self.best_roi = roi
-            self.best_iteration = iteration + 1
-        
-        # Emoji seçimi
-        if profit_loss > 100:
-            wallet_emoji = "🚀"
-        elif profit_loss > 0:
-            wallet_emoji = "✅"
-        elif profit_loss > -100:
-            wallet_emoji = "⚠️"
-        else:
-            wallet_emoji = "❌"
-        
-        # Rapor
-        model_name = "REGRESSOR" if self.model_type == 'regressor' else "CLASSIFIER"
-        print(f"\n{'='*80}")
-        print(f"💰 CATBOOST {model_name} - Iteration {iteration+1} - SANAL KASA (Eşik: {decision_threshold})")
-        print(f"{'='*80}")
-        print(f"   🎲 Oyun: {total_bets} el ({total_wins} kazanç, {total_losses} kayıp)")
-        print(f"   📊 Kazanma Oranı: {win_rate:.1f}%")
-        print(f"   💰 Başlangıç: {self.starting_capital:,.0f} TL → Final: {wallet:,.0f} TL")
-        print(f"   📈 Net: {profit_loss:+,.0f} TL | ROI: {roi:+.2f}% {wallet_emoji}")
-        
-        if win_rate >= 66.7:
-            print(f"   ✅ Kazanma oranı başabaş noktasının ÜSTÜNDE (%66.7)")
-        else:
-            print(f"   ⚠️ Kazanma oranı başabaş noktasının ALTINDA (Hedef: %66.7)")
-        
-        print(f"   🏆 En İyi: Iteration {self.best_iteration} (ROI: {self.best_roi:+.2f}%)")
-        print(f"{'='*80}\n")
-        
-        return True  # Devam et
+        print(f"\n💰 CatBoost Iter {info.iteration}: ROI {roi:+.2f}% | Bets {bets}")
+        return True
