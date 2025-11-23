@@ -1,8 +1,12 @@
 """
 RL Agent Training Script - SIMPLE VERSION
 
-TensorFlow ve protobuf sorunlarından kaçınmak için 
+TensorFlow ve protobuf sorunlarından kaçınmak için
 basitleştirilmiş sürüm. Sadece temel numpy/pandas kullanır.
+
+GÜNCELLEME:
+- 3 Mod -> 2 Mod (Normal/Rolling) yapısına geçildi.
+- Güven eşikleri: Normal >= 0.85, Rolling >= 0.95.
 """
 
 import numpy as np
@@ -280,14 +284,14 @@ class SimpleRLAgentTrainer:
             return 0.1 if actual_value < 1.5 else -0.05
         else:  # BAHIS YAP
             if actual_value >= 1.5:
-                if action == 1:  # Konservatif
+                if action == 1:  # ROLLING (Güvenli Liman)
                     return 0.2
-                elif action == 2:  # Normal
+                elif action == 2 or action == 3:  # NORMAL
                     return 0.4 if actual_value >= 2.0 else 0.1
-                else:  # Agresif
-                    return 0.6 if actual_value >= 3.0 else 0.2
             else:
                 return -1.0  # Kayıp cezası
+        
+        return 0.0
     
     def prepare_training_data(self, values: np.ndarray, window_size: int = 50) -> Tuple[List, List, List]:
         """Eğitim verisi hazırla"""
@@ -304,17 +308,23 @@ class SimpleRLAgentTrainer:
                 history = values[:i].tolist()
                 state = self.create_simple_state(history, window_size)
                 
-                # Basit optimal action (rule-based)
+                # Basit optimal action (rule-based) - 2 Modlu Yapı
                 recent_avg = np.mean(values[i-10:i]) if i >= 10 else np.mean(values[:i])
+                
+                # Bu sadece basit bir rule-based yaklaşım
+                # Gerçek senaryoda modellerin güven skorlarına göre belirlenmeli
+                # Burada ortalama değer üzerinden simüle ediyoruz:
+                
+                # Ortalama < 1.3 -> Bekle (Güven < 0.85)
+                # 1.3 <= Ortalama < 1.5 -> Normal (0.85 <= Güven < 0.95)
+                # Ortalama >= 1.5 -> Rolling (Güven >= 0.95)
                 
                 if recent_avg < 1.3:
                     optimal_action = 0  # BEKLE
-                elif recent_avg < 1.8:
-                    optimal_action = 1  # Konservatif
-                elif recent_avg < 2.5:
-                    optimal_action = 2  # Normal
+                elif recent_avg < 1.5:
+                    optimal_action = 2  # NORMAL (Eski Konservatif/Normal yerine)
                 else:
-                    optimal_action = 3  # Agresif
+                    optimal_action = 1  # ROLLING (Eski Agresif yerine, ama güvenli liman)
                 
                 # Reward
                 reward = self.calculate_reward(optimal_action, values[i])
