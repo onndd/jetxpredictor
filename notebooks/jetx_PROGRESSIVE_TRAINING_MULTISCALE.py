@@ -479,7 +479,7 @@ class DetailedMetricsCallback(callbacks.Callback):
         wins = 0
         total_bets = 0
         for pred, actual in zip(predictions, actuals):
-            if pred >= 0.70:  # Model %70'den fazla eminse oyna (KESKİN NİŞANCI)
+            if pred >= 0.85:  # GÜNCELLENDİ: Artık %85 güven arıyor
                 wallet -= 10
                 total_bets += 1
                 if actual >= 1.5:
@@ -496,7 +496,8 @@ class DetailedMetricsCallback(callbacks.Callback):
         
         # Confusion Matrix hesapla (KESKİN NİŞANCI THRESHOLD)
         y_true = (self.y_val >= 1.5).astype(int)
-        y_pred = (threshold_preds >= 0.70).astype(int)
+        # GÜNCELLENDİ: Confusion Matrix için eşik
+        y_pred = (threshold_preds >= 0.85).astype(int)
         
         TN = np.sum((y_true == 0) & (y_pred == 0))
         FP = np.sum((y_true == 0) & (y_pred == 1))
