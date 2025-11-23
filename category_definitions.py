@@ -1176,5 +1176,5 @@ SEQUENCE_LENGTHS = {
 # Risk yönetimi eşikleri (GÜNCELLENDİ)
 CONFIDENCE_THRESHOLDS = {
     'normal': 0.85,      # %85 Güven (Normal Mod)
-    'rolling': 0.95      # %95 Güven (Kasa Katlama/Rolling)
+    'rolling': 0.95      # %95 Güven (High/Rolling Mod)
 }
