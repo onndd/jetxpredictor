@@ -588,7 +588,7 @@ class WeightedModelCheckpoint(callbacks.Callback):
         wins = 0
         
         for pred, actual in zip(predictions, actuals):
-            if pred >= 0.70:  # Model 1.5 üstü dedi (KESKİN NİŞANCI) 🎯
+            if pred >= 0.85:  # GÜNCELLENDİ: En iyi modeli seçerken %85'e bakacak
                 total_bets += 1
                 wallet -= 10  # Bahis yapıldı
                 if actual >= 1.5:
@@ -609,7 +609,8 @@ class WeightedModelCheckpoint(callbacks.Callback):
         
         # Confusion Matrix hesapla (KONSERVATIF THRESHOLD)
         y_true = (self.y_val >= 1.5).astype(int)
-        y_pred = (threshold_preds >= 0.65).astype(int)
+        # GÜNCELLENDİ: Başarı ölçümü için eşik
+        y_pred = (threshold_preds >= 0.85).astype(int)
         
         TN = np.sum((y_true == 0) & (y_pred == 0))  # True Negative (1.5 altı doğru)
         FP = np.sum((y_true == 0) & (y_pred == 1))  # False Positive (1.5 altı → üstü tahmin = PARA KAYBI)
