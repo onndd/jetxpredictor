@@ -3,6 +3,11 @@ JetX Predictor - Ensemble Performance Monitoring
 
 Real-time performans takibi ve model karşılaştırması için monitoring sistemi.
 Her model tahmininin doğruluğunu izler ve detaylı raporlar sunar.
+
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) takibi eklendi.
+- Veritabanı şeması Normal ve Rolling modlar için ayrıştırıldı.
+- Threshold Manager entegrasyonu.
 """
 
 import sqlite3
@@ -12,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
 import os
+from utils.threshold_manager import get_threshold_manager
 
 # Logging ayarla
 logging.basicConfig(level=logging.INFO)
@@ -21,14 +27,6 @@ logger = logging.getLogger(__name__)
 class EnsembleMonitor:
     """
     Ensemble ve individual model performanslarını izler
-    
-    Features:
-    - Real-time accuracy tracking
-    - Rolling window metrics (son N tahmin)
-    - Confusion matrix tracking
-    - Trend analysis
-    - CSV export
-    - Performance comparison
     """
     
     def __init__(self, db_path: str = "data/ensemble_performance.db"):
@@ -37,17 +35,20 @@ class EnsembleMonitor:
             db_path: Performance database dosya yolu
         """
         self.db_path = db_path
+        self.tm = get_threshold_manager()
+        self.THRESHOLD_NORMAL = self.tm.get_normal_threshold()   # 0.85
+        self.THRESHOLD_ROLLING = self.tm.get_rolling_threshold() # 0.95
+        
         self._ensure_database_exists()
     
     def _ensure_database_exists(self):
         """Database ve tabloları oluştur"""
-        # Dizini oluştur
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Predictions tablosu
+        # Predictions tablosu (GÜNCELLENDİ - 2 Modlu)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS predictions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,31 +57,33 @@ class EnsembleMonitor:
                 -- Base model tahminleri
                 progressive_pred REAL,
                 progressive_threshold_prob REAL,
-                progressive_above_threshold INTEGER,
                 
                 ultra_pred REAL,
                 ultra_threshold_prob REAL,
-                ultra_above_threshold INTEGER,
                 
                 xgboost_pred REAL,
                 xgboost_threshold_prob REAL,
-                xgboost_above_threshold INTEGER,
                 
                 -- Ensemble tahmini
                 ensemble_pred REAL,
                 ensemble_threshold_prob REAL,
-                ensemble_above_threshold INTEGER,
                 ensemble_method TEXT,
                 
                 -- Gerçek değer
                 actual_value REAL,
                 actual_above_threshold INTEGER,
                 
-                -- Doğruluk bilgileri (1.5 eşik bazında)
-                progressive_correct INTEGER,
-                ultra_correct INTEGER,
-                xgboost_correct INTEGER,
-                ensemble_correct INTEGER,
+                -- Doğruluk bilgileri (Normal Mod - 0.85)
+                progressive_correct_normal INTEGER,
+                ultra_correct_normal INTEGER,
+                xgboost_correct_normal INTEGER,
+                ensemble_correct_normal INTEGER,
+
+                -- Doğruluk bilgileri (Rolling Mod - 0.95)
+                progressive_correct_rolling INTEGER,
+                ultra_correct_rolling INTEGER,
+                xgboost_correct_rolling INTEGER,
+                ensemble_correct_rolling INTEGER,
                 
                 -- Value prediction hatası (MAE)
                 progressive_error REAL,
@@ -90,7 +93,7 @@ class EnsembleMonitor:
             )
         """)
         
-        # Index oluştur (performans için)
+        # Index oluştur
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_timestamp 
             ON predictions(timestamp DESC)
@@ -100,6 +103,15 @@ class EnsembleMonitor:
         conn.close()
         logger.info(f"✅ Performance database hazır: {self.db_path}")
     
+    def _calculate_correct(self, prob, actual_above, threshold):
+        """Olasılığa göre tahminin doğruluğunu hesapla"""
+        if prob is None: return None
+        pred_above = 1 if prob >= threshold else 0
+        # Sadece pozitif tahminlerde (1.5 üstü dediğinde) başarıyı ölçmek istersek:
+        # if pred_above == 0: return None # Pas geçtiği için nötr
+        # Ancak genel doğruluk için her iki durumu da sayıyoruz:
+        return 1 if pred_above == actual_above else 0
+
     def log_prediction(
         self,
         individual_predictions: Dict,
@@ -108,11 +120,6 @@ class EnsembleMonitor:
     ):
         """
         Tahmin ve gerçek değeri kaydet
-        
-        Args:
-            individual_predictions: Her modelin tahmini {'progressive': {...}, 'ultra': {...}, 'xgboost': {...}}
-            ensemble_prediction: Ensemble tahmini
-            actual_value: Gerçekleşen değer
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -120,27 +127,28 @@ class EnsembleMonitor:
         # Gerçek eşik değeri
         actual_above_threshold = 1 if actual_value >= 1.5 else 0
         
-        # Her model için bilgileri çıkar
+        # Modelleri al
         prog = individual_predictions.get('progressive') or {}
         ultra = individual_predictions.get('ultra') or {}
         xgb = individual_predictions.get('xgboost') or {}
         
-        # Doğruluk hesapla
-        prog_correct = None
-        if prog.get('above_threshold') is not None:
-            prog_correct = 1 if (prog['above_threshold'] == (actual_value >= 1.5)) else 0
+        # Olasılıklar
+        prog_prob = prog.get('threshold_probability')
+        ultra_prob = ultra.get('threshold_probability')
+        xgb_prob = xgb.get('threshold_probability')
+        ens_prob = ensemble_prediction.get('threshold_probability')
         
-        ultra_correct = None
-        if ultra.get('above_threshold') is not None:
-            ultra_correct = 1 if (ultra['above_threshold'] == (actual_value >= 1.5)) else 0
-        
-        xgb_correct = None
-        if xgb.get('above_threshold') is not None:
-            xgb_correct = 1 if (xgb['above_threshold'] == (actual_value >= 1.5)) else 0
-        
-        ens_correct = None
-        if ensemble_prediction.get('above_threshold') is not None:
-            ens_correct = 1 if (ensemble_prediction['above_threshold'] == (actual_value >= 1.5)) else 0
+        # Doğruluk Hesaplama - Normal Mod (0.85)
+        prog_corr_norm = self._calculate_correct(prog_prob, actual_above_threshold, self.THRESHOLD_NORMAL)
+        ultra_corr_norm = self._calculate_correct(ultra_prob, actual_above_threshold, self.THRESHOLD_NORMAL)
+        xgb_corr_norm = self._calculate_correct(xgb_prob, actual_above_threshold, self.THRESHOLD_NORMAL)
+        ens_corr_norm = self._calculate_correct(ens_prob, actual_above_threshold, self.THRESHOLD_NORMAL)
+
+        # Doğruluk Hesaplama - Rolling Mod (0.95)
+        prog_corr_roll = self._calculate_correct(prog_prob, actual_above_threshold, self.THRESHOLD_ROLLING)
+        ultra_corr_roll = self._calculate_correct(ultra_prob, actual_above_threshold, self.THRESHOLD_ROLLING)
+        xgb_corr_roll = self._calculate_correct(xgb_prob, actual_above_threshold, self.THRESHOLD_ROLLING)
+        ens_corr_roll = self._calculate_correct(ens_prob, actual_above_threshold, self.THRESHOLD_ROLLING)
         
         # Hata hesapla (MAE)
         prog_error = abs(prog.get('predicted_value', 0) - actual_value) if prog.get('predicted_value') else None
@@ -151,89 +159,60 @@ class EnsembleMonitor:
         # Kaydet
         cursor.execute("""
             INSERT INTO predictions (
-                progressive_pred, progressive_threshold_prob, progressive_above_threshold,
-                ultra_pred, ultra_threshold_prob, ultra_above_threshold,
-                xgboost_pred, xgboost_threshold_prob, xgboost_above_threshold,
-                ensemble_pred, ensemble_threshold_prob, ensemble_above_threshold, ensemble_method,
+                progressive_pred, progressive_threshold_prob,
+                ultra_pred, ultra_threshold_prob,
+                xgboost_pred, xgboost_threshold_prob,
+                ensemble_pred, ensemble_threshold_prob, ensemble_method,
                 actual_value, actual_above_threshold,
-                progressive_correct, ultra_correct, xgboost_correct, ensemble_correct,
+                progressive_correct_normal, ultra_correct_normal, xgboost_correct_normal, ensemble_correct_normal,
+                progressive_correct_rolling, ultra_correct_rolling, xgboost_correct_rolling, ensemble_correct_rolling,
                 progressive_error, ultra_error, xgboost_error, ensemble_error
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            prog.get('predicted_value'), prog.get('threshold_probability'), 
-            1 if prog.get('above_threshold') else 0,
-            
-            ultra.get('predicted_value'), ultra.get('threshold_probability'),
-            1 if ultra.get('above_threshold') else 0,
-            
-            xgb.get('predicted_value'), xgb.get('threshold_probability'),
-            1 if xgb.get('above_threshold') else 0,
-            
-            ensemble_prediction.get('predicted_value'), ensemble_prediction.get('threshold_probability'),
-            1 if ensemble_prediction.get('above_threshold') else 0,
+            prog.get('predicted_value'), prog_prob,
+            ultra.get('predicted_value'), ultra_prob,
+            xgb.get('predicted_value'), xgb_prob,
+            ensemble_prediction.get('predicted_value'), ens_prob,
             ensemble_prediction.get('ensemble_method', 'unknown'),
             
             actual_value, actual_above_threshold,
             
-            prog_correct, ultra_correct, xgb_correct, ens_correct,
+            prog_corr_norm, ultra_corr_norm, xgb_corr_norm, ens_corr_norm,
+            prog_corr_roll, ultra_corr_roll, xgb_corr_roll, ens_corr_roll,
             
             prog_error, ultra_error, xgb_error, ens_error
         ))
         
         conn.commit()
         conn.close()
-        
-        logger.debug(f"Tahmin kaydedildi: Actual={actual_value:.2f}x, Ensemble={ensemble_prediction.get('predicted_value'):.2f}x")
+        logger.debug(f"Tahmin kaydedildi: Actual={actual_value:.2f}x")
     
-    def get_rolling_accuracy(
-        self, 
-        model_name: str, 
-        window: int = 100
-    ) -> float:
-        """
-        Son N tahmindeki accuracy (1.5 eşik bazında)
-        
-        Args:
-            model_name: 'progressive', 'ultra', 'xgboost', veya 'ensemble'
-            window: Pencere boyutu
-            
-        Returns:
-            Accuracy (0-1 arası)
-        """
+    def get_rolling_accuracy(self, model_name: str, window: int = 100, mode: str = 'normal') -> float:
+        """Son N tahmindeki accuracy"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        col_name = f"{model_name}_correct_{mode}"
+        
         query = f"""
-            SELECT AVG({model_name}_correct) 
+            SELECT AVG({col_name}) 
             FROM (
-                SELECT {model_name}_correct 
+                SELECT {col_name} 
                 FROM predictions 
-                WHERE {model_name}_correct IS NOT NULL
+                WHERE {col_name} IS NOT NULL
                 ORDER BY timestamp DESC 
                 LIMIT ?
             )
         """
         
+        cursor.execute(query, (window,))
         result = cursor.fetchone()
         conn.close()
         
         return result[0] if result[0] is not None else 0.0
     
-    def get_rolling_mae(
-        self,
-        model_name: str,
-        window: int = 100
-    ) -> float:
-        """
-        Son N tahmindeki MAE
-        
-        Args:
-            model_name: 'progressive', 'ultra', 'xgboost', veya 'ensemble'
-            window: Pencere boyutu
-            
-        Returns:
-            MAE
-        """
+    def get_rolling_mae(self, model_name: str, window: int = 100) -> float:
+        """Son N tahmindeki MAE"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -254,250 +233,88 @@ class EnsembleMonitor:
         
         return result[0] if result[0] is not None else 0.0
     
-    def calculate_trend(
-        self,
-        model_name: str,
-        window1: int = 50,
-        window2: int = 100
-    ) -> str:
-        """
-        Model performans trendi
-        
-        Args:
-            model_name: Model adı
-            window1: Yakın pencere (son 50)
-            window2: Uzak pencere (son 100)
-            
-        Returns:
-            Trend string: '↗️ improving', '↘️ declining', '➡️ stable'
-        """
-        recent = self.get_rolling_accuracy(model_name, window1)
-        older = self.get_rolling_accuracy(model_name, window2)
+    def calculate_trend(self, model_name: str, mode: str = 'normal') -> str:
+        """Model performans trendi"""
+        recent = self.get_rolling_accuracy(model_name, 50, mode)
+        older = self.get_rolling_accuracy(model_name, 100, mode)
         
         diff = recent - older
-        
-        if diff > 0.05:
-            return '↗️ improving'
-        elif diff < -0.05:
-            return '↘️ declining'
-        else:
-            return '➡️ stable'
-    
-    def get_confusion_matrix(
-        self,
-        model_name: str,
-        window: Optional[int] = None
-    ) -> np.ndarray:
-        """
-        Confusion matrix (1.5 eşik bazında)
-        
-        Args:
-            model_name: Model adı
-            window: Pencere boyutu (None ise tümü)
-            
-        Returns:
-            2x2 confusion matrix [[TN, FP], [FN, TP]]
-        """
-        conn = sqlite3.connect(self.db_path)
-        
-        if window:
-            query = f"""
-                SELECT actual_above_threshold, {model_name}_above_threshold
-                FROM (
-                    SELECT actual_above_threshold, {model_name}_above_threshold
-                    FROM predictions
-                    WHERE {model_name}_above_threshold IS NOT NULL
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                )
-            """
-            df = pd.read_sql_query(query, conn, params=(window,))
-        else:
-            query = f"""
-                SELECT actual_above_threshold, {model_name}_above_threshold
-                FROM predictions
-                WHERE {model_name}_above_threshold IS NOT NULL
-            """
-            df = pd.read_sql_query(query, conn)
-        
-        conn.close()
-        
-        if len(df) == 0:
-            return np.array([[0, 0], [0, 0]])
-        
-        # Confusion matrix hesapla
-        tn = ((df['actual_above_threshold'] == 0) & (df[f'{model_name}_above_threshold'] == 0)).sum()
-        fp = ((df['actual_above_threshold'] == 0) & (df[f'{model_name}_above_threshold'] == 1)).sum()
-        fn = ((df['actual_above_threshold'] == 1) & (df[f'{model_name}_above_threshold'] == 0)).sum()
-        tp = ((df['actual_above_threshold'] == 1) & (df[f'{model_name}_above_threshold'] == 1)).sum()
-        
-        return np.array([[tn, fp], [fn, tp]])
-    
-    def get_money_loss_risk(
-        self,
-        model_name: str,
-        window: Optional[int] = None
-    ) -> float:
-        """
-        Para kaybı riski (1.5 altıyken yanlışlıkla üstü deme oranı)
-        
-        Args:
-            model_name: Model adı
-            window: Pencere boyutu
-            
-        Returns:
-            Risk oranı (0-1 arası)
-        """
-        cm = self.get_confusion_matrix(model_name, window)
-        tn, fp = cm[0]
-        
-        total_below = tn + fp
-        if total_below == 0:
-            return 0.0
-        
-        return fp / total_below
-    
-    def generate_comparison_report(
-        self,
-        window: int = 100
-    ) -> Dict:
-        """
-        Tüm modellerin karşılaştırmalı raporu
-        
-        Args:
-            window: Pencere boyutu
-            
-        Returns:
-            Model comparison dictionary
-        """
+        if diff > 0.05: return '↗️ improving'
+        elif diff < -0.05: return '↘️ declining'
+        else: return '➡️ stable'
+
+    def generate_comparison_report(self, window: int = 100) -> Dict:
+        """Tüm modellerin karşılaştırmalı raporu"""
         models = ['progressive', 'ultra', 'xgboost', 'ensemble']
         report = {}
         
         for model_name in models:
-            accuracy = self.get_rolling_accuracy(model_name, window)
+            acc_norm = self.get_rolling_accuracy(model_name, window, 'normal')
+            acc_roll = self.get_rolling_accuracy(model_name, window, 'rolling')
             mae = self.get_rolling_mae(model_name, window)
-            trend = self.calculate_trend(model_name)
-            money_risk = self.get_money_loss_risk(model_name, window)
-            cm = self.get_confusion_matrix(model_name, window)
-            
-            # Below/Above threshold accuracy
-            tn, fp, fn, tp = cm[0][0], cm[0][1], cm[1][0], cm[1][1]
-            below_acc = tn / (tn + fp) if (tn + fp) > 0 else 0
-            above_acc = tp / (tp + fn) if (tp + fn) > 0 else 0
+            trend = self.calculate_trend(model_name, 'normal')
             
             report[model_name] = {
-                'accuracy': accuracy,
+                'accuracy_normal': acc_norm,
+                'accuracy_rolling': acc_roll,
                 'mae': mae,
-                'below_1.5_accuracy': below_acc,
-                'above_1.5_accuracy': above_acc,
-                'money_loss_risk': money_risk,
-                'trend': trend,
-                'confusion_matrix': cm.tolist(),
-                'total_predictions': int(cm.sum())
+                'trend': trend
             }
-        
         return report
-    
-    def get_chart_data(
-        self,
-        window: int = 500
-    ) -> pd.DataFrame:
-        """
-        Grafik için time series data
-        
-        Args:
-            window: Kaç tahmin
-            
-        Returns:
-            DataFrame with columns: timestamp, progressive_correct, ultra_correct, xgboost_correct, ensemble_correct
-        """
+
+    def get_chart_data(self, window: int = 500) -> pd.DataFrame:
+        """Grafik için time series data"""
         conn = sqlite3.connect(self.db_path)
-        
         query = """
             SELECT 
                 timestamp,
-                progressive_correct,
-                ultra_correct,
-                xgboost_correct,
-                ensemble_correct
+                ensemble_correct_normal,
+                ensemble_correct_rolling
             FROM predictions
             ORDER BY timestamp DESC
             LIMIT ?
         """
-        
         df = pd.read_sql_query(query, conn, params=(window,))
         conn.close()
         
-        # Reverse (eskiden yeniye)
         df = df.iloc[::-1].reset_index(drop=True)
-        
-        # Rolling average hesapla (smoothing için)
-        for col in ['progressive_correct', 'ultra_correct', 'xgboost_correct', 'ensemble_correct']:
-            if col in df.columns:
-                df[f'{col}_rolling'] = df[col].rolling(window=20, min_periods=1).mean()
+        # Rolling average
+        df['normal_rolling_acc'] = df['ensemble_correct_normal'].rolling(window=20).mean()
+        df['rolling_rolling_acc'] = df['ensemble_correct_rolling'].rolling(window=20).mean()
         
         return df
-    
-    def export_to_csv(
-        self,
-        filename: str = "data/ensemble_performance.csv",
-        window: Optional[int] = None
-    ):
-        """
-        Performans verilerini CSV'ye export et
-        
-        Args:
-            filename: Dosya adı
-            window: Kaç tahmin (None ise tümü)
-        """
+
+    def export_to_csv(self, filename: str = "data/ensemble_performance.csv", window: Optional[int] = None):
         conn = sqlite3.connect(self.db_path)
-        
         if window:
             query = "SELECT * FROM predictions ORDER BY timestamp DESC LIMIT ?"
             df = pd.read_sql_query(query, conn, params=(window,))
         else:
             query = "SELECT * FROM predictions ORDER BY timestamp DESC"
             df = pd.read_sql_query(query, conn)
-        
         conn.close()
         
-        # CSV'ye kaydet
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         df.to_csv(filename, index=False)
-        
-        logger.info(f"✅ {len(df)} tahmin CSV'ye export edildi: {filename}")
+        logger.info(f"✅ CSV export: {filename}")
         return filename
-    
+
     def get_statistics_summary(self) -> Dict:
-        """
-        Genel istatistikler özeti
-        
-        Returns:
-            Summary dictionary
-        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        # Toplam tahmin sayısı
         cursor.execute("SELECT COUNT(*) FROM predictions")
         total = cursor.fetchone()[0]
         
-        # En iyi performans gösteren model
+        # En iyi modeli bul (Normal Mod)
+        best_model = None
+        best_acc = 0.0
         if total > 0:
             models = ['progressive', 'ultra', 'xgboost', 'ensemble']
-            best_model = max(
-                models,
-                key=lambda m: self.get_rolling_accuracy(m, min(100, total))
-            )
-            best_acc = self.get_rolling_accuracy(best_model, min(100, total))
-        else:
-            best_model = None
-            best_acc = 0.0
-        
-        # İlk ve son tahmin zamanı
+            best_model = max(models, key=lambda m: self.get_rolling_accuracy(m, min(100, total), 'normal'))
+            best_acc = self.get_rolling_accuracy(best_model, min(100, total), 'normal')
+            
         cursor.execute("SELECT MIN(timestamp), MAX(timestamp) FROM predictions")
         first_pred, last_pred = cursor.fetchone()
-        
         conn.close()
         
         return {
@@ -505,6 +322,5 @@ class EnsembleMonitor:
             'best_model': best_model,
             'best_accuracy': best_acc,
             'first_prediction': first_pred,
-            'last_prediction': last_pred,
-            'database_path': self.db_path
+            'last_prediction': last_pred
         }
