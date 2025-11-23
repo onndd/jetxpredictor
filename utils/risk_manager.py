@@ -3,6 +3,11 @@ JetX Predictor - Risk Yönetim Modülü
 
 Bu modül tahmin sonuçlarına göre risk analizi yapar ve
 mod bazlı öneriler sunar (Normal, Rolling).
+
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) entegre edildi.
+- Normal Mod Eşik: 0.85
+- Rolling Mod Eşik: 0.95
 """
 
 from typing import Dict, List, Optional
@@ -11,10 +16,8 @@ import os
 
 # Kategori tanımlarını import et
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from category_definitions import (
-    CategoryDefinitions,
-    CONFIDENCE_THRESHOLDS
-)
+from category_definitions import CategoryDefinitions
+from utils.threshold_manager import get_threshold_manager
 
 
 class RiskManager:
@@ -25,10 +28,16 @@ class RiskManager:
         Args:
             mode: Tahmin modu ('normal', 'rolling')
         """
-        self.mode = mode
+        self.tm = get_threshold_manager()
+        self.set_mode(mode)
+        
         self.consecutive_losses = 0
         self.consecutive_wins = 0
         self.last_predictions = []  # Son tahminlerin listesi
+        
+        # Eşik değerlerini al
+        self.THRESHOLD_NORMAL = self.tm.get_normal_threshold()   # 0.85
+        self.THRESHOLD_ROLLING = self.tm.get_rolling_threshold() # 0.95
         
     def set_mode(self, mode: str):
         """
@@ -40,7 +49,9 @@ class RiskManager:
         if mode in ['normal', 'rolling']:
             self.mode = mode
         else:
-            raise ValueError(f"Geçersiz mod: {mode}. 'normal' veya 'rolling' olmalı.")
+            # Hatalı mod durumunda varsayılan 'normal'
+            print(f"⚠️ Geçersiz mod: {mode}. 'normal' moduna geçiliyor.")
+            self.mode = 'normal'
     
     def evaluate_prediction(
         self,
@@ -49,13 +60,6 @@ class RiskManager:
     ) -> Dict:
         """
         Tahmin sonucunu değerlendirir ve kayıt tutar
-        
-        Args:
-            prediction_result: Predictor'dan gelen tahmin sonucu
-            actual_value: Gerçekleşen değer
-            
-        Returns:
-            Değerlendirme sonucu
         """
         predicted_value = prediction_result.get('predicted_value')
         above_threshold = prediction_result.get('above_threshold')
@@ -107,7 +111,7 @@ class RiskManager:
         history: Optional[List[float]] = None
     ) -> Dict:
         """
-        Mod bazlı oyun önerisi verir - BIAS TEMİZLENDİ
+        Mod bazlı oyun önerisi verir
         
         Args:
             prediction_result: Predictor'dan gelen tahmin
@@ -119,10 +123,12 @@ class RiskManager:
         confidence = prediction_result.get('confidence', 0)
         above_threshold = prediction_result.get('above_threshold', False)
         predicted_value = prediction_result.get('predicted_value', 0)
-        recommendation = prediction_result.get('recommendation', 'BEKLE')
         
-        # Mod bazlı eşik
-        confidence_threshold = CONFIDENCE_THRESHOLDS.get(self.mode, 0.85)
+        # Mod bazlı eşik belirleme
+        if self.mode == 'rolling':
+            confidence_threshold = self.THRESHOLD_ROLLING # 0.95
+        else:
+            confidence_threshold = self.THRESHOLD_NORMAL  # 0.85
         
         reasons = []
         should_play = False
@@ -134,11 +140,10 @@ class RiskManager:
         else:
             reasons.append(f"Güven seviyesi yeterli ({confidence:.0%})")
             
-        # 2. Eşik kontrolü - DEĞIŞIKLIK: 1.5 altı tahminleri de gösteriyoruz
+        # 2. Eşik kontrolü - Sadece 1.5 üstü tahminlerde oyna
         if not above_threshold:
             reasons.append(f"⚠️ TAHMİN 1.5x ALTINDA ({predicted_value:.2f}x)")
-            reasons.append(f"💰 PARA KAYBI RİSKİ YÜKSEK - KESINLIKLE OYNAMA!")
-            # 1.5 altı tahminlerde should_play false ama kullanıcı görebilir
+            reasons.append(f"💰 PARA KAYBI RİSKİ YÜKSEK - OYNAMA!")
             should_play = False
             risk_level = 'CRITICAL'
         else:
@@ -146,33 +151,30 @@ class RiskManager:
             
         # 3. Ardışık kayıp kontrolü
         if self.consecutive_losses >= 3:
-            reasons.append(f"⚠️ {self.consecutive_losses} ardışık yanlış tahmin - DUR!")
-        
-        # 4. Mod bazlı karar - SADECE 1.5 ÜSTÜ İÇİN
-        if above_threshold:
+            reasons.append(f"⚠️ {self.consecutive_losses} ardışık yanlış tahmin - RİSKLİ!")
+            # Rolling modda ardışık kayıp varsa durdur
             if self.mode == 'rolling':
-                # Rolling: Çok yüksek güvenlik (%95)
-                if confidence >= confidence_threshold:
-                    should_play = True
-                    risk_level = 'LOW'
-                    reasons.append("✅ Rolling mod: %95 üzeri güven sağlandı")
-                else:
-                    reasons.append(f"❌ Rolling mod: Güven yetersiz ({confidence:.0%} < 95%) - BEKLE")
-                    
-            elif self.mode == 'normal':
-                # Normal: Yüksek güvenlik (%85)
-                if confidence >= confidence_threshold:
-                    should_play = True
-                    risk_level = 'MEDIUM'
-                    reasons.append("✅ Normal mod: %85 üzeri güven sağlandı")
-                else:
-                    reasons.append(f"❌ Normal mod: Güven yetersiz ({confidence:.0%} < 85%) - BEKLE")
+                should_play = False
+                reasons.append("⛔ Rolling Mod: Seri kayıpta durduruldu.")
         
-        # 5. Kritik bölge uyarısı
+        # 4. Mod bazlı nihai karar
+        if above_threshold and confidence >= confidence_threshold:
+            if self.mode == 'rolling':
+                should_play = True
+                risk_level = 'LOW'
+                reasons.append("✅ ROLLING MOD: %95+ Güven sağlandı.")
+            else:
+                should_play = True
+                risk_level = 'MEDIUM'
+                reasons.append("✅ NORMAL MOD: %85+ Güven sağlandı.")
+        else:
+            should_play = False
+        
+        # 5. Kritik bölge uyarısı (1.45 - 1.55 arası belirsizlik)
         if 1.45 <= predicted_value <= 1.55:
             should_play = False
             risk_level = 'CRITICAL'
-            reasons.append("🚨 KRİTİK BÖLGE! Kesinlikle oynama!")
+            reasons.append("🚨 KRİTİK BÖLGE (1.50 Sınırı)! Risk alma.")
         
         return {
             'should_play': should_play,
@@ -180,7 +182,7 @@ class RiskManager:
             'reasons': reasons,
             'mode': self.mode,
             'confidence_threshold': confidence_threshold,
-            'below_threshold_warning': not above_threshold  # Yeni: 1.5 altı uyarısı
+            'below_threshold_warning': not above_threshold
         }
     
     def get_betting_suggestion(
@@ -190,26 +192,17 @@ class RiskManager:
     ) -> Dict:
         """
         Bahis önerisi verir (varsa bankroll ile)
-        
-        Args:
-            prediction_result: Tahmin sonucu
-            bankroll: Mevcut sermaye (opsiyonel)
-            
-        Returns:
-            Bahis önerisi
         """
         confidence = prediction_result.get('confidence', 0)
         predicted_value = prediction_result.get('predicted_value', 0)
         
-        # Temel öneri
         suggestion = {
             'should_bet': False,
-            'suggested_multiplier': 1.5,  # Varsayılan çıkış noktası
+            'suggested_multiplier': 1.5,
             'bet_percentage': 0,
             'reasons': []
         }
         
-        # Oyun kararı
         play_decision = self.should_play(prediction_result)
         
         if not play_decision['should_play']:
@@ -218,41 +211,35 @@ class RiskManager:
         
         suggestion['should_bet'] = True
         
-        # Mod bazlı bahis stratejisi
+        # Mod bazlı strateji
         if self.mode == 'rolling':
-            # Rolling: Düşük çarpanda çık, sermayeyi koru
-            suggestion['suggested_multiplier'] = 1.5
-            suggestion['bet_percentage'] = 2 if bankroll else 0
-            suggestion['reasons'].append("Rolling: 1.5x'te çık, sermaye koruma öncelikli")
+            # Rolling: Sabit 1.50x çıkış, %2 kasa (Daha güvenli)
+            suggestion['suggested_multiplier'] = 1.50
+            suggestion['bet_percentage'] = 2
+            suggestion['reasons'].append("Rolling: 1.50x Sabit Çıkış (Güvenli Liman)")
             
         elif self.mode == 'normal':
-            # Normal: Tahmine göre karar ver
+            # Normal: Dinamik çıkış (Max 2.5x), %4 kasa
             if predicted_value >= 2.0:
                 suggestion['suggested_multiplier'] = min(predicted_value * 0.8, 2.5)
-                suggestion['bet_percentage'] = 3 if bankroll else 0
-                suggestion['reasons'].append(f"Normal: Tahmin yüksek, {suggestion['suggested_multiplier']:.1f}x'te çık")
             else:
                 suggestion['suggested_multiplier'] = 1.5
-                suggestion['bet_percentage'] = 3 if bankroll else 0
-                suggestion['reasons'].append("Normal: 1.5x'te güvenli çık")
+            
+            suggestion['bet_percentage'] = 4
+            suggestion['reasons'].append(f"Normal: {suggestion['suggested_multiplier']:.2f}x Dinamik Çıkış")
         
         # Bankroll varsa miktar hesapla
         if bankroll:
             suggestion['suggested_amount'] = (bankroll * suggestion['bet_percentage']) / 100
             suggestion['reasons'].append(
-                f"Önerilen bahis: {suggestion['suggested_amount']:.2f} " +
-                f"(Sermayenin %{suggestion['bet_percentage']})"
+                f"Önerilen bahis: {suggestion['suggested_amount']:.2f} TL " +
+                f"(%{suggestion['bet_percentage']})"
             )
         
         return suggestion
     
     def get_statistics(self) -> Dict:
-        """
-        Risk yönetimi istatistikleri
-        
-        Returns:
-            İstatistikler
-        """
+        """Risk yönetimi istatistikleri"""
         if not self.last_predictions:
             return {
                 'total_predictions': 0,
@@ -279,17 +266,8 @@ class RiskManager:
         self.consecutive_losses = 0
     
     def get_warning_level(self) -> str:
-        """
-        Mevcut duruma göre uyarı seviyesi döndürür
-        
-        Returns:
-            Uyarı seviyesi ('SAFE', 'CAUTION', 'WARNING', 'DANGER')
-        """
-        if self.consecutive_losses >= 5:
-            return 'DANGER'
-        elif self.consecutive_losses >= 3:
-            return 'WARNING'
-        elif self.consecutive_losses >= 2:
-            return 'CAUTION'
-        else:
-            return 'SAFE'
+        """Mevcut duruma göre uyarı seviyesi"""
+        if self.consecutive_losses >= 5: return 'DANGER'
+        elif self.consecutive_losses >= 3: return 'WARNING'
+        elif self.consecutive_losses >= 2: return 'CAUTION'
+        else: return 'SAFE'
