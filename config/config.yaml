@@ -88,10 +88,14 @@ cache:
 # "Raporlama vs. Eylem" tutarsızlıklarını önlemek için tasarlandı
 
 training_thresholds:
-  # Callback threshold'ları - "Keskin Nişancı" stratejisi
-  detailed_metrics: 0.70      # DetailedMetricsCallback ROI hesaplaması
-  virtual_bankroll: 0.70      # VirtualBankrollCallback sanal kasa
-  model_checkpoint: 0.70      # WeightedModelCheckpoint model seçimi
+  # Eğitim sırasında kullanılan eşikler - GÜNCELLENDİ
+  detailed_metrics: 0.85      # Raporlarda kullanılacak eşik (%85)
+  virtual_bankroll: 0.85      # Sanal kasada işlem yapma eşiği (%85)
+  model_checkpoint: 0.85      # "En iyi model" seçilirken bakılacak eşik (%85)
+  
+  catboost_evaluation: 0.85   # CatBoost test eşiği
+  conservative_mode: 0.95     # Rolling modu için eşik (%95)
+  production_default: 0.85    # Varsayılan çalışma eşiği
   
   # Evaluation threshold'ları
   catboost_evaluation: 0.70   # CatBoost training sonrası değerlendirme
