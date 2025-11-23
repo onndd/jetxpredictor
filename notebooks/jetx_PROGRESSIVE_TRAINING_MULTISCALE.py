@@ -866,7 +866,7 @@ for window_size in window_sizes:
     mae = mean_absolute_error(y_reg_test, p_reg)
     
     thr_true = (y_reg_test >= 1.5).astype(int)
-    thr_pred = (p_thr >= 0.65).astype(int)  # KONSERVATIF THRESHOLD ⚠️
+    thr_pred = (p_thr >= 0.85).astype(int) 
     thr_acc = accuracy_score(thr_true, thr_pred)
     
     below_mask = thr_true == 0
