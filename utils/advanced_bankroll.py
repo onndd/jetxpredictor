@@ -3,7 +3,7 @@ JetX Predictor - Advanced Bankroll Manager
 
 Gelişmiş sanal kasa yönetimi:
 - Kelly Criterion (optimal bahis hesaplama)
-- Risk tolerance seviyeleri (conservative, moderate, aggressive)
+- Risk tolerance seviyeleri (normal, rolling)
 - Stop-loss & Take-profit otomasyonu
 - Streak tracking
 - Detaylı performans raporları
@@ -34,45 +34,43 @@ class AdvancedBankrollManager:
     
     Features:
     - Kelly Criterion ile optimal bahis hesaplama
-    - Risk tolerance stratejileri (conservative, moderate, aggressive)
+    - Risk tolerance stratejileri (normal, rolling)
     - Stop-loss & Take-profit kuralları
     - Streak tracking (en iyi/en kötü seriler)
     - Detaylı performans raporları
     """
     
     # Strateji tanımları
-    # Strateji tanımları
     STRATEGIES = {
-        'rolling': {  # Eskiden conservative idi, rolling ile eşleştirdik
+        'rolling': {
             'name': 'Rolling / Kasa Katlama',
             'max_bet_ratio': 0.05,
             'kelly_fraction': 0.25,
             'stop_loss': 0.20,
             'take_profit': 0.50,
-            'min_confidence': 0.95       # %95 olarak güncellendi
+            'min_confidence': 0.95
         },
-        'normal': {   # Eskiden moderate idi
+        'normal': {
             'name': 'Normal',
             'max_bet_ratio': 0.10,
             'kelly_fraction': 0.50,
             'stop_loss': 0.30,
             'take_profit': 1.00,
-            'min_confidence': 0.85       # %85 olarak güncellendi
+            'min_confidence': 0.85
         }
-        # Aggressive tamamen silindi
     }
     
     def __init__(
         self,
         initial_bankroll: float = 1000.0,
-        risk_tolerance: str = 'moderate',
+        risk_tolerance: str = 'normal',
         win_multiplier: float = 1.5,
         min_bet: float = 10.0
     ):
         """
         Args:
             initial_bankroll: Başlangıç kasası (TL)
-            risk_tolerance: Risk toleransı ('conservative', 'moderate', 'aggressive')
+            risk_tolerance: Risk toleransı ('normal', 'rolling')
             win_multiplier: Kazanç çarpanı (default: 1.5x)
             min_bet: Minimum bahis miktarı (TL)
         """
@@ -398,8 +396,8 @@ if __name__ == "__main__":
     print("💰 ADVANCED BANKROLL MANAGER - TEST")
     print("="*70)
     
-    # 3 farklı risk tolerance ile test
-    for risk_tolerance in ['conservative', 'moderate', 'aggressive']:
+    # 2 farklı risk tolerance ile test (normal, rolling)
+    for risk_tolerance in ['normal', 'rolling']:
         print(f"\n{'='*70}")
         print(f"🎯 {risk_tolerance.upper()} STRATEJİ TESTİ")
         print(f"{'='*70}")
@@ -414,8 +412,8 @@ if __name__ == "__main__":
         np.random.seed(42)
         
         for i in range(100):
-            # Rastgele confidence ve actual value
-            confidence = np.random.uniform(0.5, 0.95)
+            # Rastgele confidence ve actual value (yeni eşiklere uygun simülasyon)
+            confidence = np.random.uniform(0.8, 0.99)
             actual_value = np.random.choice([
                 np.random.uniform(1.0, 1.49),  # %35 1.5 altı
                 np.random.uniform(1.5, 10.0)   # %65 1.5 üstü
