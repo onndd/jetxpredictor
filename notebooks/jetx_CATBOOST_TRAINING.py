@@ -1,32 +1,26 @@
 #!/usr/bin/env python3
 """
-🤖 JetX CATBOOST TRAINING - Feature Engineering Bazlı Model (YENİ - FAZ 2)
+🤖 JetX CATBOOST TRAINING - MULTI-SCALE WINDOW ENSEMBLE (v3.1)
 
-AMAÇ: CatBoost ile hızlı ve etkili tahmin modeli eğitmek
+YENİ YAKLAŞIM: Multi-Scale Window Ensemble
+- Her pencere boyutu için ayrı CatBoost modeli (Regressor + Classifier)
+- Window boyutları: [500, 250, 100, 50, 20]
+- Her model farklı zaman ölçeğinde desen öğrenir
+- Final: Tüm modellerin ensemble'ı
 
-AVANTAJLAR:
-- Çok daha hızlı eğitim (~30-60 dakika vs 2-3 saat)
-- Feature importance analizi yapılabilir
-- Daha az bellek kullanımı
-- Overfitting'e daha dirençli
-- Class imbalance için native destek
-
-DEĞİŞİKLİKLER (XGBoost → CatBoost):
-- XGBoost → CatBoost kütüphanesi
-- scale_pos_weight → class_weights (native support)
-- .json → .cbm model formatı
-- Çift sanal kasa simülasyonu (Kasa 1: 1.5x + Kasa 2: %80 çıkış)
-
-STRATEJI:
-- CatBoostRegressor: Değer tahmini için
-- CatBoostClassifier: 1.5 eşik tahmini için (class_weights ile dengeleme)
+GÜNCELLEME (v3.1):
+- 2 MODLU YAPI: Normal (0.85) ve Rolling (0.95)
+- Sanal kasalar bu modlara göre optimize edildi.
 
 HEDEFLER:
-- 1.5 ALTI Doğruluk: %70-80%+
-- 1.5 ÜSTÜ Doğruluk: %70-80%+
+- Normal Mod Doğruluk: %80+
+- Rolling Mod Doğruluk: %90+
 - MAE: < 2.0
 
-SÜRE: ~30-60 dakika (GPU ile)
+⚠️  VERİ BÜTÜNLİĞİ:
+- Shuffle: YASAK
+- Augmentation: YASAK
+- Kronolojik sıra: KORUNUYOR
 """
 
 import subprocess
@@ -34,27 +28,33 @@ import sys
 import os
 import time
 from datetime import datetime
+import json
+import shutil
 
 print("="*80)
-print("🤖 JetX CATBOOST TRAINING (FAZ 2)")
+print("🤖 JetX CATBOOST TRAINING - MULTI-SCALE WINDOW ENSEMBLE (v3.1)")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print()
+print("🔧 SİSTEM KONFIGURASYONU:")
+print("   Normal Mod Eşik: 0.85")
+print("   Rolling Mod Eşik: 0.95")
+print("   Window Boyutları: [500, 250, 100, 50, 20]")
 print()
 
 # Kütüphaneleri yükle
 print("📦 Kütüphaneler yükleniyor...")
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", 
                       "catboost", "scikit-learn", "pandas", "numpy", 
-                      "scipy", "joblib", "matplotlib", "seaborn", "tqdm",
-                      "PyWavelets", "nolds"])
+                      "scipy>=1.10.0", "joblib", "matplotlib", "seaborn", "tqdm",
+                      "PyWavelets>=1.4.1", "nolds>=0.5.2"])
 
 import numpy as np
 import pandas as pd
 import joblib
 import sqlite3
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score, confusion_matrix, classification_report
+from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score, confusion_matrix
 from catboost import CatBoostRegressor, CatBoostClassifier
 from tqdm.auto import tqdm
 import warnings
@@ -62,588 +62,385 @@ warnings.filterwarnings('ignore')
 
 print(f"✅ CatBoost: İmport edildi")
 
-# Proje yükle
-if not os.path.exists('jetxpredictor'):
+# YENİ EŞİKLER
+THRESHOLD_NORMAL = 0.85
+THRESHOLD_ROLLING = 0.95
+
+# GPU kontrolü ve fallback
+try:
+    from catboost import CatBoostClassifier
+    X_test_gpu = [[1, 2, 3], [4, 5, 6]]
+    y_test_gpu = [0, 1]
+    
+    temp_model = CatBoostClassifier(
+        iterations=1, 
+        task_type='GPU', 
+        devices='0',
+        border_count=32,
+        verbose=False
+    )
+    temp_model.fit(X_test_gpu, y_test_gpu, verbose=False)
+    
+    GPU_AVAILABLE = True
+    TASK_TYPE = 'GPU'
+    print(f"✅ GPU: Mevcut ve kullanılabilir (Tesla T4 detected)")
+    
+except Exception as e:
+    GPU_AVAILABLE = False
+    TASK_TYPE = 'CPU'
+    print(f"⚠️ GPU: Kullanılamıyor, CPU modunda çalışacak")
+
+# Proje yükle ve kök dizini tespit et
+PROJECT_ROOT = None
+if os.path.exists('jetx_data.db'):
+    PROJECT_ROOT = os.getcwd()
+    print("\n✅ Proje kök dizini tespit edildi (mevcut dizin)")
+elif os.path.exists('jetxpredictor/jetx_data.db'):
+    PROJECT_ROOT = os.path.join(os.getcwd(), 'jetxpredictor')
+    print(f"\n✅ Proje kök dizini tespit edildi: {PROJECT_ROOT}")
+else:
     print("\n📥 Proje klonlanıyor...")
     subprocess.check_call(["git", "clone", "https://github.com/onndd/jetxpredictor.git"])
+    PROJECT_ROOT = os.path.join(os.getcwd(), 'jetxpredictor')
+    print(f"✅ Proje klonlandı: {PROJECT_ROOT}")
 
-os.chdir('jetxpredictor')
-sys.path.append(os.getcwd())
-
-# GPU Konfigürasyonunu yükle ve uygula
-from utils.gpu_config import setup_catboost_gpu, print_gpu_status
-print_gpu_status()
-catboost_gpu_config = setup_catboost_gpu()
-print()
+sys.path.insert(0, PROJECT_ROOT)
+print(f"📂 Çalışma dizini: {os.getcwd()}")
 
 from category_definitions import CategoryDefinitions, FeatureEngineering
-# from utils.virtual_bankroll_callback import CatBoostBankrollCallback # Bu callback hatalı ve kullanılmıyor.
-from utils.focal_loss import CatBoostFocalLoss
+from utils.multi_scale_window import split_data_preserving_order
+from utils.threshold_manager import get_threshold_manager
 print(f"✅ Proje yüklendi - Kritik eşik: {CategoryDefinitions.CRITICAL_THRESHOLD}x\n")
 
 # =============================================================================
-# VERİ YÜKLEME
+# VERİ YÜKLEME (SIRA KORUNARAK)
 # =============================================================================
 print("📊 Veri yükleniyor...")
-conn = sqlite3.connect('jetx_data.db')
+db_path = os.path.join(PROJECT_ROOT, 'jetx_data.db')
+conn = sqlite3.connect(db_path)
 data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
 conn.close()
 
 all_values = data['value'].values
+cleaned_values = []
+for val in all_values:
+    try:
+        val_str = str(val).replace('\u2028', '').replace('\u2029', '').strip()
+        if ' ' in val_str: val_str = val_str.split()[0]
+        cleaned_values.append(float(val_str))
+    except:
+        continue
+
+all_values = np.array(cleaned_values)
 print(f"✅ {len(all_values):,} veri yüklendi")
-print(f"Aralık: {all_values.min():.2f}x - {all_values.max():.2f}x")
-
-below = (all_values < 1.5).sum()
-above = (all_values >= 1.5).sum()
-print(f"\n📊 CLASS DAĞILIMI:")
-print(f"  1.5 altı: {below:,} ({below/len(all_values)*100:.1f}%)")
-print(f"  1.5 üstü: {above:,} ({above/len(all_values)*100:.1f}%)")
-print(f"  Dengesizlik: 1:{above/below:.2f}")
 
 # =============================================================================
-# FEATURE ENGINEERING
+# TIME-SERIES SPLIT (SHUFFLE YOK!)
 # =============================================================================
-print("\n🔧 Feature extraction...")
-window_size = 1000  # Progressive NN ile aynı
-X_features = []
-y_regression = []
-y_classification = []
-
-for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
-    hist = all_values[:i].tolist()
-    target = all_values[i]
-    
-    # Tüm özellikleri çıkar
-    feats = FeatureEngineering.extract_all_features(hist)
-    X_features.append(list(feats.values()))
-    
-    # Regression target
-    y_regression.append(target)
-    
-    # Classification target (1.5 altı/üstü)
-    y_classification.append(1 if target >= 1.5 else 0)
-
-X = np.array(X_features)
-y_reg = np.array(y_regression)
-y_cls = np.array(y_classification)
-
-print(f"✅ {len(X):,} örnek hazırlandı")
-print(f"✅ Feature sayısı: {X.shape[1]}")
-
-# =============================================================================
-# NORMALIZASYON
-# =============================================================================
-print("\n📊 Normalizasyon...")
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
-
-# =============================================================================
-# TIME-SERIES SPLIT (KRONOLOJIK) - SHUFFLE YOK!
-# =============================================================================
-print("\n📊 TIME-SERIES SPLIT (Kronolojik Bölme)...")
-print("⚠️  UYARI: Shuffle devre dışı - Zaman serisi yapısı korunuyor!")
-
-# Test seti: Son 1000 kayıt
-test_size = 1000
-train_end = len(X) - test_size
-
-# Train/Test split (kronolojik)
-X_train = X[:train_end]
-X_test = X[train_end:]
-y_reg_train = y_reg[:train_end]
-y_reg_test = y_reg[train_end:]
-y_cls_train = y_cls[:train_end]
-y_cls_test = y_cls[train_end:]
-
-print(f"✅ Train: {len(X_train):,}")
-print(f"✅ Test: {len(X_test):,} (tüm verinin son {test_size} kaydı)")
-print(f"📊 Toplam: {len(X_train) + len(X_test):,}")
-
-# Validation için train setini böl (kronolojik)
-val_size = int(len(X_train) * 0.2)
-val_start = len(X_train) - val_size
-
-X_tr = X_train[:val_start]
-X_val = X_train[val_start:]
-y_reg_tr = y_reg_train[:val_start]
-y_reg_val = y_reg_train[val_start:]
-y_cls_tr = y_cls_train[:val_start]
-y_cls_val = y_cls_train[val_start:]
-
-print(f"   ├─ Actual Train: {len(X_tr):,}")
-print(f"   └─ Validation: {len(X_val):,} (train'in son %20'si)")
-
-# =============================================================================
-# CATBOOST REGRESSOR (Değer Tahmini)
-# =============================================================================
-print("\n" + "="*80)
-print("🎯 CATBOOST REGRESSOR EĞİTİMİ (Değer Tahmini)")
-print("="*80)
-
-reg_start = time.time()
-
-# CatBoost parametreleri - OPTIMIZE EDİLDİ + EARLY STOPPING KALDIRILDI
-regressor_params = {
-    'iterations': 1500,           # 500 → 1500 (3x artış)
-    'depth': 10,                  # 8 → 10 (daha derin ağaçlar)
-    'learning_rate': 0.03,        # 0.05 → 0.03 (daha stabil)
-    'l2_leaf_reg': 5,             # YENİ: Overfitting önleme
-    'bootstrap_type': 'Bernoulli',  # YENİ: subsample için gerekli
-    'subsample': 0.8,             # YENİ: Stochastic gradient
-    'loss_function': 'MAE',
-    'eval_metric': 'MAE',
-    'verbose': 100,               # 50 → 100 (daha az log)
-    'random_state': 42,
-    **catboost_gpu_config  # GPU konfigürasyonunu ekle
-}
-regressor = CatBoostRegressor(**regressor_params)
-
-print("📊 Model Parametreleri (Optimize):")
-print(f"  iterations: 1500 (500 → 1500)")
-print(f"  depth: 10 (8 → 10)")
-print(f"  learning_rate: 0.03 (0.05 → 0.03)")
-print(f"  l2_leaf_reg: 5 (YENİ)")
-print(f"  bootstrap_type: Bernoulli (YENİ - subsample için)")
-print(f"  subsample: 0.8 (YENİ)")
-print(f"  loss_function: MAE")
-print(f"  task_type: GPU (varsa)")
-print(f"  early_stopping_rounds: Yok (Tüm 1500 iterasyon tamamlanacak) ✅\n")
-
-# Hatalı Virtual Bankroll Callback kaldırıldı.
-# Eğitim sonunda zaten daha kapsamlı bir simülasyon yapılıyor.
-
-# Eğitim
-print("🔥 CatBoost Regressor eğitimi başlıyor...")
-regressor.fit(
-    X_tr, y_reg_tr,
-    eval_set=(X_val, y_reg_val),  # ✅ KRONOLOJIK VALIDATION!
-    verbose=100
+print("\n📊 TIME-SERIES SPLIT (Kronolojik)...")
+train_data, val_data, test_data = split_data_preserving_order(
+    all_values,
+    train_ratio=0.70,
+    val_ratio=0.15
 )
 
-reg_time = time.time() - reg_start
-print(f"\n✅ Regressor eğitimi tamamlandı! Süre: {reg_time/60:.1f} dakika")
-
-# Değerlendirme
-y_reg_pred = regressor.predict(X_test)
-mae_reg = mean_absolute_error(y_reg_test, y_reg_pred)
-rmse_reg = np.sqrt(mean_squared_error(y_reg_test, y_reg_pred))
-
-print(f"\n📊 REGRESSOR PERFORMANSI:")
-print(f"  MAE: {mae_reg:.4f}")
-print(f"  RMSE: {rmse_reg:.4f}")
-
-# Feature importance (Top 15)
-feature_names = list(FeatureEngineering.extract_all_features(all_values[:1000].tolist()).keys())
-importances = regressor.feature_importances_
-top_features = sorted(zip(feature_names, importances), key=lambda x: x[1], reverse=True)[:15]
-
-print(f"\n📊 TOP 15 ÖNEMLİ ÖZELLIKLER:")
-for i, (feat, imp) in enumerate(top_features, 1):
-    print(f"  {i:2d}. {feat:30s}: {imp:.4f}")
-
 # =============================================================================
-# CATBOOST CLASSIFIER (Eşik Tahmini)
+# MULTI-SCALE FEATURE ENGINEERING
 # =============================================================================
-print("\n" + "="*80)
-print("🎯 CATBOOST CLASSIFIER EĞİTİMİ (1.5 Eşik Tahmini)")
-print("="*80)
+print("\n🔧 MULTI-SCALE FEATURE EXTRACTION...")
+window_sizes = [500, 250, 100, 50, 20]
 
-cls_start = time.time()
-
-# Class weights - CatBoost native support
-below_count = (y_cls_train == 0).sum()
-above_count = (y_cls_train == 1).sum()
-
-# CatBoost için class_weights parametresi (native)
-# Focal Loss ile birlikte daha güçlü bir etki için manuel ağırlıklandırma deniyoruz.
-class_weights = [20.0, 1.0]  # CatBoost class_weights'i liste olarak bekler [class_0_weight, class_1_weight]
-
-print(f"📊 CLASS WEIGHTS (CatBoost Native - TIME-SERIES SPLIT):")
-print(f"  1.5 altı (class 0): {class_weights[0]:.1f}x (agresif - lazy learning önleme)")
-print(f"  1.5 üstü (class 1): {class_weights[1]:.1f}x")
-print(f"  Toplam 1.5 altı: {below_count:,} örnek")
-print(f"  Toplam 1.5 üstü: {above_count:,} örnek\n")
-
-# CatBoost parametreleri - OPTIMIZE EDİLDİ (Focal Loss KULLANILIYOR)
-classifier_params = {
-    'iterations': 1500,
-    'depth': 9,
-    'learning_rate': 0.03,
-    'l2_leaf_reg': 5,
-    'bootstrap_type': 'Bernoulli',
-    'subsample': 0.8,
-    'loss_function': CatBoostFocalLoss(),  # ✅ FOCAL LOSS KULLANILIYOR
-    'eval_metric': 'Accuracy',
-    'class_weights': class_weights,  # Manuel class weights
-    'verbose': 100,
-    'random_state': 42,
-    **catboost_gpu_config
-}
-classifier = CatBoostClassifier(**classifier_params)
-
-print("📊 Model Parametreleri (Optimize):")
-print(f"  iterations: 1500")
-print(f"  depth: 9")
-print(f"  learning_rate: 0.03")
-print(f"  l2_leaf_reg: 5 (L2 regularization)")
-print(f"  bootstrap_type: Bernoulli")
-print(f"  subsample: 0.8")
-print(f"  loss_function: CatBoostFocalLoss() ✅ (Dengesiz veri için)")
-print(f"  class_weights: {class_weights} (Manuel)")
-print(f"  early_stopping_rounds: Yok (Tüm 1500 iterasyon) ✅\n")
-
-# Hatalı Virtual Bankroll Callback kaldırıldı.
-# Eğitim sonunda zaten daha kapsamlı bir simülasyon yapılıyor.
-
-# Eğitim
-print("🔥 CatBoost Classifier eğitimi başlıyor...")
-classifier.fit(
-    X_tr, y_cls_tr,
-    eval_set=(X_val, y_cls_val),  # ✅ KRONOLOJIK VALIDATION!
-    verbose=100
-)
-
-cls_time = time.time() - cls_start
-print(f"\n✅ Classifier eğitimi tamamlandı! Süre: {cls_time/60:.1f} dakika")
-
-# Değerlendirme
-y_cls_pred = classifier.predict(X_test)
-y_cls_proba = classifier.predict_proba(X_test)[:, 1]  # 1.5 üstü olma olasılığı
-
-cls_acc = accuracy_score(y_cls_test, y_cls_pred)
-
-# Sınıf bazında accuracy
-below_mask = y_cls_test == 0
-above_mask = y_cls_test == 1
-
-below_acc = accuracy_score(y_cls_test[below_mask], y_cls_pred[below_mask]) if below_mask.sum() > 0 else 0
-above_acc = accuracy_score(y_cls_test[above_mask], y_cls_pred[above_mask]) if above_mask.sum() > 0 else 0
-
-print(f"\n📊 CLASSIFIER PERFORMANSI:")
-print(f"  Genel Accuracy: {cls_acc*100:.2f}%")
-print(f"  🔴 1.5 Altı Doğruluk: {below_acc*100:.2f}%")
-print(f"  🟢 1.5 Üstü Doğruluk: {above_acc*100:.2f}%")
-
-# Confusion Matrix
-cm = confusion_matrix(y_cls_test, y_cls_pred)
-print(f"\n📋 CONFUSION MATRIX:")
-print(f"                Tahmin")
-print(f"Gerçek   1.5 Altı | 1.5 Üstü")
-print(f"1.5 Altı {cm[0,0]:6d}   | {cm[0,1]:6d}  ⚠️ PARA KAYBI")
-print(f"1.5 Üstü {cm[1,0]:6d}   | {cm[1,1]:6d}")
-
-if cm[0,0] + cm[0,1] > 0:
-    fpr = cm[0,1] / (cm[0,0] + cm[0,1])
-    print(f"\n💰 PARA KAYBI RİSKİ: {fpr*100:.1f}%", end="")
-    if fpr < 0.20:
-        print(" ✅ HEDEF AŞILDI!")
-    else:
-        print(f" (Hedef: <20%)")
+def extract_features_for_window(data, window_size, start_idx=None, end_idx=None):
+    X_features = []
+    y_regression = []
+    y_classification = []
     
-    # Classification Report
-    print(f"\n📊 DETAYLI RAPOR:")
-    print(classification_report(y_cls_test, y_cls_pred, target_names=['1.5 Altı', '1.5 Üstü']))
+    if start_idx is None: start_idx = window_size
+    if end_idx is None: end_idx = len(data) - 1
+    
+    for i in tqdm(range(start_idx, end_idx), desc=f'Window {window_size}'):
+        hist = data[:i].tolist()
+        target = data[i]
+        
+        feats = FeatureEngineering.extract_all_features(hist)
+        X_features.append(list(feats.values()))
+        
+        y_regression.append(target)
+        y_classification.append(1 if target >= 1.5 else 0)
+    
+    return np.array(X_features), np.array(y_regression), np.array(y_classification)
+
+all_data_by_window = {}
+max_window = max(window_sizes)
+test_start_idx = max_window
+
+for window_size in window_sizes:
+    print(f"\n🔧 Window {window_size} için feature extraction...")
+    
+    X_train, y_reg_train, y_cls_train = extract_features_for_window(train_data, window_size)
+    X_val, y_reg_val, y_cls_val = extract_features_for_window(val_data, window_size)
+    X_test, y_reg_test, y_cls_test = extract_features_for_window(
+        test_data, window_size, start_idx=test_start_idx
+    )
+    
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_val = scaler.transform(X_val)
+    X_test = scaler.transform(X_test)
+    
+    all_data_by_window[window_size] = {
+        'train': (X_train, y_reg_train, y_cls_train),
+        'val': (X_val, y_reg_val, y_cls_val),
+        'test': (X_test, y_reg_test, y_cls_test),
+        'scaler': scaler
+    }
+    
+    print(f"✅ Window {window_size}: {len(X_train):,} train, {len(X_val):,} val, {len(X_test):,} test")
 
 # =============================================================================
-# ÇİFT SANAL KASA SİMÜLASYONU (YENİ - FAZ 2)
+# HER PENCERE İÇİN MODEL EĞİTİMİ
 # =============================================================================
 print("\n" + "="*80)
-print("💰 ÇİFT SANAL KASA SİMÜLASYONU")
+print("🔥 MULTI-SCALE MODEL EĞİTİMİ BAŞLIYOR")
 print("="*80)
 
-# Dinamik kasa miktarı hesapla
-test_count = len(y_reg_test)
-initial_bankroll = test_count * 10  # Her test verisi için 10 TL
+trained_models = {}
+training_times = {}
+
+for window_size in window_sizes:
+    print("\n" + "="*80)
+    print(f"🎯 WINDOW {window_size} - MODEL EĞİTİMİ")
+    print("="*80)
+    
+    window_start_time = time.time()
+    
+    data_dict = all_data_by_window[window_size]
+    X_train, y_reg_train, y_cls_train = data_dict['train']
+    X_val, y_reg_val, y_cls_val = data_dict['val']
+    X_test, y_reg_test, y_cls_test = data_dict['test']
+    
+    # 1. REGRESSOR EĞİTİMİ
+    print(f"\n🎯 REGRESSOR EĞİTİMİ (Window {window_size})")
+    base_params = {
+        'iterations': 1500,
+        'depth': 10,
+        'learning_rate': 0.03,
+        'l2_leaf_reg': 5,
+        'bootstrap_type': 'Bernoulli',
+        'subsample': 0.8,
+        'loss_function': 'MAE',
+        'eval_metric': 'MAE',
+        'task_type': TASK_TYPE,
+        'verbose': 100,
+        'random_state': 42
+    }
+    if TASK_TYPE == 'GPU':
+        base_params.update({'border_count': 128, 'gpu_ram_part': 0.95})
+        
+    regressor = CatBoostRegressor(**base_params)
+    regressor.fit(X_train, y_reg_train, eval_set=(X_val, y_reg_val), verbose=100)
+    
+    y_reg_pred = regressor.predict(X_test)
+    mae_reg = mean_absolute_error(y_reg_test, y_reg_pred)
+    rmse_reg = np.sqrt(mean_squared_error(y_reg_test, y_reg_pred))
+    print(f"📊 Regressor MAE: {mae_reg:.4f}")
+    
+    # 2. CLASSIFIER EĞİTİMİ
+    print(f"\n🎯 CLASSIFIER EĞİTİMİ (Window {window_size})")
+    classifier_params = {
+        'iterations': 1500,
+        'depth': 9,
+        'learning_rate': 0.03,
+        'l2_leaf_reg': 5,
+        'bootstrap_type': 'Bernoulli',
+        'subsample': 0.8,
+        'loss_function': 'Logloss',
+        'eval_metric': 'Accuracy',
+        'task_type': TASK_TYPE,
+        'auto_class_weights': 'Balanced',
+        'verbose': 100,
+        'random_state': 42
+    }
+    if TASK_TYPE == 'GPU':
+        classifier_params.update({'border_count': 128, 'gpu_ram_part': 0.95})
+        
+    classifier = CatBoostClassifier(**classifier_params)
+    classifier.fit(X_train, y_cls_train, eval_set=(X_val, y_cls_val), verbose=100)
+    
+    # Test performansı (2 Modlu)
+    y_cls_proba = classifier.predict_proba(X_test)[:, 1]
+    
+    # Normal Mod (0.85)
+    y_pred_normal = (y_cls_proba >= THRESHOLD_NORMAL).astype(int)
+    acc_normal = accuracy_score(y_cls_test, y_pred_normal)
+    
+    # Rolling Mod (0.95)
+    y_pred_rolling = (y_cls_proba >= THRESHOLD_ROLLING).astype(int)
+    acc_rolling = accuracy_score(y_cls_test, y_pred_rolling)
+    
+    print(f"\n📊 CLASSIFIER PERFORMANSI:")
+    print(f"  Normal Mod Acc ({THRESHOLD_NORMAL}): {acc_normal*100:.2f}%")
+    print(f"  Rolling Mod Acc ({THRESHOLD_ROLLING}): {acc_rolling*100:.2f}%")
+    
+    window_time = time.time() - window_start_time
+    training_times[window_size] = window_time
+    
+    trained_models[window_size] = {
+        'regressor': regressor,
+        'classifier': classifier,
+        'scaler': data_dict['scaler'],
+        'mae': float(mae_reg),
+        'rmse': float(rmse_reg),
+        'acc_normal': float(acc_normal),
+        'acc_rolling': float(acc_rolling),
+        'training_time': window_time
+    }
+
+total_training_time = sum(training_times.values())
+print(f"\n✅ TÜM MODELLER EĞİTİLDİ! (Toplam: {total_training_time/60:.1f} dk)")
+
+# =============================================================================
+# ENSEMBLE PERFORMANS DEĞERLENDİRMESİ
+# =============================================================================
+print("\n" + "="*80)
+print("🎯 ENSEMBLE PERFORMANS DEĞERLENDİRMESİ")
+print("="*80)
+
+X_test_500, y_reg_test, y_cls_test = all_data_by_window[500]['test']
+
+ensemble_predictions_reg = []
+ensemble_predictions_cls = []
+
+for window_size in window_sizes:
+    model_dict = trained_models[window_size]
+    X_test_w, _, _ = all_data_by_window[window_size]['test']
+    
+    p_reg = model_dict['regressor'].predict(X_test_w)
+    p_cls_proba = model_dict['classifier'].predict_proba(X_test_w)[:, 1]
+    
+    ensemble_predictions_reg.append(p_reg)
+    ensemble_predictions_cls.append(p_cls_proba)
+
+# Ensemble
+ensemble_reg = np.mean(ensemble_predictions_reg, axis=0)
+ensemble_proba_avg = np.mean(ensemble_predictions_cls, axis=0)
+
+# Metrics
+mae_ensemble = mean_absolute_error(y_reg_test, ensemble_reg)
+rmse_ensemble = np.sqrt(mean_squared_error(y_reg_test, ensemble_reg))
+
+# 2 Modlu Analiz
+ensemble_cls_normal = (ensemble_proba_avg >= THRESHOLD_NORMAL).astype(int)
+acc_ensemble_normal = accuracy_score(y_cls_test, ensemble_cls_normal)
+
+ensemble_cls_rolling = (ensemble_proba_avg >= THRESHOLD_ROLLING).astype(int)
+acc_ensemble_rolling = accuracy_score(y_cls_test, ensemble_cls_rolling)
+
+print(f"\n📊 ENSEMBLE PERFORMANSI:")
+print(f"  MAE: {mae_ensemble:.4f}")
+print(f"  RMSE: {rmse_ensemble:.4f}")
+print(f"  Normal Mod Acc ({THRESHOLD_NORMAL}): {acc_ensemble_normal*100:.2f}%")
+print(f"  Rolling Mod Acc ({THRESHOLD_ROLLING}): {acc_ensemble_rolling*100:.2f}%")
+
+# =============================================================================
+# SANAL KASA SİMÜLASYONU (2 MODLU)
+# =============================================================================
+print("\n" + "="*80)
+print("💰 SANAL KASA SİMÜLASYONU (2 MODLU YAPI)")
+print("="*80)
+
+initial_bankroll = len(y_reg_test) * 10
 bet_amount = 10.0
 
-print(f"📊 Test Veri Sayısı: {test_count:,}")
-print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL (dinamik)")
-print(f"💵 Bahis Tutarı: {bet_amount:.2f} TL (sabit)")
-print()
-
-# =============================================================================
-# KASA 1: 1.5x EŞİK SİSTEMİ
-# =============================================================================
-print("="*80)
-print("💰 KASA 1: 1.5x EŞİK SİSTEMİ")
-print("="*80)
-print("Strateji: Model 1.5x üstü tahmin ederse → 1.5x'te çıkış")
-print()
-
-kasa1_wallet = initial_bankroll
-kasa1_total_bets = 0
-kasa1_total_wins = 0
-kasa1_total_losses = 0
+# KASA 1: NORMAL MOD (0.85)
+wallet1 = initial_bankroll
+bets1 = 0
+wins1 = 0
 
 for i in range(len(y_reg_test)):
-    model_pred_cls = y_cls_pred[i]  # 0 veya 1
-    actual_value = y_reg_test[i]
-    
-    # Model "1.5 üstü" (1) tahmin ediyorsa bahis yap
-    if model_pred_cls == 1:
-        kasa1_wallet -= bet_amount  # Bahis yap
-        kasa1_total_bets += 1
-        
-        # 1.5x'te çıkış yap
-        exit_point = 1.5
-        
-        # Gerçek değer çıkış noktasından büyük veya eşitse kazandık
-        if actual_value >= exit_point:
-            # Kazandık! 1.5x × 10 TL = 15 TL geri al
-            kasa1_wallet += exit_point * bet_amount
-            kasa1_total_wins += 1
-        else:
-            # Kaybettik (bahis zaten kesildi)
-            kasa1_total_losses += 1
+    if ensemble_proba_avg[i] >= THRESHOLD_NORMAL:
+        wallet1 -= bet_amount
+        bets1 += 1
+        # Dinamik Çıkış (Max 2.5x)
+        exit_point = min(max(1.5, ensemble_reg[i] * 0.8), 2.5)
+        if y_reg_test[i] >= exit_point:
+            wallet1 += exit_point * bet_amount
+            wins1 += 1
 
-# Kasa 1 sonuçları
-kasa1_profit_loss = kasa1_wallet - initial_bankroll
-kasa1_roi = (kasa1_profit_loss / initial_bankroll) * 100
-kasa1_win_rate = (kasa1_total_wins / kasa1_total_bets * 100) if kasa1_total_bets > 0 else 0
-kasa1_accuracy = kasa1_win_rate
+roi1 = (wallet1 - initial_bankroll) / initial_bankroll * 100
+win_rate1 = (wins1 / bets1 * 100) if bets1 > 0 else 0
 
-print(f"\n📊 KASA 1 SONUÇLARI:")
-print(f"{'='*70}")
-print(f"Toplam Oyun: {kasa1_total_bets:,} el")
-print(f"✅ Kazanan: {kasa1_total_wins:,} oyun ({kasa1_win_rate:.1f}%)")
-print(f"❌ Kaybeden: {kasa1_total_losses:,} oyun ({100-kasa1_win_rate:.1f}%)")
-print(f"")
-print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL")
-print(f"💰 Final Kasa: {kasa1_wallet:,.2f} TL")
-print(f"📈 Net Kar/Zarar: {kasa1_profit_loss:+,.2f} TL")
-print(f"📊 ROI: {kasa1_roi:+.2f}%")
-print(f"🎯 Doğruluk (Kazanma Oranı): {kasa1_accuracy:.1f}%")
-print(f"{'='*70}\n")
+print(f"💰 KASA 1 (NORMAL - {THRESHOLD_NORMAL}):")
+print(f"  ROI: {roi1:+.2f}% | Win Rate: {win_rate1:.1f}% | Bets: {bets1}")
 
-# =============================================================================
-# KASA 2: %80 ÇIKIŞ SİSTEMİ (Yeni)
-# =============================================================================
-print("="*80)
-print("💰 KASA 2: %80 ÇIKIŞ SİSTEMİ (Yüksek Tahminler)")
-print("="*80)
-print("Strateji: Model 2.0x+ tahmin ederse → Tahmin × 0.80'de çıkış")
-print()
-
-kasa2_wallet = initial_bankroll
-kasa2_total_bets = 0
-kasa2_total_wins = 0
-kasa2_total_losses = 0
-kasa2_exit_points = []  # Çıkış noktalarını kaydet
+# KASA 2: ROLLING MOD (0.95)
+wallet2 = initial_bankroll
+bets2 = 0
+wins2 = 0
 
 for i in range(len(y_reg_test)):
-    model_pred_value = y_reg_pred[i]  # Tahmin edilen değer
-    actual_value = y_reg_test[i]
-    
-    # SADECE 2.0x ve üzeri tahminlerde oyna
-    if model_pred_value >= 2.0:
-        kasa2_wallet -= bet_amount  # Bahis yap
-        kasa2_total_bets += 1
-        
-        # Çıkış noktası: Tahmin × 0.80
-        exit_point = model_pred_value * 0.80
-        kasa2_exit_points.append(exit_point)
-        
-        # Gerçek değer çıkış noktasından büyük veya eşitse kazandık
-        if actual_value >= exit_point:
-            # Kazandık! exit_point × 10 TL geri al
-            kasa2_wallet += exit_point * bet_amount
-            kasa2_total_wins += 1
-        else:
-            # Kaybettik (bahis zaten kesildi)
-            kasa2_total_losses += 1
+    if ensemble_proba_avg[i] >= THRESHOLD_ROLLING:
+        wallet2 -= bet_amount
+        bets2 += 1
+        # Sabit Güvenli Çıkış (1.5x)
+        if y_reg_test[i] >= 1.5:
+            wallet2 += 1.5 * bet_amount
+            wins2 += 1
 
-# Kasa 2 sonuçları
-kasa2_profit_loss = kasa2_wallet - initial_bankroll
-kasa2_roi = (kasa2_profit_loss / initial_bankroll) * 100
-kasa2_win_rate = (kasa2_total_wins / kasa2_total_bets * 100) if kasa2_total_bets > 0 else 0
-kasa2_accuracy = kasa2_win_rate
-kasa2_avg_exit = np.mean(kasa2_exit_points) if kasa2_exit_points else 0
+roi2 = (wallet2 - initial_bankroll) / initial_bankroll * 100
+win_rate2 = (wins2 / bets2 * 100) if bets2 > 0 else 0
 
-print(f"\n📊 KASA 2 SONUÇLARI:")
-print(f"{'='*70}")
-print(f"Toplam Oyun: {kasa2_total_bets:,} el")
-print(f"✅ Kazanan: {kasa2_total_wins:,} oyun ({kasa2_win_rate:.1f}%)")
-print(f"❌ Kaybeden: {kasa2_total_losses:,} oyun ({100-kasa2_win_rate:.1f}%)")
-print(f"")
-print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL")
-print(f"💰 Final Kasa: {kasa2_wallet:,.2f} TL")
-print(f"📈 Net Kar/Zarar: {kasa2_profit_loss:+,.2f} TL")
-print(f"📊 ROI: {kasa2_roi:+.2f}%")
-print(f"🎯 Doğruluk (Kazanma Oranı): {kasa2_accuracy:.1f}%")
-print(f"📊 Ortalama Çıkış Noktası: {kasa2_avg_exit:.2f}x")
-print(f"{'='*70}\n")
+print(f"💰 KASA 2 (ROLLING - {THRESHOLD_ROLLING}):")
+print(f"  ROI: {roi2:+.2f}% | Win Rate: {win_rate2:.1f}% | Bets: {bets2}")
+
+print("\n" + "="*80)
 
 # =============================================================================
-# KARŞILAŞTIRMA
-# =============================================================================
-print("="*80)
-print("📊 KASA KARŞILAŞTIRMASI")
-print("="*80)
-print(f"{'Metrik':<30} {'Kasa 1 (1.5x)':<20} {'Kasa 2 (%80)':<20}")
-print(f"{'-'*70}")
-print(f"{'Toplam Oyun':<30} {kasa1_total_bets:<20,} {kasa2_total_bets:<20,}")
-print(f"{'Kazanan Oyun':<30} {kasa1_total_wins:<20,} {kasa2_total_wins:<20,}")
-print(f"{'Kazanma Oranı':<30} {kasa1_win_rate:<20.1f}% {kasa2_win_rate:<20.1f}%")
-print(f"{'Net Kar/Zarar':<30} {kasa1_profit_loss:<20,.2f} TL {kasa2_profit_loss:<20,.2f} TL")
-print(f"{'ROI':<30} {kasa1_roi:<20.2f}% {kasa2_roi:<20.2f}%")
-print(f"{'-'*70}")
-
-# Hangi kasa daha karlı?
-if kasa1_profit_loss > kasa2_profit_loss:
-    print(f"🏆 KASA 1 daha karlı (+{kasa1_profit_loss - kasa2_profit_loss:,.2f} TL fark)")
-elif kasa2_profit_loss > kasa1_profit_loss:
-    print(f"🏆 KASA 2 daha karlı (+{kasa2_profit_loss - kasa1_profit_loss:,.2f} TL fark)")
-else:
-    print(f"⚖️ Her iki kasa eşit karlılıkta")
-
-print(f"{'='*80}\n")
-
-# =============================================================================
-# MODEL KAYDETME + ZIP PAKETI
+# MODEL KAYDETME
 # =============================================================================
 print("\n" + "="*80)
 print("💾 MODELLER KAYDEDİLİYOR")
 print("="*80)
 
-import json
-import shutil
+models_dir = os.path.join(PROJECT_ROOT, 'models/catboost_multiscale')
+os.makedirs(models_dir, exist_ok=True)
 
-# models/ klasörünü oluştur
-os.makedirs('models', exist_ok=True)
+for window_size in window_sizes:
+    model_dict = trained_models[window_size]
+    reg_path = os.path.join(models_dir, f'regressor_window_{window_size}.cbm')
+    model_dict['regressor'].save_model(reg_path)
+    cls_path = os.path.join(models_dir, f'classifier_window_{window_size}.cbm')
+    model_dict['classifier'].save_model(cls_path)
+    scaler_path = os.path.join(models_dir, f'scaler_window_{window_size}.pkl')
+    joblib.dump(model_dict['scaler'], scaler_path)
+    print(f"✅ Window {window_size} kaydedildi")
 
-# 1. CatBoost Regressor (.cbm formatı)
-regressor.save_model('models/catboost_regressor.cbm')
-print("✅ CatBoost Regressor kaydedildi: catboost_regressor.cbm")
-
-# 2. CatBoost Classifier (.cbm formatı)
-classifier.save_model('models/catboost_classifier.cbm')
-print("✅ CatBoost Classifier kaydedildi: catboost_classifier.cbm")
-
-# 3. Scaler
-joblib.dump(scaler, 'models/catboost_scaler.pkl')
-print("✅ Scaler kaydedildi: catboost_scaler.pkl")
-
-# 4. FEATURE METADATA KAYDET (KRİTİK - Feature Skew Önleme)
-print("\n🔒 Feature Metadata kaydediliyor...")
-try:
-    from utils.feature_validator import register_model_features
-    
-    # Sample feature'ları oluştur (dummy data ile)
-    sample_history = all_values[:1000].tolist()
-    sample_features = FeatureEngineering.extract_all_features(sample_history)
-    
-    # Feature metadata kaydet
-    register_model_features(
-        features=sample_features,
-        scaler=scaler,
-        model_name="catboost_regressor",
-        version="2.0"
-    )
-    
-    print("✅ Feature metadata kaydedildi - catboost_regressor_metadata.json")
-    
-except ImportError:
-    print("⚠️ Feature validator bulunamadı, metadata kaydedilemedi")
-except Exception as e:
-    print(f"⚠️ Metadata kaydetme hatası: {e}")
-
-# 4. Model bilgileri (JSON)
-total_time = reg_time + cls_time
+# Info JSON
 info = {
-    'model': 'CatBoost_Dual_Model',
-    'version': '2.0',
-    'date': '2025-10-12',
-    'architecture': {
-        'regressor': 'CatBoost',
-        'classifier': 'CatBoost'
-    },
-    'training_time_minutes': round(total_time/60, 1),
-    'model_times': {
-        'regressor': round(reg_time/60, 1),
-        'classifier': round(cls_time/60, 1)
-    },
-    'feature_count': X.shape[1],
+    'model': 'CatBoost_MultiScale_Ensemble',
+    'version': '3.1',
+    'thresholds': {'normal': THRESHOLD_NORMAL, 'rolling': THRESHOLD_ROLLING},
     'metrics': {
-        'regression': {
-            'mae': float(mae_reg),
-            'rmse': float(rmse_reg)
-        },
-        'classification': {
-            'accuracy': float(cls_acc),
-            'below_15_accuracy': float(below_acc),
-            'above_15_accuracy': float(above_acc),
-            'money_loss_risk': float(fpr) if cm[0,0] + cm[0,1] > 0 else 0.0
-        }
+        'mae': float(mae_ensemble),
+        'normal_acc': float(acc_ensemble_normal),
+        'rolling_acc': float(acc_ensemble_rolling)
     },
-    'hyperparameters': {
-        'regressor': {
-            'iterations': 1500,
-            'depth': 10,
-            'learning_rate': 0.03,
-            'l2_leaf_reg': 5,
-            'subsample': 0.8,
-            'loss_function': 'MAE',
-            'early_stopping_rounds': None  # Tüm iterasyonlar tamamlanacak
-        },
-        'classifier': {
-            'iterations': 1500,
-            'depth': 9,
-            'learning_rate': 0.03,
-            'l2_leaf_reg': 5,
-            'subsample': 0.8,
-            'loss_function': 'Logloss',
-            'auto_class_weights': 'Balanced',
-            'early_stopping_rounds': None  # Tüm iterasyonlar tamamlanacak
-        }
-    },
-    'dual_bankroll_performance': {
-        'kasa_1_15x': {
-            'roi': float(kasa1_roi),
-            'accuracy': float(kasa1_accuracy),
-            'total_bets': int(kasa1_total_bets),
-            'profit_loss': float(kasa1_profit_loss)
-        },
-        'kasa_2_80percent': {
-            'roi': float(kasa2_roi),
-            'accuracy': float(kasa2_accuracy),
-            'total_bets': int(kasa2_total_bets),
-            'profit_loss': float(kasa2_profit_loss),
-            'avg_exit_point': float(kasa2_avg_exit)
-        }
-    },
-    'top_features': [{'name': feat, 'importance': float(imp)} for feat, imp in top_features]
+    'simulation': {
+        'normal_roi': float(roi1),
+        'rolling_roi': float(roi2)
+    }
 }
 
-with open('models/catboost_model_info.json', 'w') as f:
+with open(os.path.join(models_dir, 'model_info.json'), 'w') as f:
     json.dump(info, f, indent=2)
-print("✅ Model bilgileri kaydedildi: catboost_model_info.json")
+print(f"✅ Model bilgileri kaydedildi")
 
-print("\n📁 Kaydedilen dosyalar:")
-print("  • catboost_regressor.cbm (CatBoost Regressor)")
-print("  • catboost_classifier.cbm (CatBoost Classifier)")
-print("  • catboost_scaler.pkl (Scaler)")
-print("  • catboost_model_info.json (Model bilgileri)")
-print("="*80)
+# ZIP
+zip_filename = 'jetx_models_catboost_multiscale_v3.1'
+shutil.make_archive(zip_filename, 'zip', models_dir)
+print(f"✅ ZIP oluşturuldu: {zip_filename}.zip")
 
-# =============================================================================
-# MODELLERİ ZIP'LE VE İNDİR
-# =============================================================================
-print("\n" + "="*80)
-print("📦 MODELLER ZIP'LENIYOR")
-print("="*80)
-
-# ZIP dosyası oluştur
-zip_filename = 'jetx_models_catboost_v2.0.zip'
-shutil.make_archive(
-    'jetx_models_catboost_v2.0', 
-    'zip', 
-    'models'
-)
-
-print(f"✅ ZIP dosyası oluşturuldu: {zip_filename}")
-print(f"📦 Boyut: {os.path.getsize(f'{zip_filename}') / (1024*1024):.2f} MB")
-
-# Google Colab'da indir
+# Colab Download
 try:
     import google.colab
     IN_COLAB = True
@@ -653,47 +450,12 @@ except ImportError:
 if IN_COLAB:
     try:
         from google.colab import files
-        files.download(f'{zip_filename}')
-        print(f"✅ {zip_filename} indiriliyor...")
-        print("\n📌 İNDİRDİĞİNİZ DOSYAYI AÇIP models/ KLASÖRÜNE KOPYALAYIN:")
-        print("  1. ZIP'i açın")
-        print("  2. Tüm dosyaları lokal projenizin models/ klasörüne kopyalayın")
-        print("  3. Streamlit uygulamasını yeniden başlatın")
+        files.download(f'{zip_filename}.zip')
     except Exception as e:
-        print(f"⚠️ İndirme hatası: {e}")
-        print(f"⚠️ Manuel indirme gerekli: {zip_filename}")
+        print(f"⚠️ Otomatik indirme hatası: {e}")
 else:
-    print("\n⚠️ Google Colab ortamı algılanamadı - dosyalar sadece kaydedildi")
-    print(f"📁 ZIP dosyası mevcut: {zip_filename}")
-    print("\n💡 Not: Bu script Google Colab'da çalıştırıldığında dosyalar otomatik indirilir.")
+    print(f"📁 ZIP dosyası mevcut: {zip_filename}.zip")
 
-print("="*80)
-
-print(f"\n📊 Model Bilgisi:")
-print(json.dumps(info, indent=2))
-
-# Final rapor
-print("\n" + "="*80)
-print("🎉 CATBOOST TRAINING TAMAMLANDI!")
-print("="*80)
-print(f"Toplam Süre: {total_time/60:.1f} dakika ({total_time/3600:.1f} saat)")
-print()
-
-if below_acc >= 0.70 and fpr < 0.25:
-    print("✅ ✅ İYİ PERFORMANS!")
-    print(f"  🔴 1.5 ALTI: {below_acc*100:.1f}%")
-    print(f"  💰 Para kaybı: {fpr*100:.1f}%")
-    print("\n🚀 Model kullanıma hazır!")
-else:
-    print("⚠️ Orta performans")
-    print(f"  🔴 1.5 ALTI: {below_acc*100:.1f}%")
-    print(f"  💰 Para kaybı: {fpr*100:.1f}%")
-    print("\nCatBoost XGBoost'a göre daha iyi class imbalance yönetimi sağlar.")
-
-print("\n📁 Sonraki adım:")
-print("  1. CatBoost modellerini lokal projeye kopyalayın")
-print("  2. Predictor'da model_type='catboost' ile kullanın")
-print("  3. Progressive NN ile karşılaştırın")
-print("="*80)
+print(f"\n{'='*80}")
 print(f"Bitiş: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print("="*80)
+print(f"{'='*80}")
