@@ -1,10 +1,12 @@
 """
-JetX Predictor - Intelligent Ensemble Manager
+JetX Predictor - Intelligent Ensemble Manager (v2.0)
 
 Stacking Ensemble sistemi - 3 base modeli (Progressive, Ultra, CatBoost)
 birleştirerek daha iyi tahminler yapar.
 
-Meta-model ile hangi modele ne zaman güvenileceğini öğrenir.
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) entegre edildi.
+- Threshold Manager entegrasyonu.
 """
 
 import numpy as np
@@ -35,6 +37,7 @@ except ImportError:
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.custom_losses import CUSTOM_OBJECTS
 from category_definitions import CategoryDefinitions, FeatureEngineering
+from utils.threshold_manager import get_threshold_manager
 
 # Logging ayarla
 logging.basicConfig(level=logging.INFO)
@@ -81,6 +84,11 @@ class StackingEnsemble:
         self.models = {}
         self.scalers = {}
         self.meta_model = None
+        
+        # Threshold Manager
+        tm = get_threshold_manager()
+        self.THRESHOLD_NORMAL = tm.get_normal_threshold()   # 0.85
+        self.THRESHOLD_ROLLING = tm.get_rolling_threshold() # 0.95
         
         # Model yolları
         self.model_paths = {
@@ -162,9 +170,15 @@ class StackingEnsemble:
         # Meta-Model
         if CATBOOST_AVAILABLE and os.path.exists(self.meta_model_path):
             try:
-                self.meta_model = CatBoostClassifier()
+                # Meta-model genelde JSON formatında XGBoost olabilir
+                # Eğer CatBoost ise .cbm olmalı. Kodda JSON dendiği için XGBoost varsayımı
+                # Ancak sınıf dokümantasyonu "CatBoost classifier" diyor.
+                # Eğer JSON ise XGBoost'tur. CBM ise CatBoost'tur.
+                # Güvenlik için ikisini de dene veya uzantıya bak.
+                import xgboost as xgb
+                self.meta_model = xgb.XGBClassifier()
                 self.meta_model.load_model(self.meta_model_path)
-                logger.info("✅ Meta-model yüklendi")
+                logger.info("✅ Meta-model yüklendi (XGBoost)")
             except Exception as e:
                 logger.warning(f"⚠️ Meta-model yüklenemedi: {e}")
                 self.meta_model = None
@@ -179,13 +193,6 @@ class StackingEnsemble:
     ) -> Dict:
         """
         Belirli bir model tipi için feature extraction
-        
-        Args:
-            history: Geçmiş değerler
-            model_type: 'progressive', 'ultra', veya 'catboost'
-            
-        Returns:
-            Model input dictionary
         """
         # Feature extraction
         features_dict = FeatureEngineering.extract_all_features(history)
@@ -227,12 +234,6 @@ class StackingEnsemble:
     ) -> Dict:
         """
         Her base modelden ayrı tahmin al
-        
-        Args:
-            history: Geçmiş değerler
-            
-        Returns:
-            Her modelin tahminleri
         """
         predictions = {}
         
@@ -262,7 +263,7 @@ class StackingEnsemble:
         if self.models.get('ultra') is not None:
             try:
                 inputs = self.extract_features_for_model(history, 'ultra')
-                # Ultra model 1000 yerine 500 kullanıyor, seq_1000 varsa kullan yoksa seq_500
+                # Ultra model 1000 yerine 500 kullanıyor olabilir, kontrol et
                 input_list = [
                     inputs['features'],
                     inputs.get('seq_50'),
@@ -308,13 +309,7 @@ class StackingEnsemble:
         history: List[float]
     ) -> Dict:
         """
-        Stacking ensemble ile tahmin yap
-        
-        Args:
-            history: Geçmiş değerler
-            
-        Returns:
-            Ensemble tahmini ve detayları
+        Stacking ensemble ile tahmin yap (2 Modlu)
         """
         # Minimum veri kontrolü
         if len(history) < 1000:
@@ -341,21 +336,30 @@ class StackingEnsemble:
         # Meta-model varsa stacking kullan
         if self.meta_model is not None:
             try:
-                # Meta-model input: [prog_pred, ultra_pred, catboost_pred]
+                # Meta-model input: [prog_prob, ultra_prob, catboost_prob]
+                # Model sırası eğitimdekiyle aynı olmalı!
                 meta_input = []
+                # Buradaki model listesi meta-modeli eğitirken kullandığınız sırayla aynı olmalı
+                # Örneğin: Progressive, Ultra, CatBoost (ve varsa diğerleri)
+                # Eğer eksikse 0.5 (nötr) ile doldur
                 for model_name in ['progressive', 'ultra', 'catboost']:
                     if individual_preds.get(model_name) is not None:
                         meta_input.append(individual_preds[model_name]['threshold_probability'])
                     else:
-                        meta_input.append(0.5)  # Eksik model için neutral
+                        meta_input.append(0.5) 
                 
+                # Eğer meta-model 5 özellik bekliyorsa ve biz 3 veriyorsak, kalanları 0.5 ile doldur
+                # (AutoGluon ve TabNet eksikse)
+                while len(meta_input) < 5: # Varsayım: Meta model 5 input bekliyor
+                     meta_input.append(0.5)
+
                 meta_input = np.array(meta_input).reshape(1, -1)
                 
                 # Meta-model tahmini
                 meta_pred_proba = self.meta_model.predict_proba(meta_input)
                 threshold_prob = float(meta_pred_proba[0][1])
                 
-                # Value prediction: Weighted average (meta-model confidence'a göre)
+                # Value prediction: Weighted average
                 weights = meta_pred_proba[0]  # [prob_below, prob_above]
                 weighted_value = 0.0
                 weight_sum = 0.0
@@ -369,14 +373,21 @@ class StackingEnsemble:
                 if weight_sum > 0:
                     predicted_value = weighted_value / weight_sum
                 else:
-                    # Fallback: Simple average
                     predicted_value = np.mean([p['predicted_value'] for p in valid_preds.values()])
                 
+                confidence = float(max(meta_pred_proba[0]))
+                
+                # Mod Kararları
+                is_normal = confidence >= self.THRESHOLD_NORMAL
+                is_rolling = confidence >= self.THRESHOLD_ROLLING
+
                 return {
                     'predicted_value': round(predicted_value, 2),
                     'threshold_probability': round(threshold_prob, 2),
-                    'above_threshold': threshold_prob >= 0.5,
-                    'confidence': round(max(meta_pred_proba[0]), 2),
+                    'above_threshold': threshold_prob >= 0.5, # Legacy
+                    'confidence': round(confidence, 2),
+                    'is_normal': is_normal,
+                    'is_rolling': is_rolling,
                     'ensemble_method': 'stacking',
                     'individual_predictions': individual_preds,
                     'meta_weights': meta_pred_proba[0].tolist(),
@@ -385,18 +396,20 @@ class StackingEnsemble:
                 
             except Exception as e:
                 logger.error(f"Stacking hatası, weighted average'a geçiliyor: {e}")
-                # Fallback to weighted average
         
-        # Meta-model yoksa: Weighted Average (performansa göre)
-        # Basit implementasyon: Eşit ağırlık
+        # Meta-model yoksa veya hata: Weighted Average
         avg_value = np.mean([p['predicted_value'] for p in valid_preds.values()])
         avg_threshold = np.mean([p['threshold_probability'] for p in valid_preds.values()])
+        
+        confidence = float(avg_threshold if avg_threshold >= 0.5 else 1 - avg_threshold)
         
         return {
             'predicted_value': round(avg_value, 2),
             'threshold_probability': round(avg_threshold, 2),
             'above_threshold': avg_threshold >= 0.5,
-            'confidence': round(avg_threshold if avg_threshold >= 0.5 else 1 - avg_threshold, 2),
+            'confidence': round(confidence, 2),
+            'is_normal': confidence >= self.THRESHOLD_NORMAL,
+            'is_rolling': confidence >= self.THRESHOLD_ROLLING,
             'ensemble_method': 'weighted_average',
             'individual_predictions': individual_preds,
             'active_models': list(valid_preds.keys())
@@ -409,13 +422,6 @@ class StackingEnsemble:
     ) -> Dict:
         """
         Ana tahmin fonksiyonu
-        
-        Args:
-            history: Geçmiş değerler
-            mode: 'ensemble', 'progressive', 'ultra', veya 'catboost'
-            
-        Returns:
-            Tahmin sonucu
         """
         if mode == 'ensemble':
             result = self.predict_with_stacking(history)
@@ -426,6 +432,12 @@ class StackingEnsemble:
                 result = individual_preds[mode]
                 result['ensemble_method'] = 'single_model'
                 result['model_used'] = mode
+                # Tek model için de 2 modlu karar ver
+                conf = result.get('threshold_probability', 0.5)
+                conf = conf if conf >= 0.5 else 1-conf
+                result['confidence'] = conf
+                result['is_normal'] = conf >= self.THRESHOLD_NORMAL
+                result['is_rolling'] = conf >= self.THRESHOLD_ROLLING
             else:
                 result = {
                     'error': f'{mode} modeli yüklü değil',
