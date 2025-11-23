@@ -1,12 +1,16 @@
 """
 Imitation Learning Agent Training Script
 
-Bu script, uzman modellerin (Consensus, TabNet vb.) kararlarını taklit eden bir 
-Imitation Learning (Taklit Öğrenme) ajanı eğitir. Gerçek Reinforcement Learning 
+Bu script, uzman modellerin (Consensus, TabNet vb.) kararlarını taklit eden bir
+Imitation Learning (Taklit Öğrenme) ajanı eğitir. Gerçek Reinforcement Learning
 değildir, uzman kurallarını sinir ağına öğretir.
 
 Not: Bu bir Imitation Learning / Supervised Learning yaklaşımıdır, gerçek RL değildir.
 Ajan, kendi politikasını keşfetmez, tanımlanan kuralları öğrenir.
+
+GÜNCELLEME:
+- 3 Mod -> 2 Mod (Normal/Rolling) yapısına geçildi.
+- Güven eşikleri: Normal >= 0.85, Rolling >= 0.95.
 """
 
 import numpy as np
@@ -46,7 +50,7 @@ class ImitationLearningTrainer:
     def __init__(
         self,
         state_dim: int = 200,
-        action_dim: int = 4,
+        action_dim: int = 4, # 0: Bekle, 1: Rolling, 2: Normal, 3: Normal (Yedek)
         learning_rate: float = 0.001,
         batch_size: int = 32
     ):
@@ -144,25 +148,21 @@ class ImitationLearningTrainer:
         # BAHIS YAP
         if actual_value >= 1.5:
             # Kazandık
-            if action == 1:  # Konservatif
+            if action == 1:  # ROLLING (Güvenli Liman)
                 exit_multiplier = 1.5
                 profit = bet_amount * (exit_multiplier - 1.0)
                 reward = profit / bankroll * 10.0  # Normalize
-            elif action == 2:  # Normal
+                
+            elif action == 2 or action == 3:  # NORMAL (Dengeli)
                 exit_multiplier = min(predicted_value * 0.8, 2.5)
                 if actual_value >= exit_multiplier:
                     profit = bet_amount * (exit_multiplier - 1.0)
-                    reward = profit / bankroll * 10.0
+                    reward = profit / bankroll * 12.0
                 else:
                     # Çıkış noktasına ulaşamadık, kayıp
                     reward = -bet_amount / bankroll * 5.0
-            else:  # Agresif
-                exit_multiplier = min(predicted_value * 0.85, 5.0)
-                if actual_value >= exit_multiplier:
-                    profit = bet_amount * (exit_multiplier - 1.0)
-                    reward = profit / bankroll * 15.0  # Daha yüksek reward
-                else:
-                    reward = -bet_amount / bankroll * 8.0  # Daha yüksek ceza
+            else:
+                reward = 0
         else:
             # Kaybettik
             reward = -bet_amount / bankroll * 10.0  # Kayıp cezası
@@ -198,9 +198,10 @@ class ImitationLearningTrainer:
         
         # Virtual bankroll
         virtual_bankroll = 1000.0
+        # Tek tip bankroll manager (Normal tolerans)
         bankroll_manager = AdvancedBankrollManager(
             initial_bankroll=virtual_bankroll,
-            risk_tolerance='moderate'
+            risk_tolerance='normal'
         )
         
         # RL Agent (state vector oluşturmak için)
@@ -226,34 +227,32 @@ class ImitationLearningTrainer:
                     bankroll_manager=bankroll_manager
                 )
                 
-                # UZMAN KURALLARI - Optimal action hesapla
+                # UZMAN KURALLARI - Optimal action hesapla (2 MODLU YAPI)
                 consensus_pred = model_predictions.get('consensus')
+                
+                optimal_action = 0  # Varsayılan: BEKLE
+                
                 if consensus_pred and consensus_pred.get('above_threshold', False):
                     confidence = consensus_pred.get('confidence', 0.5)
                     prediction = consensus_pred.get('prediction', 1.5)
                     
-                    if confidence >= 0.8:
-                        if prediction >= 2.5:
-                            optimal_action = 3  # Agresif
-                        else:
-                            optimal_action = 2  # Normal
-                    elif confidence >= 0.65:
-                        optimal_action = 1  # Konservatif
+                    # Eşikler: Rolling >= 0.95, Normal >= 0.85
+                    if confidence >= 0.95:
+                        optimal_action = 1  # ROLLING (En güvenli)
+                    elif confidence >= 0.85:
+                        optimal_action = 2  # NORMAL (Yüksek güven)
                     else:
                         optimal_action = 0  # BEKLE
                 else:
                     optimal_action = 0  # BEKLE
                 
                 # Reward hesapla (sample weight için)
+                bet_amount = 0.0
                 if optimal_action > 0:
-                    if optimal_action == 1:
+                    if optimal_action == 1: # Rolling
                         bet_amount = virtual_bankroll * 0.02
-                    elif optimal_action == 2:
+                    elif optimal_action == 2 or optimal_action == 3: # Normal
                         bet_amount = virtual_bankroll * 0.04
-                    else:
-                        bet_amount = virtual_bankroll * 0.06
-                else:
-                    bet_amount = 0.0
                 
                 reward = self.calculate_reward(
                     action=optimal_action,
