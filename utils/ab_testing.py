@@ -5,7 +5,7 @@ Farklı modelleri veya versiyonları karşılaştırmak için A/B testi yapar.
 Test sonuçlarını kaydeder ve istatistiksel analiz yapar.
 
 GÜNCELLEME:
-- ROI hesaplaması artık %85 güven eşiğine tabidir.
+- ROI hesaplaması artık %85 güven eşiğine tabidir (Threshold Manager).
 - Düşük güvenli "doğru" tahminler başarı puanına eklenmez.
 """
 
@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from scipy import stats
+from utils.threshold_manager import get_threshold_manager
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,10 @@ class ABTestManager:
         # Results dizinini oluştur
         os.makedirs(os.path.dirname(results_path), exist_ok=True)
         
-        # Kritik Güven Eşiği (ROI Hesabı İçin)
-        self.CRITICAL_ROI_THRESHOLD = 0.85
-    
+        # Threshold Manager'dan Kritik ROI Eşiğini Al (Normal Mod)
+        tm = get_threshold_manager()
+        self.CRITICAL_ROI_THRESHOLD = tm.get_normal_threshold() # 0.85
+        
     def _load_tests(self) -> Dict:
         """Test sonuçlarını yükle"""
         if os.path.exists(self.results_path):
@@ -93,19 +95,7 @@ class ABTestManager:
         split_ratio: float = 0.5,
         min_samples: int = 100
     ) -> str:
-        """
-        Yeni A/B testi oluştur
-        
-        Args:
-            test_name: Test adı
-            model_a: A modeli (kontrol grubu)
-            model_b: B modeli (test grubu)
-            split_ratio: B grubuna giden oran (0.0-1.0)
-            min_samples: Minimum örnek sayısı
-            
-        Returns:
-            Test ID
-        """
+        """Yeni A/B testi oluştur"""
         test_id = f"{test_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
         test_config = {
@@ -148,17 +138,7 @@ class ABTestManager:
         confidence: float,
         was_correct: bool
     ):
-        """
-        Tahmin sonucunu kaydet
-        
-        Args:
-            test_id: Test ID
-            model_used: Kullanılan model ('A' veya 'B')
-            predicted_value: Tahmin edilen değer
-            actual_value: Gerçek değer
-            confidence: Güven skoru
-            was_correct: Doğru mu?
-        """
+        """Tahmin sonucunu kaydet"""
         if test_id not in self.tests:
             logger.error(f"Test bulunamadı: {test_id}")
             return
@@ -171,12 +151,13 @@ class ABTestManager:
         results = test['results']
         results['total_predictions'] += 1
         
-        # GÜNCELLEME: ROI hesaplama fonksiyonu
+        # ROI hesaplama fonksiyonu (Güven Eşiği Kontrollü)
         def calculate_roi_change(pred_val, act_val, conf):
             """
             Sadece %85 üzeri güvenli tahminler ROI'yi etkiler.
             Güvensiz tahminler 'Pas' geçilmiş sayılır.
             """
+            # Sadece 1.5 üstü tahminlerde ve yüksek güvende bahis yapılır
             if pred_val >= 1.5 and conf >= self.CRITICAL_ROI_THRESHOLD:
                 if act_val >= 1.5:
                     return 0.5  # Kazanç (1.5x - 1.0x = 0.5x Net)
@@ -184,17 +165,15 @@ class ABTestManager:
                     return -1.0 # Kayıp (Bahis miktarı)
             return 0.0 # Pas (İşlem yapılmadı)
 
+        roi_change = calculate_roi_change(predicted_value, actual_value, confidence)
+
         if model_used == 'A':
             results['predictions_a'] += 1
-            # Doğruluk hesabı (Güven şartı yok, modelin saf başarısı)
             if was_correct:
                 results['wins_a'] += 1
                 results['correct_a'] += 1
             else:
                 results['losses_a'] += 1
-            
-            # ROI Hesabı (Güven şartı VAR - Cüzdan başarısı)
-            roi_change = calculate_roi_change(predicted_value, actual_value, confidence)
             results['roi_a'] += roi_change
         
         elif model_used == 'B':
@@ -204,9 +183,6 @@ class ABTestManager:
                 results['correct_b'] += 1
             else:
                 results['losses_b'] += 1
-            
-            # ROI Hesabı
-            roi_change = calculate_roi_change(predicted_value, actual_value, confidence)
             results['roi_b'] += roi_change
         
         self._save_tests()
@@ -223,9 +199,7 @@ class ABTestManager:
         accuracy_a = (results['correct_a'] / results['predictions_a'] * 100) if results['predictions_a'] > 0 else 0.0
         accuracy_b = (results['correct_b'] / results['predictions_b'] * 100) if results['predictions_b'] > 0 else 0.0
         
-        # ROI normalize et (Tahmin başına ortalama getiri)
-        # Not: Burada payda olarak toplam tahmin sayısını kullanıyoruz
-        # çünkü pas geçilen tahminler de stratejinin bir parçasıdır.
+        # ROI normalize et
         roi_a = (results['roi_a'] / results['predictions_a'] * 100) if results['predictions_a'] > 0 else 0.0
         roi_b = (results['roi_b'] / results['predictions_b'] * 100) if results['predictions_b'] > 0 else 0.0
         
@@ -234,12 +208,10 @@ class ABTestManager:
         confidence_level = 0.0
         
         if results['predictions_a'] >= 30 and results['predictions_b'] >= 30:
-            # Chi-square test
             contingency = np.array([
                 [results['wins_a'], results['losses_a']],
                 [results['wins_b'], results['losses_b']]
             ])
-            
             try:
                 chi2, p_value = stats.chi2_contingency(contingency)[:2]
                 confidence_level = (1 - p_value) * 100 if p_value else 0.0
@@ -249,7 +221,6 @@ class ABTestManager:
         # Kazanan belirle
         winner = None
         # Hem Accuracy hem de ROI daha iyi olmalı
-        # Accuracy farkı %2'den büyük olmalı
         if accuracy_b > accuracy_a + 2.0 and roi_b > roi_a:
             winner = 'B'
         elif accuracy_a > accuracy_b + 2.0 and roi_a > roi_b:
@@ -312,23 +283,14 @@ class ABTestManager:
         return all_tests
     
     def select_model_for_prediction(self, test_id: str) -> str:
-        """
-        Tahmin için model seç (A/B split)
-        
-        Args:
-            test_id: Test ID
-            
-        Returns:
-            'A' veya 'B'
-        """
+        """Tahmin için model seç (A/B split)"""
         if test_id not in self.tests:
-            return 'A'  # Default
+            return 'A'
         
         test = self.tests[test_id]
         if not test.get('is_active', False):
             return 'A'
         
-        # Random split
         split_ratio = test.get('split_ratio', 0.5)
         return 'B' if np.random.random() < split_ratio else 'A'
 
