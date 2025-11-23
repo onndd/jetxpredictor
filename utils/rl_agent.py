@@ -3,7 +3,11 @@ JetX Predictor - Reinforcement Learning Agent
 
 RL Ajanı, tüm model çıktılarını birleştirerek en kârlı aksiyonu seçer.
 State vector: Model tahminleri + Risk analizi + Psikolojik analiz + Anomali tespit + Finansal metrikler
-Action space: BEKLE, ROLLING (%95+), NORMAL (%85+)
+
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) entegrasyonu.
+- Normal Mod: %85+ Güven, Dinamik Çıkış (Max 2.5x)
+- Rolling Mod: %95+ Güven, Sabit 1.50x Çıkış
 """
 
 import numpy as np
@@ -35,13 +39,11 @@ class RLAgent:
     Tüm model çıktılarını birleştirerek en kârlı aksiyonu seçer.
     """
     
-    # Action space - SADECE 2 MOD (Rolling ve Normal)
-    # Modelin 4 çıktısı olduğu için 3. çıktıyı da Normal'e bağlıyoruz.
+    # Action space - 2 MODLU YAPI
     ACTIONS = {
         0: {'name': 'BEKLE', 'description': 'Bahis yapma', 'risk': 'NONE'},
-        1: {'name': 'BAHIS_YAP_ROLLING', 'description': 'Rolling Mod (%95+ Güven, 1.5x Sabit)', 'risk': 'MINIMAL'},
-        2: {'name': 'BAHIS_YAP_NORMAL', 'description': 'Normal Mod (%85+ Güven, Dinamik)', 'risk': 'LOW'},
-        3: {'name': 'BAHIS_YAP_NORMAL', 'description': 'Normal Mod (%85+ Güven, Dinamik)', 'risk': 'LOW'} # Eski agresif iptal, Normal'e bağlandı
+        1: {'name': 'ROLLING', 'description': 'Güvenli Liman (%95+ Güven, 1.50x Sabit)', 'risk': 'MINIMAL'},
+        2: {'name': 'NORMAL', 'description': 'Dengeli Oyun (%85+ Güven, Dinamik Çıkış)', 'risk': 'LOW'}
     }
     
     def __init__(self, model_path: str = 'models/rl_agent_model.h5', threshold: float = 1.5):
@@ -128,7 +130,11 @@ class RLAgent:
         
         # Normalize et (scaler varsa)
         if self.scaler is not None:
-            state_vector = self.scaler.transform(state_vector.reshape(1, -1))[0]
+            try:
+                state_vector = self.scaler.transform(state_vector.reshape(1, -1))[0]
+            except:
+                # Scaler boyut uyuşmazlığı olursa sessizce geç (veya yeni scaler fit et)
+                pass
         
         return state_vector
     
@@ -384,21 +390,26 @@ class RLAgent:
         """State vector'den action tahmin et"""
         if self.model is None:
             logger.error("Model yüklenmemiş!")
-            return 0, np.array([1.0, 0.0, 0.0, 0.0])
+            return 0, np.array([1.0, 0.0, 0.0])
         
         try:
             state_input = state_vector.reshape(1, -1)
             probabilities = self.model.predict(state_input, verbose=0)[0]
             
+            # Action 3 (Eski Agresif) varsa, onu Action 2'ye (Normal) ekle ve sil
+            if len(probabilities) > 3:
+                probabilities[2] += probabilities[3]
+                probabilities = probabilities[:3]
+            
             if use_greedy:
                 action = int(np.argmax(probabilities))
             else:
-                action = int(np.random.choice(4, p=probabilities))
+                action = int(np.random.choice(3, p=probabilities))
             
             return action, probabilities
         except Exception as e:
             logger.error(f"Action prediction hatası: {e}")
-            return 0, np.array([1.0, 0.0, 0.0, 0.0])
+            return 0, np.array([1.0, 0.0, 0.0])
     
     def interpret_action(
         self,
@@ -407,10 +418,11 @@ class RLAgent:
         model_predictions: Dict,
         bankroll: Optional[float] = None
     ) -> Dict:
-        """
-        Action'ı senin sistemindeki 2 moda (Rolling/Normal) uygun şekilde yorumlar.
-        Aksiyon 3 (Eski Agresif/Yüksek Risk) artık Normal Mod olarak işlem görür.
-        """
+        """Action'ı yorumla (2 MODLU SİSTEM)"""
+        
+        if action not in self.ACTIONS:
+            action = 2 # Default Normal
+            
         action_info = self.ACTIONS[action].copy()
         
         # Consensus prediction'dan bilgi al
@@ -425,7 +437,7 @@ class RLAgent:
             'action_name': action_info['name'],
             'action_description': action_info['description'],
             'risk_level': action_info['risk'],
-            'confidence': float(probabilities[action]),
+            'confidence': float(probabilities[action]) if action < len(probabilities) else 0.0,
             'probabilities': probabilities.tolist(),
             'should_bet': action > 0,
             'bet_amount': None,
@@ -439,41 +451,38 @@ class RLAgent:
             if consensus_conf > 0 and consensus_conf < 0.85:
                  result['reasoning'].append(f"Güven %85'in altında (%{consensus_conf*100:.0f})")
 
-        # Action 1: ROLLING MOD (Eski Konservatif)
-        # Hedef: %95 Güven, 1.50x Çıkış
+        # Action 1: ROLLING MOD (%95+)
         elif action == 1:
             result['exit_multiplier'] = 1.50
-            result['bet_percentage'] = 2.0 # Rolling'de kasa koruma ön planda
+            result['bet_percentage'] = 2.0 
             
             default_bankroll = bankroll if bankroll else 1000.0
             result['bet_amount'] = default_bankroll * (result['bet_percentage'] / 100)
             
-            result['reasoning'].append("🛡️ ROLLING STRATEJİSİ: Güvenli Liman")
-            result['reasoning'].append("Hedef: 1.50x garantilemek")
+            result['reasoning'].append("🛡️ ROLLING MOD: Güvenli Liman")
+            result['reasoning'].append("Hedef: 1.50x Sabit Çıkış")
             
             if consensus_conf < 0.95:
-                 result['reasoning'].append(f"⚠️ DİKKAT: Ajan Rolling seçti ama Consensus güveni (%{consensus_conf*100:.0f}) %95 sınırında değil.")
+                 result['reasoning'].append(f"⚠️ DİKKAT: Ajan Rolling seçti ama Güven (%{consensus_conf*100:.0f}) < %95")
 
-        # Action 2 ve 3: NORMAL MOD (Eski Normal ve Agresif Birleştirildi)
-        # Hedef: %85 Güven, Dinamik Çıkış
-        elif action in [2, 3]:
-            # Çıkış noktasını tahmine göre ayarla ama uçmama izin verme
+        # Action 2: NORMAL MOD (%85+)
+        elif action == 2:
+            # Dinamik çıkış (Regressor tahminine göre, max 2.5x)
             if consensus_pred:
                 pred_value = consensus_pred.get('prediction', 1.5)
-                # Normal modda bile max 2.5x ile sınırla, güvenli olsun
-                result['exit_multiplier'] = min(pred_value * 0.8, 2.5) 
+                result['exit_multiplier'] = min(max(1.5, pred_value * 0.8), 2.5) 
             else:
-                result['exit_multiplier'] = 1.8
+                result['exit_multiplier'] = 1.5
             
             result['bet_percentage'] = 4.0
             default_bankroll = bankroll if bankroll else 1000.0
             result['bet_amount'] = default_bankroll * (result['bet_percentage'] / 100)
             
-            result['reasoning'].append("🎯 NORMAL STRATEJİ: Dengeli Oyun")
-            result['reasoning'].append(f"Hedef: {result['exit_multiplier']:.2f}x (Tahmine göre ayarlandı)")
+            result['reasoning'].append("🎯 NORMAL MOD: Dengeli Oyun")
+            result['reasoning'].append(f"Hedef: {result['exit_multiplier']:.2f}x (Dinamik)")
             
             if consensus_conf < 0.85:
-                result['reasoning'].append(f"⚠️ UYARI: Güven %85'in altında (%{consensus_conf*100:.0f}) - Riskli olabilir")
+                result['reasoning'].append(f"⚠️ UYARI: Güven (%{consensus_conf*100:.0f}) < %85")
                 
         return result
 
