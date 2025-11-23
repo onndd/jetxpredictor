@@ -6,8 +6,9 @@ Hem kategorik hem de değer tahmini yapar.
 CatBoost ve Neural Network modellerini destekler.
 
 GÜNCELLEME: 
-- %85 ve %95 Güven Eşiği ("Keskin Nişancı" Modu) uygulandı.
-- Feature Schema Validation eklendi.
+- %85 (Normal) ve %95 (Rolling) Güven Eşiği ("Keskin Nişancı" Modu) uygulandı.
+- Feature Schema Validation eklendi (Veri tutarlılığı için).
+- Basit istatistik fonksiyonu da %85 eşiğine çekildi.
 """
 
 import numpy as np
@@ -571,5 +572,6 @@ class JetXPredictor:
         
         return {
             'above_threshold_probability': round(probability, 2),
-            'recommendation': 'OYNA' if probability > 0.65 else 'BEKLE'
+            # GÜNCELLEME: Burası da %85 eşiğine çekildi
+            'recommendation': 'OYNA' if probability > 0.85 else 'BEKLE'
         }
