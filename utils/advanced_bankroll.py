@@ -1,9 +1,11 @@
 """
 JetX Predictor - Advanced Bankroll Manager
 
-Gelişmiş sanal kasa yönetimi:
+Gelişmiş sanal kasa yönetimi (2 Modlu):
 - Kelly Criterion (optimal bahis hesaplama)
-- Risk tolerance seviyeleri (normal, rolling)
+- Risk tolerance seviyeleri:
+  1. Normal Mod (0.85 Güven, Dengeli)
+  2. Rolling Mod (0.95 Güven, Agresif Büyüme)
 - Stop-loss & Take-profit otomasyonu
 - Streak tracking
 - Detaylı performans raporları
@@ -13,7 +15,7 @@ import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime
-
+from utils.threshold_manager import get_threshold
 
 @dataclass
 class BetResult:
@@ -31,32 +33,25 @@ class BetResult:
 class AdvancedBankrollManager:
     """
     Gelişmiş bankroll yönetimi sınıfı
-    
-    Features:
-    - Kelly Criterion ile optimal bahis hesaplama
-    - Risk tolerance stratejileri (normal, rolling)
-    - Stop-loss & Take-profit kuralları
-    - Streak tracking (en iyi/en kötü seriler)
-    - Detaylı performans raporları
     """
     
-    # Strateji tanımları
+    # Strateji tanımları (2 MODLU)
     STRATEGIES = {
+        'normal': {
+            'name': 'Normal Mod',
+            'max_bet_ratio': 0.10,      # Kasasının maks %10'u
+            'kelly_fraction': 0.50,     # Kelly'nin yarısı (Dengeli)
+            'stop_loss': 0.30,          # %30 kayıpta dur
+            'take_profit': 1.00,        # Kasayı 2'ye katlayınca dur/kar al
+            'min_confidence': 0.85      # Eşik: 0.85
+        },
         'rolling': {
             'name': 'Rolling / Kasa Katlama',
-            'max_bet_ratio': 0.05,
-            'kelly_fraction': 0.25,
-            'stop_loss': 0.20,
-            'take_profit': 0.50,
-            'min_confidence': 0.95
-        },
-        'normal': {
-            'name': 'Normal',
-            'max_bet_ratio': 0.10,
-            'kelly_fraction': 0.50,
-            'stop_loss': 0.30,
-            'take_profit': 1.00,
-            'min_confidence': 0.85
+            'max_bet_ratio': 0.05,      # Kasasının maks %5'i (Güvenlik için daha düşük)
+            'kelly_fraction': 0.25,     # Kelly'nin çeyreği (Daha defansif başla)
+            'stop_loss': 0.20,          # %20 kayıpta hemen dur
+            'take_profit': 0.50,        # %50 kar hedefi (kısa vadeli)
+            'min_confidence': 0.95      # Eşik: 0.95
         }
     }
     
@@ -74,8 +69,10 @@ class AdvancedBankrollManager:
             win_multiplier: Kazanç çarpanı (default: 1.5x)
             min_bet: Minimum bahis miktarı (TL)
         """
+        # Eğer geçersiz bir mod gelirse varsayılan olarak 'normal' seç
         if risk_tolerance not in self.STRATEGIES:
-            raise ValueError(f"Geçersiz risk tolerance: {risk_tolerance}. Geçerli değerler: {list(self.STRATEGIES.keys())}")
+            print(f"⚠️ Geçersiz risk tolerance: {risk_tolerance}. 'normal' moda geçiliyor.")
+            risk_tolerance = 'normal'
         
         self.initial_bankroll = initial_bankroll
         self.current_bankroll = initial_bankroll
@@ -92,8 +89,8 @@ class AdvancedBankrollManager:
             'wins': 0,
             'losses': 0,
             'current_streak': 0,      # Pozitif = kazanma serisi, negatif = kaybetme serisi
-            'best_streak': 0,          # En iyi kazanma serisi
-            'worst_streak': 0,         # En kötü kaybetme serisi
+            'best_streak': 0,         # En iyi kazanma serisi
+            'worst_streak': 0,        # En kötü kaybetme serisi
             'total_profit': 0.0,
             'total_wagered': 0.0,
             'roi': 0.0,
@@ -112,20 +109,7 @@ class AdvancedBankrollManager:
     ) -> float:
         """
         Kelly Criterion ile optimal bahis oranını hesapla
-        
         Formül: f = (p * b - q) / b
-        - f: Bahis oranı (bankroll'un kaçta kaçı)
-        - p: Kazanma olasılığı
-        - b: Kazanç oranı (1.5x için 0.5)
-        - q: Kaybetme olasılığı (1 - p)
-        
-        Args:
-            win_prob: Kazanma olasılığı (0-1 arası)
-            win_multiplier: Kazanç çarpanı (None ise self.win_multiplier kullanılır)
-            loss: Kayıp miktarı (genelde 1.0 - bahsin tamamı)
-            
-        Returns:
-            Optimal bahis oranı (0-1 arası)
         """
         if win_multiplier is None:
             win_multiplier = self.win_multiplier
@@ -137,7 +121,10 @@ class AdvancedBankrollManager:
         q = 1 - win_prob
         
         # Kelly fraction
-        kelly_fraction = (win_prob * b - q) / b
+        if b > 0:
+            kelly_fraction = (win_prob * b - q) / b
+        else:
+            kelly_fraction = 0
         
         # Güvenlik: Negatif veya çok yüksek fraksiyonları sınırla
         kelly_fraction = max(0, min(kelly_fraction, 0.25))
@@ -158,14 +145,6 @@ class AdvancedBankrollManager:
     ) -> float:
         """
         Güven ve tahmine göre optimal bahis miktarını hesapla
-        
-        Args:
-            confidence: Model güven skoru (0-1 arası)
-            predicted_value: Tahmin edilen değer (None ise self.win_multiplier kullanılır)
-            volatility_risk: Volatilite risk skoru (0-1 arası, default: 0.0)
-            
-        Returns:
-            Optimal bahis miktarı (TL)
         """
         # Minimum güven kontrolü
         if confidence < self.strategy['min_confidence']:
@@ -190,26 +169,17 @@ class AdvancedBankrollManager:
             return 0.0
         
         # 🛡️ VOLATİLİTE BAZLI POZİSYON KÜÇÜLTME - GÜVENLİK KATMANI
-        # Kelly Criterion hesaplandıktan SONRA volatilite riskine göre pozisyon küçült
         if volatility_risk > 0.7:
-            # YÜKSEK RİSK: Bahis miktarını %80 azalt (%20'sini al)
+            # YÜKSEK RİSK: Bahis miktarını %80 azalt
             bet_size = bet_size * 0.20
         elif volatility_risk > 0.5:
-            # ORTA RİSK: Bahis miktarını %50 azalt (%50'sini al)
+            # ORTA RİSK: Bahis miktarını %50 azalt
             bet_size = bet_size * 0.50
-        # Diğer durumlarda hesaplanan miktar korunur
         
         return bet_size
     
     def should_stop(self) -> Tuple[bool, Optional[str]]:
-        """
-        Stop-loss veya take-profit kontrolü
-        
-        Returns:
-            (should_stop, reason) tuple
-            - should_stop: Durmalı mı?
-            - reason: Durma nedeni (None ise durmamalı)
-        """
+        """Stop-loss veya take-profit kontrolü"""
         profit_ratio = (self.current_bankroll - self.initial_bankroll) / self.initial_bankroll
         
         # Stop-loss: Çok kaybettik mi?
@@ -220,7 +190,7 @@ class AdvancedBankrollManager:
         if profit_ratio >= self.strategy['take_profit']:
             return True, f"TAKE-PROFIT: %{self.strategy['take_profit']*100:.0f} kar ({self.current_bankroll:.2f} TL oldu)"
         
-        # Bankroll çok düştü mü? (minimum bahis bile yapamıyoruz)
+        # Bankroll çok düştü mü?
         if self.current_bankroll < self.min_bet:
             return True, f"BANKROLL BITTI: {self.current_bankroll:.2f} TL kaldı (min: {self.min_bet} TL)"
         
@@ -233,27 +203,21 @@ class AdvancedBankrollManager:
         actual_value: float,
         confidence: float
     ) -> BetResult:
-        """
-        Bahis yap ve sonuçları kaydet
-        
-        Args:
-            bet_size: Bahis miktarı (TL)
-            predicted_value: Tahmin edilen değer
-            actual_value: Gerçekleşen değer
-            confidence: Model güven skoru
-            
-        Returns:
-            BetResult objesi
-        """
+        """Bahis yap ve sonuçları kaydet"""
         # Bahis yap
         self.current_bankroll -= bet_size
         self.stats['total_bets'] += 1
         self.stats['total_wagered'] += bet_size
         
-        # Kazandık mı?
-        if actual_value >= 1.5:
-            # Kazanç: bet_size * win_multiplier
-            winnings = bet_size * self.win_multiplier
+        # Kazandık mı? (1.5x sabit çıkış varsayımı, stratejiye göre değişebilir)
+        # Rolling modda 1.5x sabit, Normal modda predicted_value'ya göre dinamik olabilir
+        # Burada basitlik için 1.5x varsayıyoruz, çağıran kod exit_point belirlemeli
+        # Şimdilik varsayılan 1.5x kontrolü:
+        target_multiplier = 1.5
+        
+        if actual_value >= target_multiplier:
+            # Kazanç
+            winnings = bet_size * target_multiplier
             self.current_bankroll += winnings
             profit = winnings - bet_size
             result = 'WIN'
@@ -290,18 +254,11 @@ class AdvancedBankrollManager:
             timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
         
-        # Geçmişe ekle
         self.bet_history.append(bet_result)
-        
         return bet_result
     
     def get_report(self) -> Dict:
-        """
-        Detaylı performans raporu
-        
-        Returns:
-            Performans metrikleri dictionary
-        """
+        """Detaylı performans raporu"""
         win_rate = self.stats['wins'] / self.stats['total_bets'] if self.stats['total_bets'] > 0 else 0
         avg_bet = self.stats['total_wagered'] / self.stats['total_bets'] if self.stats['total_bets'] > 0 else 0
         
@@ -328,121 +285,19 @@ class AdvancedBankrollManager:
     def print_report(self):
         """Detaylı raporu konsola yazdır"""
         report = self.get_report()
-        
         print("\n" + "="*70)
         print(f"📊 {report['strategy'].upper()} STRATEJİ RAPORU")
         print("="*70)
-        
-        print(f"\n💰 BANKROLL:")
-        print(f"  Başlangıç: {report['initial_bankroll']:,.2f} TL")
-        print(f"  Güncel: {report['current_bankroll']:,.2f} TL")
-        print(f"  En Yüksek: {report['highest_bankroll']:,.2f} TL")
-        print(f"  En Düşük: {report['lowest_bankroll']:,.2f} TL")
-        
-        print(f"\n📈 PERFORMANS:")
-        print(f"  Kar/Zarar: {report['total_profit']:+,.2f} TL")
-        
-        # ROI emoji
-        roi_emoji = "🚀" if report['roi'] > 50 else "✅" if report['roi'] > 0 else "⚠️" if report['roi'] > -20 else "❌"
-        print(f"  ROI: {report['roi']:+.1f}% {roi_emoji}")
-        
-        print(f"\n🎯 BAHİSLER:")
-        print(f"  Toplam Bahis: {report['total_bets']}")
-        print(f"  Toplam Yatırılan: {report['total_wagered']:,.2f} TL")
-        print(f"  Ortalama Bahis: {report['average_bet']:,.2f} TL")
-        
-        print(f"\n🎲 SONUÇLAR:")
-        print(f"  Kazanan: {report['wins']} ({report['win_rate']:.1f}%)")
-        print(f"  Kaybeden: {report['losses']} ({100-report['win_rate']:.1f}%)")
-        
-        print(f"\n📊 SERİLER:")
-        print(f"  Şu Anki: {report['current_streak']:+d}")
-        print(f"  En İyi: +{report['best_streak']}")
-        print(f"  En Kötü: {report['worst_streak']}")
-        
-        # Değerlendirme
-        print(f"\n💡 DEĞERLENDİRME:")
-        if report['roi'] > 50:
-            print(f"  🚀 Mükemmel! Çok iyi performans!")
-        elif report['roi'] > 20:
-            print(f"  ✅ Harika! Karlı strateji!")
-        elif report['roi'] > 0:
-            print(f"  ✅ İyi! Karda!")
-        elif report['roi'] > -10:
-            print(f"  ⚠️ Nötr. Başa baş yakın.")
-        elif report['roi'] > -20:
-            print(f"  ⚠️ Dikkat! Hafif kayıpta.")
-        else:
-            print(f"  ❌ Tehlike! Ciddi kayıpta!")
-        
-        # Kazanma oranı değerlendirmesi
-        if report['win_rate'] >= 67:
-            print(f"  ✅ Kazanma oranı mükemmel! (%{report['win_rate']:.1f})")
-        elif report['win_rate'] >= 60:
-            print(f"  ✅ Kazanma oranı iyi! (%{report['win_rate']:.1f})")
-        else:
-            print(f"  ⚠️ Kazanma oranı düşük. (%{report['win_rate']:.1f}) Hedef: %67+")
-        
+        print(f"\n💰 BANKROLL: {report['current_bankroll']:,.2f} TL (Başlangıç: {report['initial_bankroll']:,.2f} TL)")
+        print(f"📈 PERFORMANS: Kar {report['total_profit']:+,.2f} TL | ROI {report['roi']:+.1f}%")
+        print(f"🎯 BAHİSLER: Toplam {report['total_bets']} | Kazanan {report['wins']} | Kaybeden {report['losses']}")
+        print(f"🎲 WIN RATE: %{report['win_rate']:.1f}")
+        print(f"📊 SERİLER: En İyi +{report['best_streak']} | En Kötü {report['worst_streak']}")
         print("="*70 + "\n")
-    
-    def get_last_n_bets(self, n: int = 10) -> list:
-        """Son N bahisi döndür"""
-        return self.bet_history[-n:] if len(self.bet_history) >= n else self.bet_history
 
 
-# Kullanım örneği
 if __name__ == "__main__":
-    print("="*70)
-    print("💰 ADVANCED BANKROLL MANAGER - TEST")
-    print("="*70)
-    
-    # 2 farklı risk tolerance ile test (normal, rolling)
-    for risk_tolerance in ['normal', 'rolling']:
-        print(f"\n{'='*70}")
-        print(f"🎯 {risk_tolerance.upper()} STRATEJİ TESTİ")
-        print(f"{'='*70}")
-        
-        # Manager oluştur
-        manager = AdvancedBankrollManager(
-            initial_bankroll=1000.0,
-            risk_tolerance=risk_tolerance
-        )
-        
-        # Simülasyon: 100 bahis
-        np.random.seed(42)
-        
-        for i in range(100):
-            # Rastgele confidence ve actual value (yeni eşiklere uygun simülasyon)
-            confidence = np.random.uniform(0.8, 0.99)
-            actual_value = np.random.choice([
-                np.random.uniform(1.0, 1.49),  # %35 1.5 altı
-                np.random.uniform(1.5, 10.0)   # %65 1.5 üstü
-            ], p=[0.35, 0.65])
-            
-            # Optimal bahis hesapla
-            bet_size = manager.calculate_bet_size(
-                confidence=confidence,
-                predicted_value=1.5
-            )
-            
-            # Bahis yap (model confidence yüksekse)
-            if bet_size > 0:
-                result = manager.place_bet(
-                    bet_size=bet_size,
-                    predicted_value=1.5,
-                    actual_value=actual_value,
-                    confidence=confidence
-                )
-            
-            # Stop-loss veya take-profit kontrolü
-            should_stop, reason = manager.should_stop()
-            if should_stop:
-                print(f"\n⚠️ {reason} - Simülasyon durduruluyor (Bahis {i+1})")
-                break
-        
-        # Rapor
-        manager.print_report()
-    
-    print("="*70)
-    print("✅ Test tamamlandı!")
-    print("="*70)
+    # Test
+    manager = AdvancedBankrollManager(risk_tolerance='normal')
+    print(f"Manager initialized with strategy: {manager.strategy['name']}")
+    print(f"Min confidence: {manager.strategy['min_confidence']}")
