@@ -482,8 +482,9 @@ class JetXPredictor:
         mode: str,
         above_threshold: bool
     ) -> str:
-        """Mod bazlı öneri verir"""
-        threshold = CONFIDENCE_THRESHOLDS.get(mode, 0.65)
+        """Mod bazlı öneri verir (GÜNCELLENDİ)"""
+        # Config'den veya category_definitions'dan gelen değeri al, yoksa 0.85 kullan
+        threshold = CONFIDENCE_THRESHOLDS.get(mode, 0.85)
         
         if confidence < threshold:
             return 'BEKLE'
@@ -492,12 +493,11 @@ class JetXPredictor:
             return 'BEKLE'
         
         if confidence >= threshold and above_threshold:
-            if mode == 'rolling' and confidence >= 0.80:
+            if mode == 'rolling': # %95 ve üzeri
+                return 'OYNA (GÜVENLİ)'
+            elif mode == 'normal': # %85 ve üzeri
                 return 'OYNA'
-            elif mode == 'normal' and confidence >= 0.70:  # KESKİN NİŞANCI GÜNCELLEMESİ
-                return 'OYNA'
-            elif mode == 'aggressive' and confidence >= 0.50:
-                return 'RİSKLİ'
+            # Aggressive modu kaldırıldı
         
         return 'BEKLE'
     
