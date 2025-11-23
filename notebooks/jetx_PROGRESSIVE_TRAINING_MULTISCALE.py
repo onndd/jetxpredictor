@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🎯 JetX PROGRESSIVE TRAINING - MULTI-SCALE WINDOW ENSEMBLE
+🎯 JetX PROGRESSIVE TRAINING - MULTI-SCALE WINDOW ENSEMBLE (v3.1)
 
 YENİ YAKLAŞIM: Multi-Scale Window Ensemble
 - Her pencere boyutu için ayrı model eğitimi
@@ -8,10 +8,13 @@ YENİ YAKLAŞIM: Multi-Scale Window Ensemble
 - Her model farklı zaman ölçeğinde desen öğrenir
 - Final: Tüm modellerin ensemble'ı
 
+GÜNCELLEME (v3.1):
+- 2 MODLU YAPI: Normal (0.85) ve Rolling (0.95)
+- Sanal kasalar bu modlara göre optimize edildi.
+
 HEDEFLER:
-- 1.5 ALTI Doğruluk: %70-80%+
-- 1.5 ÜSTÜ Doğruluk: %75-85%+
-- Para kaybı riski: %20 altı
+- Normal Mod Doğruluk: %80+
+- Rolling Mod Doğruluk: %90+
 - MAE: < 2.0
 
 ⚠️  VERİ BÜTÜNLİĞİ:
@@ -30,19 +33,19 @@ import shutil
 from pathlib import Path
 import pickle
 
-# XLA optimizasyonu devre dışı
+# XLA optimizasyonu devre dışı (stabilite için)
 os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 print("="*80)
-print("🎯 JetX PROGRESSIVE TRAINING - MULTI-SCALE WINDOW ENSEMBLE")
+print("🎯 JetX PROGRESSIVE TRAINING - MULTI-SCALE WINDOW ENSEMBLE (v3.1)")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print()
-print("🔧 YENİ SİSTEM: Her pencere boyutu için ayrı model")
-print("   Window boyutları: [500, 250, 100, 50, 20]")
-print("   ⚠️  Veri sırası KORUNUYOR (shuffle=False)")
-print("   ⚠️  Data augmentation KAPALI")
+print("🔧 SİSTEM KONFIGURASYONU:")
+print("   Normal Mod Eşik: 0.85")
+print("   Rolling Mod Eşik: 0.95")
+print("   Window Boyutları: [500, 250, 100, 50, 20]")
 print()
 
 # Kütüphaneleri yükle
@@ -65,65 +68,10 @@ from tqdm.auto import tqdm
 import warnings
 warnings.filterwarnings('ignore')
 
-# =============================================================================
-# GPU OPTIMIZER ENTEGRASYONU
-# =============================================================================
-try:
-    # GPU optimizer'ı import et
-    from utils.gpu_optimizer import setup_colab_gpu_optimization, get_gpu_optimizer
-    
-    print("\n🚀 GPU OPTİMİZASYONU BAŞLATILIYOR...")
-    gpu_results = setup_colab_gpu_optimization()
-    
-    # GPU optimizer instance
-    gpu_optimizer = get_gpu_optimizer()
-    
-    # GPU monitoring
-    print("📊 GPU performansı izleniyor...")
-    gpu_optimizer.monitor_gpu_usage(duration_seconds=3)
-    
-except ImportError as e:
-    print(f"⚠️ GPU optimizer import edilemedi: {e}")
-    gpu_optimizer = None
-except Exception as e:
-    print(f"⚠️ GPU optimizasyonu başarısız: {e}")
-    gpu_optimizer = None
+# EŞİKLER
+THRESHOLD_NORMAL = 0.85
+THRESHOLD_ROLLING = 0.95
 
-# GPU konfigürasyonu
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        # Memory growth ayarla - GPU belleğini dinamik kullan
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        
-        # Mixed precision training - GPU performansını artırır
-        from tensorflow.keras import mixed_precision
-        mixed_precision.set_global_policy('mixed_float16')
-        
-        print(f"✅ TensorFlow: {tf.__version__}")
-        print(f"✅ GPU: {len(gpus)} GPU bulundu ve yapılandırıldı")
-        print(f"   - Memory growth: Aktif")
-        print(f"   - Mixed precision: Aktif (float16)")
-        print(f"   - GPU'lar: {[gpu.name for gpu in gpus]}")
-        
-        # GPU optimizer entegrasyonu
-        if gpu_optimizer:
-            try:
-                gpu_optimizer.optimize_tensorflow()
-            except Exception as e:
-                print(f"⚠️ TensorFlow GPU optimizasyonu başarısız: {e}")
-        
-    except RuntimeError as e:
-        print(f"⚠️ GPU konfigürasyon hatası: {e}")
-        print(f"✅ TensorFlow: {tf.__version__}")
-        print(f"✅ GPU: Mevcut ama CPU modunda çalışacak")
-else:
-    print(f"✅ TensorFlow: {tf.__version__}")
-    print(f"⚠️ GPU: Bulunamadı - CPU modunda çalışacak")
-    # CPU fallback için gpu optimizer'ı hala çağırabiliriz
-    if gpu_optimizer:
-        print("ℹ️ GPU optimizer CPU fallback mekanizmalarını çalıştırıyor...")
 # =============================================================================
 # GPU OPTIMIZER ENTEGRASYONU
 # =============================================================================
@@ -270,7 +218,7 @@ train_data, val_data, test_data = split_data_preserving_order(
 # MULTI-SCALE FEATURE ENGINEERING
 # =============================================================================
 print("\n🔧 MULTI-SCALE FEATURE EXTRACTION...")
-print("� Her pencere boyutu için feature engineering")
+print("🔹 Her pencere boyutu için feature engineering")
 
 window_sizes = [500, 250, 100, 50, 20]
 
@@ -380,7 +328,6 @@ for window_size in window_sizes:
 def build_model_for_window(window_size, n_features):
     """
     Belirli bir pencere boyutu için model oluştur
-    
     Her pencere boyutu kendi modeline sahip
     """
     # Inputs
@@ -395,7 +342,6 @@ def build_model_for_window(window_size, n_features):
     x_feat = layers.Dropout(0.2)(x_feat)
     
     # Sequence branch - pencere boyutuna göre adapte
-    # Küçük pencereler için basit, büyük pencereler için karmaşık
     if window_size <= 50:
         # Küçük pencere: Basit LSTM
         x_seq = layers.LSTM(64, return_sequences=False)(inp_sequence)
@@ -421,9 +367,7 @@ def build_model_for_window(window_size, n_features):
         attention = layers.Permute([2, 1])(attention)
         
         x_seq_attended = layers.Multiply()([x_seq, attention])
-        # Lambda yerine manuel sum - serialization sorununu çözer
         x_seq = layers.GlobalAveragePooling1D()(x_seq_attended)
-        # GlobalAveragePooling mean alır, sum'a yakın sonuç için scale
         x_seq = layers.Dense(128, activation='linear', use_bias=False)(x_seq)
         x_seq = layers.Dropout(0.2)(x_seq)
     
@@ -456,36 +400,31 @@ def build_model_for_window(window_size, n_features):
     return model
 
 # =============================================================================
-# DETAYLI EPOCH CALLBACK
+# DETAYLI EPOCH CALLBACK (2 MODLU)
 # =============================================================================
 class DetailedMetricsCallback(callbacks.Callback):
     """
-    Her epoch sonunda detaylı metrikler gösterir:
-    - Below 1.5 doğruluğu
-    - Above 1.5 doğruluğu
-    - ROI (kar oranı)
-    - Win rate
-    - Threshold accuracy
+    Her epoch sonunda detaylı metrikler gösterir (Normal ve Rolling Mod için)
     """
     def __init__(self, X_val, y_val):
         super().__init__()
         self.X_val = X_val
         self.y_val = y_val
     
-    def simulate_bankroll(self, predictions, actuals):
-        """1.5x eşikte sanal kasa simülasyonu - KESKİN NİŞANCI STRATEJİSİ"""
+    def simulate_bankroll(self, predictions, actuals, threshold):
+        """Basit kasa simülasyonu"""
         initial = 10000
         wallet = initial
         wins = 0
         total_bets = 0
         for pred, actual in zip(predictions, actuals):
-            if pred >= 0.85:  # GÜNCELLENDİ: Artık %85 güven arıyor
+            if pred >= threshold:
                 wallet -= 10
                 total_bets += 1
                 if actual >= 1.5:
                     wallet += 15
                     wins += 1
-        roi = ((wallet - initial) / initial) * 100
+        roi = ((wallet - initial) / initial) * 100 if total_bets > 0 else 0
         win_rate = (wins / total_bets * 100) if total_bets > 0 else 0
         return roi, win_rate, wins, total_bets
     
@@ -494,153 +433,96 @@ class DetailedMetricsCallback(callbacks.Callback):
         preds = self.model.predict(self.X_val, verbose=0)
         threshold_preds = preds[2].flatten()
         
-        # Confusion Matrix hesapla (KESKİN NİŞANCI THRESHOLD)
+        # Gerçek Değerler
         y_true = (self.y_val >= 1.5).astype(int)
-        # GÜNCELLENDİ: Confusion Matrix için eşik
-        y_pred = (threshold_preds >= 0.85).astype(int)
         
-        TN = np.sum((y_true == 0) & (y_pred == 0))
-        FP = np.sum((y_true == 0) & (y_pred == 1))
-        FN = np.sum((y_true == 1) & (y_pred == 0))
-        TP = np.sum((y_true == 1) & (y_pred == 1))
+        # NORMAL MOD (0.85) Analizi
+        y_pred_normal = (threshold_preds >= THRESHOLD_NORMAL).astype(int)
+        acc_normal = accuracy_score(y_true, y_pred_normal) * 100
         
-        # 1. BALANCED ACCURACY
-        below_acc = (TN / (TN + FP) * 100) if (TN + FP) > 0 else 0
-        above_acc = (TP / (TP + FN) * 100) if (TP + FN) > 0 else 0
-        balanced_acc = (below_acc + above_acc) / 2
+        # ROLLING MOD (0.95) Analizi
+        y_pred_rolling = (threshold_preds >= THRESHOLD_ROLLING).astype(int)
+        acc_rolling = accuracy_score(y_true, y_pred_rolling) * 100
         
-        # 2. F1 SCORE
-        precision = (TP / (TP + FP)) if (TP + FP) > 0 else 0
-        recall = (TP / (TP + FN)) if (TP + FN) > 0 else 0
-        f1_score = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
+        # ROI Hesapla (Normal Mod üzerinden)
+        roi, win_rate, wins, total_bets = self.simulate_bankroll(threshold_preds, self.y_val, THRESHOLD_NORMAL)
         
-        # 3. MONEY LOSS RISK
-        money_loss_risk = (FP / (TN + FP)) if (TN + FP) > 0 else 1.0
-        
-        # 4. THRESHOLD ACCURACY (yanıltıcı metrik!)
-        thr_acc = accuracy_score(y_true, y_pred) * 100
-        
-        # 5. ROI
-        roi, win_rate, wins, total_bets = self.simulate_bankroll(threshold_preds, self.y_val)
-        
-        # Detaylı çıktı - YENİ BALANCED METRİKLER
+        # Detaylı çıktı
         print(f"\n{'='*80}")
-        print(f"📊 EPOCH {epoch+1} - BALANCED METRİKLER")
-        print(f"⚖️  Balanced Acc:       {balanced_acc:6.2f}% (Her sınıf eşit önemli)")
-        print(f"🔴 1.5 Altı Doğruluk:  {below_acc:6.2f}%  (TN: {TN}, FP: {FP})")
-        print(f"🟢 1.5 Üstü Doğruluk:  {above_acc:6.2f}%  (TP: {TP}, FN: {FN})")
-        print(f"🎯 F1 Score:           {f1_score*100:6.2f}% (Prec: {precision*100:.1f}% | Rec: {recall*100:.1f}%)")
-        print(f"💰 Money Loss Risk:    {money_loss_risk*100:6.2f}% (Target: <25%)")
-        print(f"⚠️  Threshold Acc:      {thr_acc:6.2f}% (YANILTICI - dengesiz veri!)")
-        print(f"💵 ROI:                {roi:+7.2f}%")
-        print(f"📈 Win Rate:           {win_rate:6.2f}%  ({wins}/{total_bets})")
-        print(f"📉 Loss:               val_loss={logs.get('val_loss', 0):.4f}")
+        print(f"📊 EPOCH {epoch+1} - PERFORMANS RAPORU")
+        print(f"⚖️  Normal Mod ({THRESHOLD_NORMAL}):   {acc_normal:6.2f}%")
+        print(f"🚀 Rolling Mod ({THRESHOLD_ROLLING}):   {acc_rolling:6.2f}%")
+        print(f"💵 ROI (Normal):         {roi:+7.2f}%")
+        print(f"📈 Win Rate (Normal):    {win_rate:6.2f}%  ({wins}/{total_bets})")
+        print(f"📉 Loss:                 val_loss={logs.get('val_loss', 0):.4f}")
         print(f"{'='*80}\n")
 
 # =============================================================================
-# WEIGHTED MODEL CHECKPOINT CALLBACK
+# WEIGHTED MODEL CHECKPOINT CALLBACK (NORMAL MOD ODAKLI)
 # =============================================================================
 class WeightedModelCheckpoint(callbacks.Callback):
     """
-    Weighted model selection based on PROFIT-FOCUSED metrics:
-    - 50% ROI (para kazandırma)
-    - 30% Precision (1.5 üstü dediğinde ne kadar haklı)
-    - 20% Win Rate (kazanan tahmin oranı)
-    
-    ESKI FORMÜL SORUNLARI:
-    - Balanced Accuracy yanıltıcıydı (model hep "1.5 üstü" dediğinde yüksek çıkıyordu)
-    - F1 Score dengesiz veride işe yaramıyordu
-    - ROI sadece %10 ağırlıktaydı (çok az!)
-    
-    YENİ YAKLAŞIM:
-    - Para kazandırmıyorsa model işe yaramaz → ROI %50 ağırlık
-    - Model "1.5 üstü" dediğinde haklı olmalı → Precision %30
-    - Kazanan tahmin oranı yüksek olmalı → Win Rate %20
+    Modeli kaydederken Normal Mod (0.85) performansına odaklanır.
     """
     def __init__(self, filepath, X_val, y_val):
         super().__init__()
         self.filepath = filepath
         self.X_val = X_val
         self.y_val = y_val
-        self.best_score = -float('inf')  # Negatif ROI'lere izin ver
+        self.best_score = -float('inf')
     
     def normalize_roi(self, roi):
-        """
-        ROI normalizasyonu - PARA KAZANDIRMAYI ÖDÜLLENDİR
-        Negatif ROI: 0-40 puan arası
-        Pozitif ROI: 50-100 puan arası (daha ödüllendirici)
-        """
         if roi < 0:
-            # Negatif ROI → 0-40 arası (çok ceza!)
-            return max(0, 40 + roi * 0.4)  # -100% ROI = 0 puan, 0% ROI = 40 puan
+            return max(0, 40 + roi * 0.4) 
         else:
-            # Pozitif ROI → 50-100 arası (ödüllendirici!)
-            return min(100, 50 + roi * 0.5)  # 0% ROI = 50 puan, 100% ROI = 100 puan
+            return min(100, 50 + roi * 0.5)
     
-    def simulate_bankroll(self, predictions, actuals):
-        """
-        1.5x eşikte sanal kasa simülasyonu
-        Returns: roi, win_rate, precision, total_bets, wins
-        """
+    def on_epoch_end(self, epoch, logs=None):
+        preds = self.model.predict(self.X_val, verbose=0)
+        threshold_preds = preds[2].flatten()
+        
+        y_true = (self.y_val >= 1.5).astype(int)
+        
+        # Normal Mod (0.85) Metrikleri
+        y_pred = (threshold_preds >= THRESHOLD_NORMAL).astype(int)
+        
+        TN = np.sum((y_true == 0) & (y_pred == 0))
+        FP = np.sum((y_true == 0) & (y_pred == 1))
+        TP = np.sum((y_true == 1) & (y_pred == 1))
+        
+        precision = (TP / (TP + FP) * 100) if (TP + FP) > 0 else 0
+        
+        # ROI Hesapla
         initial = 10000
         wallet = initial
         total_bets = 0
         wins = 0
         
-        for pred, actual in zip(predictions, actuals):
-            if pred >= 0.85:  # GÜNCELLENDİ: En iyi modeli seçerken %85'e bakacak
+        for pred, actual in zip(threshold_preds, self.y_val):
+            if pred >= THRESHOLD_NORMAL:
                 total_bets += 1
-                wallet -= 10  # Bahis yapıldı
+                wallet -= 10
                 if actual >= 1.5:
-                    wallet += 15  # Kazanç (1.5x)
+                    wallet += 15
                     wins += 1
         
-        # Metrics hesapla
         roi = ((wallet - initial) / initial) * 100 if total_bets > 0 else 0
         win_rate = (wins / total_bets) * 100 if total_bets > 0 else 0
-        precision = (wins / total_bets) * 100 if total_bets > 0 else 0  # Win rate = precision bu durumda
         
-        return roi, win_rate, precision, total_bets, wins
-    
-    def on_epoch_end(self, epoch, logs=None):
-        # Tahminler yap
-        preds = self.model.predict(self.X_val, verbose=0)
-        threshold_preds = preds[2].flatten()
-        
-        # Confusion Matrix hesapla (KONSERVATIF THRESHOLD)
-        y_true = (self.y_val >= 1.5).astype(int)
-        # GÜNCELLENDİ: Başarı ölçümü için eşik
-        y_pred = (threshold_preds >= 0.85).astype(int)
-        
-        TN = np.sum((y_true == 0) & (y_pred == 0))  # True Negative (1.5 altı doğru)
-        FP = np.sum((y_true == 0) & (y_pred == 1))  # False Positive (1.5 altı → üstü tahmin = PARA KAYBI)
-        FN = np.sum((y_true == 1) & (y_pred == 0))  # False Negative (1.5 üstü → altı tahmin = fırsat kaçırma)
-        TP = np.sum((y_true == 1) & (y_pred == 1))  # True Positive (1.5 üstü # PRECISION (Model "1.5 üstü" dediğinde ne kadar haklı?)
-        precision = (TP / (TP + FP) * 100) if (TP + FP) > 0 else 0
-        
-        # Sanal kasa simülasyonu
-        roi, win_rate, _, total_bets, wins = self.simulate_bankroll(threshold_preds, self.y_val)
-        
-        # ROI normalizasyonu
         normalized_roi = self.normalize_roi(roi)
         
-        # YENİ WEIGHTED SCORE - PARA KAZANDIRMAYA ODAKLI!
-        # 50% ROI + 30% Precision + 20% Win Rate
+        # Skorlama (Normal Mod Performansı)
         weighted_score = (
-            0.50 * normalized_roi +         # Para kazandırma (EN ÖNEMLİ!)
-            0.30 * precision +               # "1.5 üstü" dediğinde ne kadar haklı
-            0.20 * win_rate                  # Kazanan tahmin oranı
+            0.50 * normalized_roi +
+            0.30 * precision +
+            0.20 * win_rate
         )
         
-        # En iyi modeli kaydet
         if weighted_score > self.best_score:
             self.best_score = weighted_score
             self.model.save(self.filepath)
-            print(f"\n✨ YENİ EN İYİ MODEL! Weighted Score: {weighted_score:.2f}")
-            print(f"   💵 ROI: {roi:+.2f}% (Normalized: {normalized_roi:.1f}) [50% ağırlık]")
-            print(f"   🎯 Precision: {precision:.1f}% ({TP}/{TP+FP} doğru tahmin) [30% ağırlık]")
-            print(f"   📈 Win Rate: {win_rate:.1f}% ({wins}/{total_bets} kazanan) [20% ağırlık]")
-            print(f"   📊 Confusion: TN={TN}, FP={FP}, FN={FN}, TP={TP}")
+            print(f"\n✨ YENİ EN İYİ MODEL! (Score: {weighted_score:.2f})")
+            print(f"   ROI: {roi:.2f}% | Precision: {precision:.2f}%")
 
 # =============================================================================
 # HER PENCERE İÇİN MODEL EĞİTİMİ
@@ -648,18 +530,6 @@ class WeightedModelCheckpoint(callbacks.Callback):
 print("\n" + "="*80)
 print("🔥 MULTI-SCALE MODEL EĞİTİMİ BAŞLIYOR")
 print("="*80)
-print(f"Window boyutları: {window_sizes}")
-print(f"Her window için ayrı model eğitilecek")
-print(f"💰 Model Seçim Kriteri: PROFIT-FOCUSED Weighted Score (YENİ!)")
-print(f"   - 50% ROI (para kazandırma - EN ÖNEMLİ!)")
-print(f"   - 30% Precision (1.5 üstü dediğinde ne kadar haklı)")
-print(f"   - 20% Win Rate (kazanan tahmin oranı)")
-print(f"")
-print(f"⚠️  ESKİ METRİKLER ARTIK KULLANILMIYOR:")
-print(f"   - Balanced Accuracy (yanıltıcıydı - model hep '1.5 üstü' dediğinde yüksek çıkıyordu)")
-print(f"   - F1 Score (dengesiz veride işe yaramıyordu)")
-print(f"   - Threshold Accuracy (en yanıltıcı metrik)")
-print("="*80 + "\n")
 
 trained_models = {}
 training_times = {}
@@ -680,42 +550,20 @@ for window_size in window_sizes:
     model = build_model_for_window(window_size, X_f_tr.shape[1])
     print(f"✅ Model oluşturuldu: {model.count_params():,} parametre")
     
-    # Class weights - DENGELI SISTEM (LAZY LEARNING DÜZELTMESİ)
-    # w0: Para kaybı cezası (1.5 altını yanlış tahmin etme)
-    # w1: Fırsat kaçırma cezası (1.5 üstünü tahmin edememe)
-    # DÜZELTME: Dengeli ağırlıklar - modeli "1.5 üstü" demeye teşvik et
-    w0, w1 = 1.5, 1.0  # DENGELI - Para kaybına sadece 1.5x ceza (ESKİ: 2.5x)
-    
-    print(f"📊 CLASS WEIGHTS (Dengeli - Lazy Learning Önleme):")
-    print(f"  1.5 altı (para kaybı cezası): {w0:.1f}x ✅ DENGELİ!")
-    print(f"  1.5 üstü (fırsat kaçırma cezası): {w1:.1f}x")
-    print(f"  Oran (w0/w1): {w0/w1:.1f}x (ESKİ: 1.67x → 1.5x)")
-    print(f"  🔧 Artık model '1.5 üstü' demeye korkmayacak!")
+    # Class weights - DENGELI
+    w0, w1 = 1.5, 1.0
     
     # Adaptive Learning Rate Scheduler oluştur
     adaptive_scheduler = AdaptiveLearningRateScheduler(
         initial_lr=0.001,
         max_lr=0.01,
         min_lr=0.0001,
-        patience=5,
-        factor=0.5,
-        improvement_threshold=0.01,
-        reduction_factor=0.5,
-        warmup_epochs=3,
-        stability_window=10,
-        min_lr_after_plateau=0.0001
+        patience=5
     )
-    
-    print(f"🔧 ADAPTIVE LEARNING RATE SCHEDULER:")
-    print(f"  Initial LR: {adaptive_scheduler.initial_lr}")
-    print(f"  Max LR: {adaptive_scheduler.max_lr}")
-    print(f"  Min LR: {adaptive_scheduler.min_lr}")
-    print(f"  Patience: {adaptive_scheduler.patience}")
-    print(f"  Stability Window: {adaptive_scheduler.stability_window}")
     
     # Compile
     model.compile(
-        optimizer=Adam(learning_rate=0.001),  # Sabit başlangıç LR
+        optimizer=Adam(learning_rate=0.001),
         loss={
             'regression': percentage_aware_regression_loss,
             'classification': 'categorical_crossentropy',
@@ -743,87 +591,35 @@ for window_size in window_sizes:
         y_val=y_reg_val
     )
     
-    # Weighted model checkpoint - 50% Below 15, 40% Above 15, 10% ROI
+    # Weighted model checkpoint
     weighted_checkpoint = WeightedModelCheckpoint(
         filepath=checkpoint_path,
         X_val=[X_f_val, X_seq_val],
         y_val=y_reg_val
     )
     
-    # Custom Learning Rate Callback - Adaptive scheduler'ı entegre eder
+    # Custom Learning Rate Callback
     class AdaptiveLRCallback(callbacks.Callback):
         def __init__(self, scheduler):
             super().__init__()
             self.scheduler = scheduler
-            self.epoch = 0
             
         def on_epoch_end(self, epoch, logs=None):
-            self.epoch = epoch
-            try:
-                # Learning rate'i hesapla - logs dict olabilir veya None
-                if logs is None:
-                    logs = {}
-
-                # Learning rate'i güncelle
-                current_lr = self.scheduler(epoch, logs)
-
-                # Model optimizer'ın learning rate'ini güncelle - DÜZELTME: String hatası önleme
-                try:
-                    # TensorFlow 2.x için learning rate güncelleme
-                    if hasattr(self.model.optimizer, 'learning_rate'):
-                        # Learning rate'i doğrudan güncelle
-                        self.model.optimizer.learning_rate = current_lr
-                        print(f"🔄 Epoch {epoch+1}: LR -> {current_lr:.6f}")
-                    else:
-                        # Alternatif yöntem: optimizer'ı yeniden oluştur
-                        from tensorflow.keras.optimizers import Adam
-                        new_optimizer = Adam(learning_rate=current_lr)
-                        self.model.compile(optimizer=new_optimizer, loss=self.model.loss)
-                        print(f"🔄 Epoch {epoch+1}: Yeni optimizer ile LR -> {current_lr:.6f}")
-
-                except Exception as e:
-                    print(f"⚠️ LR Scheduler hatası: {e}")
-                    print("📊 Sabit learning rate ile devam ediliyor...")
-
-                # Scheduler bilgilerini log'la (her 5 epoch'ta bir)
-                if epoch % 5 == 0:
-                    scheduler_info = self.scheduler.get_scheduler_info()
-                    print(f"📊 LR Scheduler Info: {scheduler_info['type']}")
-                    print(f"   Current LR: {current_lr:.6f}")
-                    print(f"   Best Score: {scheduler_info.get('best_score', 'N/A')}")
-                    print(f"   Patience Counter: {scheduler_info.get('patience_counter', 'N/A')}")
-
-            except Exception as e:
-                print(f"⚠️ Adaptive LR Callback hatası: {e}")
-                print("📊 Callback dışında devam ediliyor...")
+            if logs is None: logs = {}
+            current_lr = self.scheduler(epoch, logs)
+            K.set_value(self.model.optimizer.learning_rate, current_lr)
     
-    # Adaptive LR Callback oluştur
     adaptive_lr_callback = AdaptiveLRCallback(adaptive_scheduler)
     
     cbs = [
-        detailed_metrics,  # Her epoch detaylı metrikler
-        weighted_checkpoint,  # Weighted model selection
-        adaptive_lr_callback,  # Adaptive learning rate management
-        callbacks.EarlyStopping(
-            monitor='val_loss',
-            patience=20,
-            min_delta=0.001,
-            mode='min',
-            restore_best_weights=False,  # Weighted checkpoint handles this
-            verbose=1
-        ),
-        callbacks.ReduceLROnPlateau(
-            monitor='val_loss',
-            factor=0.5,
-            patience=8,
-            min_lr=1e-7,
-            verbose=1
-        )
+        detailed_metrics,
+        weighted_checkpoint,
+        adaptive_lr_callback,
+        callbacks.EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=False, verbose=1),
+        callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-7, verbose=1)
     ]
     
     # Eğitim
-    print(f"\n🔥 Window {window_size} eğitimi başlıyor...")
-    
     hist = model.fit(
         [X_f_tr, X_seq_tr],
         {
@@ -849,100 +645,36 @@ for window_size in window_sizes:
     window_time = time.time() - window_start_time
     training_times[window_size] = window_time
     
-    print(f"\n✅ Window {window_size} eğitimi tamamlandı!")
-    print(f"⏱️  Süre: {window_time/60:.1f} dakika ({window_time/3600:.2f} saat)")
-    
     # En iyi modeli yükle
     model.load_weights(checkpoint_path)
     
     # Test performansı
     X_f_test, X_seq_test, y_reg_test, y_cls_test, y_thr_test = data_dict['test']
-    
     pred = model.predict([X_f_test, X_seq_test], verbose=0)
-    p_reg = pred[0].flatten()
     p_thr = pred[2].flatten()
     
-    # Metrics
-    mae = mean_absolute_error(y_reg_test, p_reg)
+    # 2 Modlu Analiz
+    y_true = (y_reg_test >= 1.5).astype(int)
+    y_pred_normal = (p_thr >= THRESHOLD_NORMAL).astype(int)
+    y_pred_rolling = (p_thr >= THRESHOLD_ROLLING).astype(int)
     
-    thr_true = (y_reg_test >= 1.5).astype(int)
-    thr_pred = (p_thr >= 0.85).astype(int) 
-    thr_acc = accuracy_score(thr_true, thr_pred)
+    acc_normal = accuracy_score(y_true, y_pred_normal)
+    acc_rolling = accuracy_score(y_true, y_pred_rolling)
     
-    below_mask = thr_true == 0
-    above_mask = thr_true == 1
-    below_acc = accuracy_score(thr_true[below_mask], thr_pred[below_mask]) if below_mask.sum() > 0 else 0
-    above_acc = accuracy_score(thr_true[above_mask], thr_pred[above_mask]) if above_mask.sum() > 0 else 0
+    print(f"\n📊 WINDOW {window_size} SONUÇLARI:")
+    print(f"  Normal Mod Acc: {acc_normal*100:.2f}%")
+    print(f"  Rolling Mod Acc: {acc_rolling*100:.2f}%")
     
-    print(f"\n📊 WINDOW {window_size} TEST PERFORMANSI:")
-    print(f"  MAE: {mae:.4f}")
-    print(f"  Threshold Accuracy: {thr_acc*100:.2f}%")
-    print(f"  🔴 1.5 Altı: {below_acc*100:.2f}%")
-    print(f"  🟢 1.5 Üstü: {above_acc*100:.2f}%")
-    
-    # Modeli kaydet
     trained_models[window_size] = {
         'model': model,
         'scaler': data_dict['scaler'],
-        'mae': float(mae),
-        'threshold_acc': float(thr_acc),
-        'below_acc': float(below_acc),
-        'above_acc': float(above_acc),
+        'acc_normal': float(acc_normal),
+        'acc_rolling': float(acc_rolling),
         'training_time': window_time
     }
-    
-    print("="*80)
 
 total_training_time = sum(training_times.values())
-print(f"\n✅ TÜM MODELLER EĞİTİLDİ!")
-print(f"⏱️  Toplam Süre: {total_training_time/60:.1f} dakika ({total_training_time/3600:.2f} saat)")
-
-# =============================================================================
-# MODEL SELECTION SİSTEMİ ENTEGRASYONU
-# =============================================================================
-print("\n" + "="*80)
-print("🎯 MODEL SELECTION SİSTEMİ ENTEGRASYONU")
-print("="*80)
-
-# Comprehensive Model Selection entegrasyonu
-try:
-    from utils.model_selection import get_model_selector
-    model_selector = get_model_selector()
-    
-    # Tüm modelleri değerlendir
-    all_models_for_selection = {}
-    for window_size in window_sizes:
-        model_dict = trained_models[window_size]
-        model = model_dict['model']
-        
-        # Bu window için test data
-        X_f_test_w, X_seq_test_w, _, _, _ = all_data_by_window[window_size]['test']
-        
-        all_models_for_selection[f"window_{window_size}"] = model
-    
-    print(f"📊 {len(all_models_for_selection)} model comprehensive evaluation'a gönderiliyor...")
-    
-    # Model seçimi yap
-    selection_result = model_selector.select_best_model(
-        all_models_for_selection, 
-        [X_f_val, X_seq_val],  # Validation data (tüm window'lar aynı)
-        y_reg_val
-    )
-    
-    if selection_result['selected_model']:
-        print(f"✅ En iyi model seçildi: {selection_result['selected_model']}")
-        print(f"   Skor: {selection_result['selected_score']:.3f}")
-        print(f"   Grade: {selection_result['selected_grade']}")
-        print(f"   Win Rate: {selection_result['selected_metrics']['win_rate']:.3f}")
-        print(f"   Stability: {selection_result['selected_metrics']['stability']:.3f}")
-        print(f"   ROI: {selection_result['selected_metrics']['roi']:.3f}")
-    else:
-        print(f"⚠️ Hiçbir model minimum eşikleri karşılamadı!")
-        print(f"   Sebep: {selection_result.get('reason', 'Bilinmeyen sebep')}")
-    
-except ImportError as e:
-    print(f"⚠️ Model selection modülü yüklenemedi: {e}")
-    print("   Weighted checkpoint kullanılmaya devam ediliyor...")
+print(f"\n✅ TÜM MODELLER EĞİTİLDİ! (Toplam: {total_training_time/60:.1f} dk)")
 
 # =============================================================================
 # ENSEMBLE PERFORMANS DEĞERLENDİRMESİ
@@ -951,7 +683,6 @@ print("\n" + "="*80)
 print("🎯 ENSEMBLE PERFORMANS DEĞERLENDİRMESİ")
 print("="*80)
 
-# Her modelden tahminleri al
 X_f_test_500, X_seq_test_500, y_reg_test, _, y_thr_test = all_data_by_window[500]['test']
 
 ensemble_predictions_reg = []
@@ -960,299 +691,131 @@ ensemble_predictions_thr = []
 for window_size in window_sizes:
     model_dict = trained_models[window_size]
     model = model_dict['model']
-    
-    # Bu window için test data
     X_f_test_w, X_seq_test_w, _, _, _ = all_data_by_window[window_size]['test']
-    
-    # Tahmin
     pred = model.predict([X_f_test_w, X_seq_test_w], verbose=0)
-    p_reg = pred[0].flatten()
-    p_thr = pred[2].flatten()
-    
-    ensemble_predictions_reg.append(p_reg)
-    ensemble_predictions_thr.append(p_thr)
+    ensemble_predictions_reg.append(pred[0].flatten())
+    ensemble_predictions_thr.append(pred[2].flatten())
 
-# Weighted Ensemble: Dengeli dağılım (konservatif yaklaşım)
-window_weights = {
-    20: 0.10,
-    50: 0.15,
-    100: 0.30,
-    250: 0.25,
-    500: 0.20
-}
+# Ağırlıklı Ortalama
+weights = [0.10, 0.15, 0.30, 0.25, 0.20] # 20, 50, 100, 250, 500
+ensemble_reg = np.average(ensemble_predictions_reg, axis=0, weights=weights)
+ensemble_thr = np.average(ensemble_predictions_thr, axis=0, weights=weights)
 
-print(f"\n🎯 WEIGHTED ENSEMBLE STRATEJISI:")
-for ws, weight in window_weights.items():
-    print(f"  Window {ws}: {weight*100:.0f}% ağırlık")
+# Ensemble Metrics
+y_true = (y_reg_test >= 1.5).astype(int)
+y_pred_normal = (ensemble_thr >= THRESHOLD_NORMAL).astype(int)
+y_pred_rolling = (ensemble_thr >= THRESHOLD_ROLLING).astype(int)
 
-# Weighted average
-weights_list = [window_weights[ws] for ws in window_sizes]
-ensemble_reg = np.average(ensemble_predictions_reg, axis=0, weights=weights_list)
-ensemble_thr = np.average(ensemble_predictions_thr, axis=0, weights=weights_list)
-
-# Metrics
-mae_ensemble = mean_absolute_error(y_reg_test, ensemble_reg)
-rmse_ensemble = np.sqrt(mean_squared_error(y_reg_test, ensemble_reg))
-
-thr_true = (y_reg_test >= 1.5).astype(int)
-thr_pred = (p_thr >= 0.85).astype(int)
-thr_acc_ensemble = accuracy_score(thr_true, thr_pred_ensemble)
-
-below_mask = thr_true == 0
-above_mask = thr_true == 1
-below_acc_ensemble = accuracy_score(thr_true[below_mask], thr_pred_ensemble[below_mask]) if below_mask.sum() > 0 else 0
-above_acc_ensemble = accuracy_score(thr_true[above_mask], thr_pred_ensemble[above_mask]) if above_mask.sum() > 0 else 0
+acc_ensemble_normal = accuracy_score(y_true, y_pred_normal)
+acc_ensemble_rolling = accuracy_score(y_true, y_pred_rolling)
 
 print(f"\n📊 ENSEMBLE PERFORMANSI:")
-print(f"  MAE: {mae_ensemble:.4f}")
-print(f"  RMSE: {rmse_ensemble:.4f}")
-print(f"  Threshold Accuracy: {thr_acc_ensemble*100:.2f}%")
-print(f"  🔴 1.5 Altı: {below_acc_ensemble*100:.2f}%")
-print(f"  🟢 1.5 Üstü: {above_acc_ensemble*100:.2f}%")
-
-# Confusion matrix
-cm = confusion_matrix(thr_true, thr_pred_ensemble)
-print(f"\n📋 CONFUSION MATRIX (ENSEMBLE):")
-print(f"                Tahmin")
-print(f"Gerçek   1.5 Altı | 1.5 Üstü")
-print(f"1.5 Altı {cm[0,0]:6d}   | {cm[0,1]:6d}  ⚠️ PARA KAYBI")
-print(f"1.5 Üstü {cm[1,0]:6d}   | {cm[1,1]:6d}")
-
-if cm[0,0] + cm[0,1] > 0:
-    fpr = cm[0,1] / (cm[0,0] + cm[0,1])
-    print(f"\n💰 PARA KAYBI RİSKİ: {fpr*100:.1f}%", end="")
-    if fpr < 0.20:
-        print(" ✅ HEDEF AŞILDI!")
-    else:
-        print(f" (Hedef: <20%)")
+print(f"  Normal Mod ({THRESHOLD_NORMAL}): {acc_ensemble_normal*100:.2f}%")
+print(f"  Rolling Mod ({THRESHOLD_ROLLING}): {acc_ensemble_rolling*100:.2f}%")
 
 # =============================================================================
-# MODEL KARŞILAŞTIRMASI
-# =============================================================================
-print("\n" + "="*80)
-print("📊 WINDOW BAZINDA PERFORMANS KARŞILAŞTIRMASI")
-print("="*80)
-
-print(f"\n{'Window':<10} {'MAE':<10} {'Thr Acc':<12} {'Below':<12} {'Above':<12} {'Süre':<12}")
-print("-"*70)
-for window_size in window_sizes:
-    model_dict = trained_models[window_size]
-    print(
-        f"{window_size:<10} "
-        f"{model_dict['mae']:<10.4f} "
-        f"{model_dict['threshold_acc']*100:<12.2f}% "
-        f"{model_dict['below_acc']*100:<12.2f}% "
-        f"{model_dict['above_acc']*100:<12.2f}% "
-        f"{model_dict['training_time']/60:<12.1f} dk"
-    )
-print("-"*70)
-print(
-    f"{'ENSEMBLE':<10} "
-    f"{mae_ensemble:<10.4f} "
-    f"{thr_acc_ensemble*100:<12.2f}% "
-    f"{below_acc_ensemble*100:<12.2f}% "
-    f"{above_acc_ensemble*100:<12.2f}%"
-)
-print("="*80)
-
-# =============================================================================
-# SANAL KASA SİMÜLASYONU (ENSEMBLE)
+# 2 MODLU SANAL KASA SİMÜLASYONU (ENSEMBLE)
 # =============================================================================
 print("\n" + "="*80)
 print("💰 SANAL KASA SİMÜLASYONU (ENSEMBLE)")
 print("="*80)
 
-test_count = len(y_reg_test)
-initial_bankroll = test_count * 10
+initial_bankroll = len(y_reg_test) * 10
 bet_amount = 10.0
 
-print(f"📊 Test Veri Sayısı: {test_count:,}")
-print(f"💰 Başlangıç Kasası: {initial_bankroll:,.2f} TL")
-print(f"💵 Bahis Tutarı: {bet_amount:.2f} TL\n")
-
-# KASA 1: 1.5x EŞİK
+# KASA 1: NORMAL MOD (0.85)
 wallet1 = initial_bankroll
-total_bets1 = 0
-total_wins1 = 0
+bets1 = 0
+wins1 = 0
 
 for i in range(len(y_reg_test)):
-    model_pred = thr_pred_ensemble[i]
-    actual_value = y_reg_test[i]
-    
-    if model_pred == 1:
+    if ensemble_thr[i] >= THRESHOLD_NORMAL:
         wallet1 -= bet_amount
-        total_bets1 += 1
-        
-        if actual_value >= 1.5:
-            wallet1 += 1.5 * bet_amount
-            total_wins1 += 1
+        bets1 += 1
+        # Dinamik Çıkış
+        exit_point = min(max(1.5, ensemble_reg[i] * 0.8), 2.5)
+        if y_reg_test[i] >= exit_point:
+            wallet1 += exit_point * bet_amount
+            wins1 += 1
 
-profit1 = wallet1 - initial_bankroll
-roi1 = (profit1 / initial_bankroll) * 100
-win_rate1 = (total_wins1 / total_bets1 * 100) if total_bets1 > 0 else 0
+roi1 = (wallet1 - initial_bankroll) / initial_bankroll * 100
+win_rate1 = (wins1 / bets1 * 100) if bets1 > 0 else 0
 
-print(f"💰 KASA 1 (1.5x EŞİK):")
-print(f"  Toplam Oyun: {total_bets1:,}")
-print(f"  Kazanan: {total_wins1:,} ({win_rate1:.1f}%)")
-print(f"  Final Kasa: {wallet1:,.2f} TL")
-print(f"  Net Kar/Zarar: {profit1:+,.2f} TL")
-print(f"  ROI: {roi1:+.2f}%")
+print(f"💰 KASA 1 (NORMAL - {THRESHOLD_NORMAL}):")
+print(f"  ROI: {roi1:+.2f}% | Win Rate: {win_rate1:.1f}% | Bets: {bets1}")
 
-# KASA 2: %80 ÇIKIŞ
+# KASA 2: ROLLING MOD (0.95)
 wallet2 = initial_bankroll
-total_bets2 = 0
-total_wins2 = 0
+bets2 = 0
+wins2 = 0
 
 for i in range(len(y_reg_test)):
-    model_pred_value = ensemble_reg[i]
-    actual_value = y_reg_test[i]
-    
-    if model_pred_value >= 2.0:
+    if ensemble_thr[i] >= THRESHOLD_ROLLING:
         wallet2 -= bet_amount
-        total_bets2 += 1
-        
-        exit_point = model_pred_value * 0.80
-        if actual_value >= exit_point:
-            wallet2 += exit_point * bet_amount
-            total_wins2 += 1
+        bets2 += 1
+        # Sabit Güvenli Çıkış
+        if y_reg_test[i] >= 1.5:
+            wallet2 += 1.5 * bet_amount
+            wins2 += 1
 
-profit2 = wallet2 - initial_bankroll
-roi2 = (profit2 / initial_bankroll) * 100
-win_rate2 = (total_wins2 / total_bets2 * 100) if total_bets2 > 0 else 0
+roi2 = (wallet2 - initial_bankroll) / initial_bankroll * 100
+win_rate2 = (wins2 / bets2 * 100) if bets2 > 0 else 0
 
-print(f"\n💰 KASA 2 (%80 ÇIKIŞ):")
-print(f"  Toplam Oyun: {total_bets2:,}")
-print(f"  Kazanan: {total_wins2:,} ({win_rate2:.1f}%)")
-print(f"  Final Kasa: {wallet2:,.2f} TL")
-print(f"  Net Kar/Zarar: {profit2:+,.2f} TL")
-print(f"  ROI: {roi2:+.2f}%")
-
-print("\n" + "="*80)
+print(f"💰 KASA 2 (ROLLING - {THRESHOLD_ROLLING}):")
+print(f"  ROI: {roi2:+.2f}% | Win Rate: {win_rate2:.1f}% | Bets: {bets2}")
 
 # =============================================================================
-# MODEL KAYDETME
+# MODEL KAYDETME & ZIP
 # =============================================================================
 print("\n" + "="*80)
 print("💾 MODELLER KAYDEDİLİYOR")
 print("="*80)
 
-# Error handling ile dizin oluşturma
 try:
     models_dir = os.path.join(PROJECT_ROOT, 'models/progressive_multiscale')
     os.makedirs(models_dir, exist_ok=True)
-    print(f"✅ Models dizini oluşturuldu: {models_dir}")
     
-    # Her window için model kaydet
     for window_size in window_sizes:
         model_dict = trained_models[window_size]
-        
-        # Model
-        model_path = os.path.join(PROJECT_ROOT, f'models/progressive_multiscale/model_window_{window_size}.h5')
+        model_path = os.path.join(models_dir, f'model_window_{window_size}.h5')
         model_dict['model'].save(model_path)
-        
-        # Scaler
-        scaler_path = os.path.join(PROJECT_ROOT, f'models/progressive_multiscale/scaler_window_{window_size}.pkl')
+        scaler_path = os.path.join(models_dir, f'scaler_window_{window_size}.pkl')
         joblib.dump(model_dict['scaler'], scaler_path)
         
-        print(f"✅ Window {window_size} kaydedildi")
-    
-    # Model bilgileri
+    # Info JSON
     info = {
         'model': 'Progressive_NN_MultiScale_Ensemble',
-        'version': '3.0',
-        'date': datetime.now().strftime('%Y-%m-%d'),
-        'window_sizes': window_sizes,
-        'total_training_time_hours': round(total_training_time/3600, 2),
-        'ensemble_metrics': {
-            'mae': float(mae_ensemble),
-            'rmse': float(rmse_ensemble),
-            'threshold_accuracy': float(thr_acc_ensemble),
-            'below_15_accuracy': float(below_acc_ensemble),
-            'above_15_accuracy': float(above_acc_ensemble),
-            'money_loss_risk': float(fpr) if cm[0,0] + cm[0,1] > 0 else 0.0
+        'version': '3.1',
+        'thresholds': {'normal': THRESHOLD_NORMAL, 'rolling': THRESHOLD_ROLLING},
+        'metrics': {
+            'normal_acc': float(acc_ensemble_normal),
+            'rolling_acc': float(acc_ensemble_rolling)
         },
-        'individual_models': {
-            str(ws): {
-                'mae': trained_models[ws]['mae'],
-                'threshold_acc': trained_models[ws]['threshold_acc'],
-                'below_acc': trained_models[ws]['below_acc'],
-                'above_acc': trained_models[ws]['above_acc'],
-                'training_time_minutes': round(trained_models[ws]['training_time']/60, 1)
-            } for ws in window_sizes
-        },
-        'bankroll_performance': {
-            'kasa_1_15x': {
-                'roi': float(roi1),
-                'win_rate': float(win_rate1),
-                'total_bets': int(total_bets1),
-                'profit_loss': float(profit1)
-            },
-            'kasa_2_80percent': {
-                'roi': float(roi2),
-                'win_rate': float(win_rate2),
-                'total_bets': int(total_bets2),
-                'profit_loss': float(profit2)
-            }
+        'simulation': {
+            'normal_roi': float(roi1),
+            'rolling_roi': float(roi2)
         }
     }
-    
-    info_path = os.path.join(PROJECT_ROOT, 'models/progressive_multiscale/model_info.json')
-    with open(info_path, 'w') as f:
+    with open(os.path.join(models_dir, 'model_info.json'), 'w') as f:
         json.dump(info, f, indent=2)
-    
-    print(f"✅ Model bilgileri kaydedildi: {info_path}")
+        
+    print("✅ Modeller kaydedildi.")
     
 except Exception as e:
-    print(f"❌ Model kaydetme hatası: {e}")
-    print("⚠️ Training sonuçları kaydedilemedi ama training tamamlandı.")
-    print("📊 Manuel olarak model kaydetmeyi deneyin...")
+    print(f"❌ Kaydetme hatası: {e}")
 
-# ZIP oluştur
-zip_filename = 'jetx_models_progressive_multiscale_v3.0'
-models_multiscale_dir = os.path.join(PROJECT_ROOT, 'models/progressive_multiscale')
-shutil.make_archive(zip_filename, 'zip', models_multiscale_dir)
+# ZIP
+zip_filename = 'jetx_models_progressive_multiscale_v3.1'
+shutil.make_archive(zip_filename, 'zip', models_dir)
+print(f"✅ ZIP oluşturuldu: {zip_filename}.zip")
 
-print(f"\n✅ ZIP dosyası oluşturuldu: {zip_filename}.zip")
-print(f"📦 Boyut: {os.path.getsize(f'{zip_filename}.zip') / (1024*1024):.2f} MB")
-
-# Google Colab'da indirme
+# Colab Download
 try:
     import google.colab
-    IN_COLAB = True
-except ImportError:
-    IN_COLAB = False
-
-if IN_COLAB:
-    try:
-        from google.colab import files
-        files.download(f'{zip_filename}.zip')
-        print(f"✅ {zip_filename}.zip indiriliyor...")
-    except Exception as e:
-        print(f"⚠️ İndirme hatası: {e}")
-else:
-    print(f"📁 ZIP dosyası mevcut: {zip_filename}.zip")
-
-print("="*80)
-
-# =============================================================================
-# FINAL RAPOR
-# =============================================================================
-print("\n" + "="*80)
-print("🎉 MULTI-SCALE PROGRESSIVE TRAINING TAMAMLANDI!")
-print("="*80)
-print(f"Toplam Süre: {total_training_time/60:.1f} dakika ({total_training_time/3600:.2f} saat)")
-print()
-
-if below_acc_ensemble >= 0.75 and fpr < 0.20:
-    print("✅ ✅ ✅ TÜM HEDEFLER BAŞARIYLA AŞILDI!")
-    print(f"  🔴 1.5 ALTI: {below_acc_ensemble*100:.1f}% (Hedef: 75%+)")
-    print(f"  💰 Para kaybı: {fpr*100:.1f}% (Hedef: <20%)")
-elif below_acc_ensemble >= 0.70:
-    print("✅ ✅ İYİ PERFORMANS!")
-    print(f"  🔴 1.5 ALTI: {below_acc_ensemble*100:.1f}%")
-else:
-    print("⚠️ Hedefin altında")
-    print(f"  🔴 1.5 ALTI: {below_acc_ensemble*100:.1f}% (Hedef: 75%+)")
+    from google.colab import files
+    files.download(f'{zip_filename}.zip')
+except:
+    pass
 
 print(f"\n{'='*80}")
 print(f"Bitiş: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
