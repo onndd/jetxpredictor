@@ -1,6 +1,9 @@
 """
 Backtesting Engine - Model Performans Testi ve Simülasyonu
 Geçmiş veri üzerinde model stratejilerini test eder ve performans analizi yapar.
+
+GÜNCELLEME:
+- Varsayılan test güven eşiği %85'e yükseltildi.
 """
 
 import numpy as np
@@ -97,7 +100,7 @@ class BacktestEngine:
         bet_size: float = 10.0,
         threshold: float = 1.5,
         strategy: BettingStrategy = BettingStrategy.FIXED,
-        min_confidence: float = 0.85,  # GÜNCELLENDİ: Varsayılan 0.5 -> 0.85
+        min_confidence: float = 0.85,  # GÜNCELLENDİ: Varsayılan 0.5 -> 0.85 (Keskin Nişancı)
         risk_per_trade: float = 0.02
     ):
         """
