@@ -1,55 +1,63 @@
 """
 JetX Predictor - Ultra Aggressive Custom Loss Fonksiyonları
 
-Bu modül "Ultra Aggressive" model için özel olarak tasarlanmış çok agresif
-loss fonksiyonlarını içerir. Bu fonksiyonlar para kaybını önlemek için
-maksimum ceza sistemleri kullanır.
+Bu modül "Ultra Aggressive" model için özel olarak tasarlanmış loss fonksiyonlarını içerir.
+Para kaybını önlemek (False Positive cezası) ile öğrenme kapasitesini (Lazy Learning önleme)
+arasındaki dengeyi kurar.
 
-Farkları:
-- 12x false positive ceza (balanced_threshold_killer_loss'ta 5x)
-- gamma=3.0 focal loss (balanced_focal_loss'ta gamma=2.0)
-- Daha agresif parametreler
+GÜNCELLEME:
+- Lazy Learning'i önlemek için aşırı cezalar (12x) optimize edildi (2.5x).
+- Threshold Manager ile uyumlu yapı.
 """
 
 import tensorflow as tf
 from tensorflow.keras import backend as K
-
+from utils.threshold_manager import get_loss_penalty
 
 def ultra_threshold_killer_loss(y_true, y_pred):
     """
-    BALANCED Threshold Killer Loss - DENGELİ CEZA!
+    ULTRA BALANCED Threshold Killer Loss
     
-    Bu loss fonksiyonu para kaybını önlerken lazy learning'i de önler:
-    - 1.5 altıyken üstü tahmin = 2.5x ceza (DÜZELTME: 12x → 2.5x)
-    - 1.5 üstüyken altı tahmin = 1.5x ceza (D��ZELTME: 6x → 1.5x)
-    - Kritik bölge (1.4-1.6) = 3.0x ceza (DÜZELTME: 10x → 3.0x)
+    Para kaybını önlemek için tasarlanmıştır ancak modelin "hiçbir zaman oynama" 
+    tuzağına (Lazy Learning) düşmemesi için cezalar dengelenmiştir.
+    
+    Katsayılar:
+    - False Positive (Para Kaybı): 2.5x (Eski: 12.0x) - Yeterince caydırıcı ama öğrenmeye izin verir.
+    - False Negative (Fırsat): 1.5x (Eski: 6.0x)
+    - Kritik Bölge (1.4-1.6): 3.0x (Eski: 10.0x)
     
     Args:
         y_true: Gerçek değerler
         y_pred: Tahmin edilen değerler
         
     Returns:
-        Ultra weighted MAE loss
+        Weighted MAE loss
     """
     mae = K.abs(y_true - y_pred)
     
-    # 1.5 altıyken üstü tahmin = 2.5x ceza (DÜZELTME: Lazy learning'i önle)
+    # Katsayılar (Optimize Edilmiş Sabitler)
+    # Config'den almak yerine bu modelin karakteristiği olan değerleri koruyoruz
+    FP_PENALTY = 2.5
+    FN_PENALTY = 1.5
+    CRITICAL_PENALTY = 3.0
+    
+    # 1.5 altıyken üstü tahmin = PARA KAYBI
     false_positive = K.cast(
         tf.logical_and(y_true < 1.5, y_pred >= 1.5),
         'float32'
-    ) * 2.5
+    ) * FP_PENALTY
     
-    # 1.5 üstüyken altı tahmin = 1.5x ceza (DÜZELTME: Dengeli)
+    # 1.5 üstüyken altı tahmin = FIRSAT KAÇIRMA
     false_negative = K.cast(
         tf.logical_and(y_true >= 1.5, y_pred < 1.5),
         'float32'
-    ) * 1.5
+    ) * FN_PENALTY
     
-    # Kritik bölge (1.4-1.6) = 3.0x ceza (DÜZELTME: Hassas bölge)
+    # Kritik bölge (1.4-1.6)
     critical_zone = K.cast(
         tf.logical_and(y_true >= 1.4, y_true <= 1.6),
         'float32'
-    ) * 3.0
+    ) * CRITICAL_PENALTY
     
     # Maksimum cezayı uygula
     weight = K.maximum(K.maximum(false_positive, false_negative), critical_zone)
@@ -60,14 +68,10 @@ def ultra_threshold_killer_loss(y_true, y_pred):
 
 def ultra_focal_loss(gamma=2.0, alpha=0.75):
     """
-    BALANCED Focal Loss - gamma=2.0 (DÜZELTME)
+    ULTRA Focal Loss
     
-    Args:
-        gamma: Focal loss parametresi (2.0 - dengeli)
-        alpha: Class balancing parametresi (0.75 - dengeli)
-        
-    Returns:
-        Ultra focal loss fonksiyonu
+    Dengesiz veri setleri için optimize edilmiştir.
+    gamma=2.0 (Daha stabil gradyanlar için 3.0'dan düşürüldü)
     """
     def loss(y_true, y_pred):
         y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
@@ -84,19 +88,13 @@ def ultra_weighted_binary_crossentropy(weight_0, weight_1):
     Args:
         weight_0: 1.5 altı (class 0) için ağırlık
         weight_1: 1.5 üstü (class 1) için ağırlık
-    
-    Returns:
-        Ultra weighted binary crossentropy loss fonksiyonu
     """
     def loss(y_true, y_pred):
-        # Binary crossentropy hesapla
         y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
         bce = -(y_true * K.log(y_pred) + (1 - y_true) * K.log(1 - y_pred))
         
-        # Class weight'leri uygula
         weights = y_true * weight_1 + (1 - y_true) * weight_0
         
-        # Ağırlıklı loss'u döndür
         return K.mean(bce * weights)
     
     return loss
@@ -110,4 +108,6 @@ ULTRA_CUSTOM_OBJECTS = {
     'ultra_threshold_killer_loss': ultra_threshold_killer_loss,
     'ultra_focal_loss': ultra_focal_loss(),
     'ultra_weighted_binary_crossentropy': ultra_weighted_binary_crossentropy,
+    # Geriye dönük uyumluluk (eski isimler)
+    'balanced_threshold_killer_loss': ultra_threshold_killer_loss
 }
