@@ -280,3 +280,28 @@ def compare_strategies(
         print(f"Strategy: {strat.value:<15} -> ROI: {res.roi:>6.2f}% | WR: {res.win_rate:.1%}")
         
     return results
+
+def create_backtest_engine(
+    starting_capital: float = 1000.0,
+    bet_size: float = 10.0,
+    target_multiplier: float = 1.5,
+    strategy: str = 'fixed',
+    mode: str = 'normal',
+    risk_per_trade: float = 0.02
+) -> BacktestEngine:
+    """BacktestEngine factory function - Hata Çözümü İçin Eklendi"""
+    # Strategy string'i Enum'a çevir
+    try:
+        strat_enum = BettingStrategy(strategy.lower())
+    except ValueError:
+        # Geçersiz strateji durumunda varsayılan
+        strat_enum = BettingStrategy.FIXED
+        
+    return BacktestEngine(
+        starting_capital=starting_capital,
+        bet_size=bet_size,
+        target_multiplier=target_multiplier,
+        strategy=strat_enum,
+        mode=mode,
+        risk_per_trade=risk_per_trade
+    )
