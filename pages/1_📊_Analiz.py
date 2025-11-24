@@ -2,6 +2,10 @@
 JetX Predictor - Veri Analiz Sayfası
 
 Bu sayfa veritabanındaki verilerin detaylı analizini gösterir.
+
+GÜNCELLEME:
+- Normal Mod (0.85) ve Rolling Mod (0.95) analizleri eklendi.
+- Threshold Manager entegrasyonu.
 """
 
 import streamlit as st
@@ -17,8 +21,8 @@ import logging
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.database import DatabaseManager
-from utils.config_loader import config
 from category_definitions import CategoryDefinitions
+from utils.threshold_manager import get_threshold_manager
 
 # Logging ayarla
 logging.basicConfig(level=logging.INFO)
@@ -30,14 +34,20 @@ st.set_page_config(
     layout="wide"
 )
 
+# Threshold Manager
+tm = get_threshold_manager()
+THRESHOLD_NORMAL = tm.get_normal_threshold()
+THRESHOLD_ROLLING = tm.get_rolling_threshold()
+
 # Database manager
 if 'db_manager' not in st.session_state:
-    db_path = config.get('database.path', 'data/jetx_data.db')
+    db_path = 'jetx_data.db'
     st.session_state.db_manager = DatabaseManager(db_path)
     logger.info(f"Analiz sayfası - Database manager başlatıldı: {db_path}")
 
 st.title("📊 Veri Analizi")
 st.markdown("Veritabanındaki tüm verilerin detaylı analizi")
+st.info(f"**Aktif Mod Eşikleri:** Normal Mod ≥ **{THRESHOLD_NORMAL}** | Rolling Mod ≥ **{THRESHOLD_ROLLING}**")
 
 # Genel İstatistikler
 st.header("📈 Genel İstatistikler")
@@ -121,21 +131,9 @@ if len(all_data) > 0:
         marker_color='#667eea'
     ))
     
-    # 1.5x çizgisi
-    fig.add_vline(
-        x=1.5,
-        line_dash="dash",
-        line_color="red",
-        annotation_text="1.5x Kritik Eşik"
-    )
-    
-    # 3.0x çizgisi
-    fig.add_vline(
-        x=3.0,
-        line_dash="dash",
-        line_color="green",
-        annotation_text="3.0x"
-    )
+    # Eşikler
+    fig.add_vline(x=1.5, line_dash="dash", line_color="red", annotation_text="1.5x (Kritik)")
+    fig.add_vline(x=2.0, line_dash="dash", line_color="orange", annotation_text="2.0x (Normal Hedef)")
     
     fig.update_layout(
         title="Değer Dağılımı",
@@ -177,7 +175,6 @@ if len(all_data) > 0:
     
     # Eşikler
     fig.add_hline(y=1.5, line_dash="dash", line_color="red", annotation_text="1.5x")
-    fig.add_hline(y=3.0, line_dash="dash", line_color="green", annotation_text="3.0x")
     
     fig.update_layout(
         title="Tüm Veri Trendi",
@@ -234,28 +231,22 @@ if len(all_data) > 0:
     
     st.divider()
     
-    # Büyük Çarpanlar
-    st.header("🚀 Büyük Çarpan Analizi")
+    # Mod Bazlı Simülasyon
+    st.header("🔮 Mod Bazlı Performans Analizi")
+    st.caption("Geçmiş verilerde bu modlar kullanılsaydı potansiyel sonuçlar (Simülasyon)")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
     with col1:
-        big_10x = [v for v in all_data if v >= 10.0]
-        st.metric("10x+ Çarpanlar", len(big_10x))
-        if big_10x:
-            st.write(f"En yüksek: {max(big_10x):.2f}x")
+        st.subheader(f"Normal Mod (≥ {THRESHOLD_NORMAL})")
+        st.write("Dinamik Çıkış (Max 2.5x)")
+        # Simülasyon için model tahminlerine ihtiyaç var, burada sadece genel istatistik gösteriyoruz
+        st.info("Model tahminleri olmadığı için sadece genel dağılım gösteriliyor.")
     
     with col2:
-        big_50x = [v for v in all_data if v >= 50.0]
-        st.metric("50x+ Çarpanlar", len(big_50x))
-        if big_50x:
-            st.write(f"Ortalama: {np.mean(big_50x):.2f}x")
-    
-    with col3:
-        big_100x = [v for v in all_data if v >= 100.0]
-        st.metric("100x+ Çarpanlar", len(big_100x))
-        if big_100x:
-            st.write(f"Toplam: {len(big_100x)}")
+        st.subheader(f"Rolling Mod (≥ {THRESHOLD_ROLLING})")
+        st.write("Sabit 1.50x Çıkış")
+        st.info("Yüksek güvenli anların analizi için 'Model Karşılaştırma' sayfasına gidiniz.")
 
 else:
     st.info("📊 Henüz analiz için yeterli veri yok. Lütfen ana sayfadan veri ekleyin.")
