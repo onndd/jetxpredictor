@@ -1,8 +1,11 @@
 """
-Model Versiyonlama Sistemi
+Model Versiyonlama Sistemi (v2.0)
 
 Model versiyonlarını yönetir, kaydeder ve yükler.
-Her model versiyonu için metadata, performans metrikleri ve dosya yolları saklanır.
+Her model versiyonu için metadata, performans metrikleri (ROI, Accuracy) ve dosya yolları saklanır.
+
+GÜNCELLEME:
+- 2 Modlu yapıya uygun metriklerin saklanması desteklendi.
 """
 
 import os
@@ -63,18 +66,6 @@ class ModelVersionManager:
     ) -> str:
         """
         Yeni model versiyonu kaydet
-        
-        Args:
-            model_name: Model adı (örn: 'progressive_nn', 'catboost')
-            model_type: Model tipi (örn: 'neural_network', 'catboost')
-            version: Versiyon numarası (örn: '1.0.0', '2.1.3')
-            model_files: Model dosyaları dict {'file_type': 'path'}
-            metadata: Ek metadata (training date, hyperparameters, vb.)
-            metrics: Model performans metrikleri
-            is_production: Production modeli mi?
-            
-        Returns:
-            Model ID
         """
         model_id = f"{model_name}_v{version}"
         timestamp = datetime.now().isoformat()
@@ -109,13 +100,6 @@ class ModelVersionManager:
     def get_model_info(self, model_name: str, version: Optional[str] = None) -> Optional[Dict]:
         """
         Model bilgilerini al
-        
-        Args:
-            model_name: Model adı
-            version: Versiyon (None ise production modeli)
-            
-        Returns:
-            Model bilgileri dict
         """
         if model_name not in self.registry:
             return None
@@ -147,16 +131,7 @@ class ModelVersionManager:
         return versions
     
     def set_production(self, model_name: str, version: str) -> bool:
-        """
-        Belirli bir versiyonu production yap
-        
-        Args:
-            model_name: Model adı
-            version: Versiyon
-            
-        Returns:
-            Başarılı mı?
-        """
+        """Belirli bir versiyonu production yap"""
         if model_name not in self.registry:
             logger.error(f"Model bulunamadı: {model_name}")
             return False
@@ -216,17 +191,7 @@ class ModelVersionManager:
             return (0, 0, 0)
     
     def compare_versions(self, model_name: str, version1: str, version2: str) -> Dict:
-        """
-        İki versiyonu karşılaştır
-        
-        Args:
-            model_name: Model adı
-            version1: İlk versiyon
-            version2: İkinci versiyon
-            
-        Returns:
-            Karşılaştırma sonuçları
-        """
+        """İki versiyonu karşılaştır"""
         info1 = self.get_model_info(model_name, version1)
         info2 = self.get_model_info(model_name, version2)
         
@@ -277,4 +242,3 @@ def get_version_manager() -> ModelVersionManager:
     if _version_manager is None:
         _version_manager = ModelVersionManager()
     return _version_manager
-
