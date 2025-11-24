@@ -1,7 +1,8 @@
 """
-JetX Predictor - Database Setup ve İndexleme
+JetX Predictor - Database Setup ve İndexleme (v2.0)
 
 Bu modül veritabanı yapısını oluşturur ve optimize eder.
+GÜNCELLEME: 2 Modlu (Normal/Rolling) yapı için şema genişletildi.
 """
 
 import sqlite3
@@ -32,17 +33,55 @@ def setup_database(db_path: str = "data/jetx_data.db"):
         )
     """)
     
-    # predictions tablosu
+    # predictions tablosu (GENİŞLETİLMİŞ ŞEMA)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            
+            -- Base model tahminleri
+            progressive_pred REAL,
+            progressive_threshold_prob REAL,
+            
+            ultra_pred REAL,
+            ultra_threshold_prob REAL,
+            
+            xgboost_pred REAL,
+            xgboost_threshold_prob REAL,
+            
+            -- Ensemble tahmini
+            ensemble_pred REAL,
+            ensemble_threshold_prob REAL,
+            ensemble_method TEXT,
+            
+            -- Gerçek değer
+            actual_value REAL,
+            actual_above_threshold INTEGER,
+            
+            -- Doğruluk bilgileri (Normal Mod - 0.85)
+            progressive_correct_normal INTEGER,
+            ultra_correct_normal INTEGER,
+            xgboost_correct_normal INTEGER,
+            ensemble_correct_normal INTEGER,
+
+            -- Doğruluk bilgileri (Rolling Mod - 0.95)
+            progressive_correct_rolling INTEGER,
+            ultra_correct_rolling INTEGER,
+            xgboost_correct_rolling INTEGER,
+            ensemble_correct_rolling INTEGER,
+            
+            -- Value prediction hatası (MAE)
+            progressive_error REAL,
+            ultra_error REAL,
+            xgboost_error REAL,
+            ensemble_error REAL,
+
+            -- Eski uyumluluk (Legacy)
             predicted_value REAL,
             confidence_score REAL,
             above_threshold INTEGER,
-            actual_value REAL,
             was_correct INTEGER,
-            mode TEXT DEFAULT 'normal',
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            mode TEXT DEFAULT 'normal'
         )
     """)
     
@@ -75,19 +114,9 @@ def setup_database(db_path: str = "data/jetx_data.db"):
         """)
         
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_predictions_mode 
-            ON predictions(mode)
-        """)
-        
-        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_predictions_evaluated 
             ON predictions(actual_value) 
             WHERE actual_value IS NOT NULL
-        """)
-        
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_predictions_mode_evaluated 
-            ON predictions(mode, actual_value)
         """)
         
         print("✅ Index'ler başarıyla eklendi")
