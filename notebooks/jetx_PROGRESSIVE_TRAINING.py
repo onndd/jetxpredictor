@@ -70,6 +70,8 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras import layers, models, callbacks, backend as K
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras import mixed_precision
+        mixed_precision.set_global_policy('mixed_float16')
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score, confusion_matrix, classification_report
 from tqdm.auto import tqdm
@@ -622,10 +624,11 @@ def build_progressive_model(n_features):
             x = layers.Dropout(0.2)(x)
         return x
 
-    nb_s = nbeats_block(layers.Flatten()(inp_50), 128, 5)
-    nb_m = nbeats_block(layers.Flatten()(inp_200), 192, 6)
-    nb_l = nbeats_block(layers.Flatten()(inp_500), 256, 7)
-    nb_xl = nbeats_block(layers.Flatten()(inp_1000), 384, 9)
+    # 128->256, 192->384, 256->512, 384->1024
+    nb_s = nbeats_block(layers.Flatten()(inp_50), 256, 6)
+    nb_m = nbeats_block(layers.Flatten()(inp_200), 384, 7)
+    nb_l = nbeats_block(layers.Flatten()(inp_500), 512, 8)
+    nb_xl = nbeats_block(layers.Flatten()(inp_1000), 1024, 10
     
     nb_all = layers.Concatenate()([nb_s, nb_m, nb_l, nb_xl])
     
@@ -637,22 +640,23 @@ def build_progressive_model(n_features):
         return layers.Add()([conv, residual])
     
     tcn = inp_500
-    for i, dilation in enumerate([1, 2, 4, 8, 16, 32]):
-        filters = 128 if i < 3 else 256
+    for i, dilation in enumerate([1, 2, 4, 8, 16, 32, 64]):
+        filters = 256 if i < 3 else 512
         tcn = tcn_block(tcn, filters, dilation)
     tcn = layers.GlobalAveragePooling1D()(tcn)
     
     # --- Transformer Bloğu ---
+    # d_model 256->512, layers 4->8, heads 8->16, dff 1024->2048, dropout 0.2->0.1
     transformer = LightweightTransformerEncoder(
-        d_model=256, num_layers=4, num_heads=8, dff=1024, dropout=0.2
+        d_model=512, num_layers=8, num_heads=16, dff=2048, dropout=0.1
     )(inp_1000)
     
     # --- Fusion ---
     fus = layers.Concatenate()([inp_f, nb_all, tcn, transformer])
-    fus = layers.Dense(512, activation='relu')(fus)
+    fus = layers.Dense(2048, activation='relu', kernel_regularizer='l2')(fus)
     fus = layers.BatchNormalization()(fus)
     fus = layers.Dropout(0.3)(fus)
-    fus = layers.Dense(256, activation='relu')(fus)
+    fus = layers.Dense(1024, activation='relu')(fus)
     fus = layers.Dropout(0.2)(fus)
     
     # --- Outputs ---
@@ -722,7 +726,7 @@ model.compile(
 hist1 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
-    epochs=100, batch_size=64, shuffle=False,
+    epochs=100, batch_size=256, shuffle=False,
     validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}),
     callbacks=[
         DynamicWeightCallback(initial_weight=25.0),
@@ -754,7 +758,7 @@ model.compile(
 hist2 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
-    epochs=80, batch_size=32, shuffle=False,
+    epochs=80, batch_size=128, shuffle=False,
     validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}),
     callbacks=[
         ProgressiveMetricsCallback(),
@@ -790,7 +794,7 @@ checkpoint_callback = WeightedModelCheckpoint(
 hist3 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
-    epochs=80, batch_size=16, shuffle=False,
+    epochs=80, batch_size=64, shuffle=False,
     validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}),
     callbacks=[
         ProgressiveMetricsCallback(),
