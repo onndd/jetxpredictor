@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim Stratejisi (v5.1 DUAL BANKROLL MONOLITH)
+🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim Stratejisi (v5.2 FIXED)
 
 BU DOSYA TEK BAŞINA ÇALIŞIR (STANDALONE).
 Tüm yardımcı sınıflar, loss fonksiyonları ve katmanlar içine gömülmüştür.
@@ -10,11 +10,11 @@ MİMARİ:
 - Layers: N-Beats + TCN + Transformer Encoder + Fusion
 - Outputs: Regression (Değer), Classification (3 Sınıf), Threshold (Binary)
 
-GÜNCELLEME (v5.1):
-- 2 MODLU YAPI: Normal (0.85) ve Rolling (0.95)
-- ÇİFT KASA SİMÜLASYONU: Eğitim sırasında hem Normal hem Rolling kasa canlı izlenir.
-- AKILLI MODEL SEÇİMİ: En iyi model seçilirken Rolling Accuracy de dikkate alınır.
-- Lazy Learning önleyici dinamik ağırlıklar.
+GÜNCELLEME (v5.2):
+- ✅ Class Weight Düzeltmesi: 25x -> 2.0x (Lazy Learning Çözümü)
+- ✅ Callback Parametre Hataları Giderildi
+- ✅ 2 MODLU YAPI: Normal (0.85) ve Rolling (0.95)
+- ✅ ÇİFT KASA SİMÜLASYONU: Canlı izleme
 
 SÜRE: ~2.5 - 3.0 saat (GPU ile)
 """
@@ -35,7 +35,7 @@ import random
 warnings.filterwarnings('ignore')
 
 print("="*80)
-print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim (v5.1 DUAL BANKROLL)")
+print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim (v5.2 FIXED)")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print()
@@ -43,7 +43,7 @@ print("🔧 SİSTEM KONFIGURASYONU:")
 print("   Normal Mod Eşik: 0.85")
 print("   Rolling Mod Eşik: 0.95")
 print("   Mimari: Hybrid (LSTM + TCN + Transformer)")
-print("   Yapı: Standalone (Tüm modüller dahil)")
+print("   Düzeltme: Lazy Learning Önleyici Ağırlıklar")
 print()
 
 # -----------------------------------------------------------------------------
@@ -83,7 +83,7 @@ if not os.path.exists('jetxpredictor') and not os.path.exists('jetx_data.db'):
 
 sys.path.append(os.getcwd())
 
-# GPU Ayarları (Manuel Entegrasyon)
+# GPU Ayarları
 print("\n🚀 GPU Ayarları Yapılandırılıyor...")
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
@@ -103,7 +103,7 @@ THRESHOLD_NORMAL = 0.85
 THRESHOLD_ROLLING = 0.95
 
 # =============================================================================
-# 2. GÖMÜLÜ YARDIMCI MODÜLLER (UTILS İÇİNE ALINANLAR BURAYA TAŞINDI)
+# 2. GÖMÜLÜ YARDIMCI MODÜLLER
 # =============================================================================
 
 # --- A. FEATURE ENGINEERING & DEFINITIONS ---
@@ -152,16 +152,15 @@ class FeatureEngineering:
 
 # --- B. CUSTOM LOSS FUNCTIONS ---
 def percentage_aware_regression_loss(y_true, y_pred):
-    """Yüzde hataya dayalı regression loss - Büyük değer hatalarını cezalandırır"""
+    """Yüzde hataya dayalı regression loss"""
     epsilon = K.epsilon()
     percentage_error = K.abs(y_true - y_pred) / (K.abs(y_true) + epsilon)
-    # Yüksek değerler (5x+) için ekstra ceza
     high_value_weight = tf.where(y_true >= 5.0, 1.2, 1.0)
     weighted_percentage_error = percentage_error * high_value_weight
     return K.mean(weighted_percentage_error)
 
 def balanced_focal_loss(gamma=2.0, alpha=0.7):
-    """Dengeli Focal Loss - Zor örneklere odaklanır"""
+    """Dengeli Focal Loss"""
     def loss(y_true, y_pred):
         y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
         pt = y_true * y_pred + (1 - y_true) * (1 - y_pred)
@@ -170,7 +169,7 @@ def balanced_focal_loss(gamma=2.0, alpha=0.7):
     return loss
 
 def create_weighted_binary_crossentropy(weight_0, weight_1):
-    """Ağırlıklı Binary Crossentropy - Lazy Learning'i önler"""
+    """Ağırlıklı Binary Crossentropy"""
     def loss(y_true, y_pred):
         y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
         bce = -(y_true * K.log(y_pred) + (1 - y_true) * K.log(1 - y_pred))
@@ -273,7 +272,7 @@ class LightweightTransformerEncoder(layers.Layer):
 
 # --- D. CUSTOM CALLBACKS ---
 class AdaptiveLearningRateScheduler(callbacks.Callback):
-    """Model performansına göre LR ayarlayan scheduler"""
+    """Model performansına göre learning rate'i adapte eden scheduler"""
     def __init__(self, initial_lr=0.001, max_lr=0.01, min_lr=0.0001, patience=5, factor=0.5):
         super().__init__()
         self.initial_lr = initial_lr
@@ -300,19 +299,29 @@ class AdaptiveLearningRateScheduler(callbacks.Callback):
             K.set_value(self.model.optimizer.learning_rate, self.current_lr)
             self.patience_counter = 0
             print(f"\n📉 LR Azaltıldı: {self.current_lr:.6f}")
+            
+    def __call__(self, epoch, logs=None):
+        # Manüel çağırma desteği (eğer gerekirse)
+        return self.current_lr
 
 class DynamicWeightCallback(callbacks.Callback):
     """Eğitim sırasında class weight'i otomatik ayarlayan callback"""
-    def __init__(self, initial_weight=3.0):
+    def __init__(self, validation_data, initial_weight=2.0):
         super().__init__()
+        self.validation_data = validation_data
         self.current_weight = initial_weight
         
     def on_epoch_end(self, epoch, logs=None):
         if epoch % 5 != 0: return
         
         try:
-            # Validation üzerinde test
-            p = self.model.predict([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], verbose=0)[2].flatten()
+            # Validation setini çöz
+            X_val_data, y_val_data = self.validation_data
+            y_thr_val = y_val_data.get('threshold') if isinstance(y_val_data, dict) else y_val_data
+            
+            # Tahmin
+            preds = self.model.predict(X_val_data, verbose=0)
+            p = preds[2].flatten() # Threshold output
             t = y_thr_val.flatten()
             
             p_cls = (p >= THRESHOLD_NORMAL).astype(int)
@@ -325,11 +334,13 @@ class DynamicWeightCallback(callbacks.Callback):
             else:
                 below_acc = 0
             
-            # Ayarlama
+            # Ayarlama (Çok agresif artırmıyoruz)
             old_weight = self.current_weight
-            if below_acc < 0.50: self.current_weight *= 1.2
-            elif below_acc > 0.80: self.current_weight *= 0.9
-            self.current_weight = max(1.0, min(50.0, self.current_weight))
+            if below_acc < 0.50: self.current_weight *= 1.1
+            elif below_acc > 0.80: self.current_weight *= 0.95
+            
+            # Limitler (1.0 - 10.0 arası)
+            self.current_weight = max(1.0, min(10.0, self.current_weight))
             
             print(f"\n⚖️  Epoch {epoch}: Class Weight {old_weight:.2f} -> {self.current_weight:.2f} (1.5 Altı Acc: {below_acc:.2%})")
             
@@ -338,11 +349,19 @@ class DynamicWeightCallback(callbacks.Callback):
 
 class ProgressiveMetricsCallback(callbacks.Callback):
     """2 Modlu (Normal/Rolling) Performans Raporu"""
+    def __init__(self, validation_data):
+        super().__init__()
+        self.validation_data = validation_data
+
     def on_epoch_end(self, epoch, logs=None):
         if epoch % 5 != 0: return
         
         try:
-            p = self.model.predict([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], verbose=0)[2].flatten()
+            X_val_data, y_val_data = self.validation_data
+            y_reg_val = y_val_data.get('regression') if isinstance(y_val_data, dict) else y_val_data
+            
+            preds = self.model.predict(X_val_data, verbose=0)
+            p = preds[2].flatten()
             t = (y_reg_val >= 1.5).astype(int)
             
             # Normal Mod (0.85)
@@ -356,14 +375,15 @@ class ProgressiveMetricsCallback(callbacks.Callback):
             print(f"\n📊 Epoch {epoch+1} Metrics:")
             print(f"   🎯 Normal Mod ({THRESHOLD_NORMAL}): {acc_norm:.2%}")
             print(f"   🚀 Rolling Mod ({THRESHOLD_ROLLING}): {acc_roll:.2%}")
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ Metrics Callback Hatası: {e}")
 
 class VirtualBankrollCallback(callbacks.Callback):
     """Her epoch'ta ÇİFT KASA (Normal + Rolling) simülasyonu"""
-    def __init__(self, stage_name, starting_capital=1000.0, bet_amount=10.0):
+    def __init__(self, stage_name, validation_data, starting_capital=1000.0, bet_amount=10.0):
         super().__init__()
         self.stage_name = stage_name
+        self.validation_data = validation_data
         self.starting_capital = starting_capital
         self.bet_amount = bet_amount
         self.best_roi_normal = -float('inf')
@@ -373,19 +393,21 @@ class VirtualBankrollCallback(callbacks.Callback):
         if epoch % 5 != 0: return
         
         try:
-            p_thr = self.model.predict([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], verbose=0)[2].flatten()
-            p_reg = self.model.predict([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], verbose=0)[0].flatten()
-            actuals = y_reg_val
+            X_val_data, y_val_data = self.validation_data
+            y_reg_val = y_val_data.get('regression') if isinstance(y_val_data, dict) else y_val_data
+            
+            preds = self.model.predict(X_val_data, verbose=0)
+            p_thr = preds[2].flatten()
+            p_reg = preds[0].flatten()
+            actuals = y_reg_val.flatten()
             
             # Kasa 1: Normal Mod (0.85) + Dinamik Çıkış
             wallet1 = self.starting_capital
             bets1 = 0
-            wins1 = 0
             
             # Kasa 2: Rolling Mod (0.95) + Sabit 1.5x Çıkış
             wallet2 = self.starting_capital
             bets2 = 0
-            wins2 = 0
             
             for i in range(len(p_thr)):
                 # --- NORMAL MOD ---
@@ -397,7 +419,6 @@ class VirtualBankrollCallback(callbacks.Callback):
                     
                     if actuals[i] >= exit_pt:
                         wallet1 += self.bet_amount * exit_pt
-                        wins1 += 1
                 
                 # --- ROLLING MOD ---
                 if p_thr[i] >= THRESHOLD_ROLLING:
@@ -406,7 +427,6 @@ class VirtualBankrollCallback(callbacks.Callback):
                     # Çıkış noktası: Sabit 1.50x (Güvenli Liman)
                     if actuals[i] >= 1.5:
                         wallet2 += self.bet_amount * 1.5
-                        wins2 += 1
             
             roi1 = (wallet1 - self.starting_capital) / self.starting_capital * 100
             roi2 = (wallet2 - self.starting_capital) / self.starting_capital * 100
@@ -430,11 +450,10 @@ class WeightedModelCheckpoint(callbacks.Callback):
     - Precision: %20 (Yanlış alarmdan kaçınma)
     - Win Rate: %10 (Kazanma sıklığı)
     """
-    def __init__(self, filepath, X_val, y_val):
+    def __init__(self, filepath, validation_data):
         super().__init__()
         self.filepath = filepath
-        self.X_val = X_val
-        self.y_val = y_val
+        self.validation_data = validation_data
         self.best_score = -float('inf')
     
     def normalize_roi(self, roi):
@@ -445,14 +464,17 @@ class WeightedModelCheckpoint(callbacks.Callback):
     
     def on_epoch_end(self, epoch, logs=None):
         try:
-            preds = self.model.predict(self.X_val, verbose=0)
+            X_val_data, y_val_data = self.validation_data
+            y_reg_val = y_val_data.get('regression') if isinstance(y_val_data, dict) else y_val_data
+            
+            preds = self.model.predict(X_val_data, verbose=0)
             # Threshold output genellikle 3. output (index 2)
             if isinstance(preds, list) and len(preds) >= 3:
                 threshold_preds = preds[2].flatten()
             else:
-                return # Uygun output yoksa çık
+                return 
             
-            y_true = (self.y_val >= 1.5).astype(int)
+            y_true = (y_reg_val.flatten() >= 1.5).astype(int)
             
             # --- Normal Mod Metrikleri ---
             y_pred_norm = (threshold_preds >= THRESHOLD_NORMAL).astype(int)
@@ -467,7 +489,7 @@ class WeightedModelCheckpoint(callbacks.Callback):
             total_bets = 0
             wins = 0
             
-            for pred, actual in zip(threshold_preds, self.y_val):
+            for pred, actual in zip(threshold_preds, y_reg_val.flatten()):
                 if pred >= THRESHOLD_NORMAL:
                     total_bets += 1
                     wallet -= 10
@@ -482,7 +504,6 @@ class WeightedModelCheckpoint(callbacks.Callback):
             # --- Rolling Mod Metrikleri (YENİ) ---
             y_pred_roll = (threshold_preds >= THRESHOLD_ROLLING).astype(int)
             # Rolling Accuracy: Sadece 0.95 üstü tahmin yapılan anlardaki doğruluk
-            # (Pas geçilenleri hesaba katma)
             roll_mask = y_pred_roll == 1
             if roll_mask.sum() > 0:
                 roll_acc = accuracy_score(y_true[roll_mask], y_pred_roll[roll_mask]) * 100
@@ -501,7 +522,7 @@ class WeightedModelCheckpoint(callbacks.Callback):
                 self.best_score = weighted_score
                 self.model.save(self.filepath)
                 print(f"\n✨ YENİ EN İYİ MODEL! (Score: {weighted_score:.2f})")
-                print(f"   ROI: {roi:.2f}% | Rolling Acc: {roll_acc:.1f}%")
+                print(f"   ROI: {roi:.2f}% | Rolling Acc: {roll_acc:.1f}% | FP: {FP}")
         except Exception as e:
             print(f"⚠️ Checkpoint hatası: {e}")
 
@@ -718,7 +739,15 @@ def load_checkpoint(stage):
 model = build_progressive_model(X_f.shape[1])
 print(f"\n🏗️ Model oluşturuldu: {model.count_params():,} parametre")
 
-# Callback'ler
+# Hazırlık: Callback'ler için validation data yapısı
+val_data_dict = {
+    'regression': y_reg_val,
+    'classification': y_cls_val,
+    'threshold': y_thr_val
+}
+val_inputs = [X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val]
+
+# Callback Wrapper for AdaptiveScheduler
 class AdaptiveLRCallback(callbacks.Callback):
     def __init__(self, scheduler):
         super().__init__()
@@ -742,9 +771,13 @@ if chk1:
 adaptive_scheduler = AdaptiveLearningRateScheduler(initial_lr=0.001, patience=5)
 lr_callback = AdaptiveLRCallback(adaptive_scheduler)
 
+# DÜZELTME: Class Weight 2.0 (Lazy Learning'i önlemek için düşürüldü)
+w0 = 2.0 
+w1 = 1.0
+
 model.compile(
     optimizer=Adam(0.0001),
-    loss={'regression': percentage_aware_regression_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(25.0, 1.0)},
+    loss={'regression': percentage_aware_regression_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0, w1)},
     loss_weights={'regression': 0.65, 'classification': 0.10, 'threshold': 0.25},
     metrics={'threshold': ['accuracy']}
 )
@@ -753,11 +786,11 @@ hist1 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=100, batch_size=64, shuffle=False,
-    validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}),
+    validation_data=(val_inputs, val_data_dict),
     callbacks=[
-        DynamicWeightCallback(initial_weight=25.0),
-        ProgressiveMetricsCallback(validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], y_reg_val)),
-        VirtualBankrollCallback("AŞAMA 1", validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], y_reg_val), starting_capital=1000.0), # ÇİFT KASA AKTİF
+        DynamicWeightCallback(validation_data=(val_inputs, val_data_dict), initial_weight=w0),
+        ProgressiveMetricsCallback(validation_data=(val_inputs, val_data_dict)),
+        VirtualBankrollCallback("AŞAMA 1", validation_data=(val_inputs, val_data_dict), starting_capital=1000.0), 
         lr_callback,
         callbacks.EarlyStopping(patience=15, restore_best_weights=True),
         callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
@@ -774,9 +807,12 @@ print("="*60)
 chk2 = load_checkpoint(2)
 if chk2: model.set_weights(chk2['weights'])
 
+# DÜZELTME: İkinci aşamada da düşük weight (2.5x)
+w0_stage2 = 2.5
+
 model.compile(
     optimizer=Adam(0.00005), # Daha düşük LR
-    loss={'regression': percentage_aware_regression_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(30.0, 1.0)},
+    loss={'regression': percentage_aware_regression_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0_stage2, 1.0)},
     loss_weights={'regression': 0.55, 'classification': 0.10, 'threshold': 0.35},
     metrics={'threshold': ['accuracy']}
 )
@@ -785,10 +821,10 @@ hist2 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=80, batch_size=32, shuffle=False,
-    validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}),
+    validation_data=(val_inputs, val_data_dict),
     callbacks=[
-        ProgressiveMetricsCallback(validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], y_reg_val)),
-        VirtualBankrollCallback("AŞAMA 2", validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], y_reg_val)),
+        ProgressiveMetricsCallback(validation_data=(val_inputs, val_data_dict)),
+        VirtualBankrollCallback("AŞAMA 2", validation_data=(val_inputs, val_data_dict)),
         callbacks.EarlyStopping(patience=10, restore_best_weights=True)
     ],
     verbose=1
@@ -813,18 +849,17 @@ model.compile(
 # Weighted Checkpoint (YENİ: Rolling Acc DAHİL)
 checkpoint_callback = WeightedModelCheckpoint(
     filepath='jetx_progressive_final.h5',
-    X_val=[X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val],
-    y_val=y_reg_val
+    validation_data=(val_inputs, val_data_dict)
 )
 
 hist3 = model.fit(
     [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
     {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
     epochs=80, batch_size=16, shuffle=False,
-    validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}),
+    validation_data=(val_inputs, val_data_dict),
     callbacks=[
-        ProgressiveMetricsCallback(validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], y_reg_val)),
-        VirtualBankrollCallback("AŞAMA 3", validation_data=([X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val], y_reg_val)),
+        ProgressiveMetricsCallback(validation_data=(val_inputs, val_data_dict)),
+        VirtualBankrollCallback("AŞAMA 3", validation_data=(val_inputs, val_data_dict)),
         checkpoint_callback,
         callbacks.EarlyStopping(patience=8, restore_best_weights=True)
     ],
@@ -841,7 +876,10 @@ print("="*60)
 
 # Modeli yükle (en iyi hali)
 if os.path.exists('jetx_progressive_final.h5'):
-    model.load_weights('jetx_progressive_final.h5')
+    try:
+        model.load_weights('jetx_progressive_final.h5')
+    except:
+        print("⚠️ Ağırlıklar yüklenemedi, mevcut model kullanılıyor.")
 
 # Test verisi üzerinde tahmin
 pred = model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)
@@ -909,7 +947,7 @@ joblib.dump(scaler, 'models/scaler_progressive.pkl')
 # Info
 info = {
     'model': 'Progressive_Transformer_Ultimate',
-    'version': '5.1',
+    'version': '5.2_FIXED',
     'thresholds': {'normal': THRESHOLD_NORMAL, 'rolling': THRESHOLD_ROLLING},
     'metrics': {'mae': float(mae), 'normal_acc': float(acc_norm), 'rolling_acc': float(acc_roll)},
     'simulation': {'normal_roi': float(roi1), 'rolling_roi': float(roi2)}
@@ -917,16 +955,16 @@ info = {
 with open('models/model_info.json', 'w') as f: json.dump(info, f, indent=2)
 
 # Zip
-shutil.make_archive('jetx_models_progressive_v5.1', 'zip', 'models')
+shutil.make_archive('jetx_models_progressive_v5.2', 'zip', 'models')
 print("✅ ZIP oluşturuldu.")
 
 # Colab İndirme
 try:
     import google.colab
     from google.colab import files
-    files.download('jetx_models_progressive_v5.1.zip')
+    files.download('jetx_models_progressive_v5.2.zip')
 except:
-    print("⚠️ Manuel indirme gerekli: jetx_models_progressive_v5.1.zip")
+    print("⚠️ Manuel indirme gerekli: jetx_models_progressive_v5.2.zip")
 
 print("\n🎉 İŞLEM BAŞARIYLA TAMAMLANDI!")
 print("="*80)
