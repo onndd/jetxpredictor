@@ -3,6 +3,10 @@ JetX Predictor - Ana Streamlit Uygulaması
 
 Bu uygulama JetX tahmin sistemi için kullanıcı arayüzüdür.
 Model Google Colab'da eğitilir, burada tahmin yapılır.
+
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) entegrasyonu.
+- Threshold Manager entegrasyonu.
 """
 
 import streamlit as st
@@ -22,6 +26,7 @@ from utils.predictor import JetXPredictor
 from utils.risk_manager import RiskManager
 from utils.config_loader import config
 from category_definitions import CategoryDefinitions
+from utils.threshold_manager import get_threshold_manager
 
 # Yeni sistemleri import et
 try:
@@ -152,6 +157,10 @@ if 'risk_manager' not in st.session_state:
 
 if 'last_prediction' not in st.session_state:
     st.session_state.last_prediction = None
+
+# Threshold Manager
+if 'threshold_manager' not in st.session_state:
+    st.session_state.threshold_manager = get_threshold_manager()
 
 # Yeni sistemleri session state'e ekle
 if 'use_ensemble' not in st.session_state:
@@ -394,7 +403,7 @@ with st.sidebar:
         
         st.divider()
     
-    # Mod seçimi
+    # Mod seçimi (2 MODLU)
     st.subheader("📊 Tahmin Modu")
     mode = st.selectbox(
         "Mod seçin:",
@@ -993,12 +1002,6 @@ st.subheader("➕ Yeni Veri Ekle")
 def validate_input_value(value: float) -> tuple[bool, str]:
     """
     Input değerini validate eder
-    
-    Args:
-        value: Kontrol edilecek değer
-        
-    Returns:
-        (is_valid, error_message) tuple'ı
     """
     # Değer aralığı kontrolü
     if value < 1.0:
