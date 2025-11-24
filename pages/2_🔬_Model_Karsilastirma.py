@@ -3,6 +3,10 @@ JetX Predictor - Model Karşılaştırma Dashboard
 
 Ensemble ve individual modellerin performanslarını karşılaştırmalı olarak gösterir.
 Real-time tracking, confusion matrix, trend analizi.
+
+GÜNCELLEME:
+- 2 Modlu Yapı (Normal/Rolling) entegrasyonu.
+- Normal Mod (0.85) ve Rolling Mod (0.95) performansları ayrı ayrı raporlanır.
 """
 
 import streamlit as st
@@ -18,13 +22,19 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.ensemble_monitor import EnsembleMonitor
 from utils.database import DatabaseManager
+from utils.threshold_manager import get_threshold_manager
 
 # Sayfa konfigürasyonu
 st.set_page_config(
-    page_title="🔬 Model Karşılaştırma",
+    page_title="Model Karşılaştırma",
     page_icon="🔬",
     layout="wide"
 )
+
+# Threshold Manager
+tm = get_threshold_manager()
+THRESHOLD_NORMAL = tm.get_normal_threshold()
+THRESHOLD_ROLLING = tm.get_rolling_threshold()
 
 # CSS
 st.markdown("""
@@ -54,7 +64,7 @@ monitor = st.session_state.ensemble_monitor
 
 # Başlık
 st.title("🔬 Model Karşılaştırma & Ensemble Monitoring")
-st.markdown("**3 base model + ensemble performans karşılaştırması**")
+st.markdown(f"**Modellerin Normal ({THRESHOLD_NORMAL}) ve Rolling ({THRESHOLD_ROLLING}) mod performansları**")
 
 # İstatistikler özeti
 summary = monitor.get_statistics_summary()
@@ -64,7 +74,7 @@ col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Toplam Tahmin", f"{summary['total_predictions']:,}")
 with col2:
-    st.metric("En İyi Model", summary.get('best_model', 'N/A').title() if summary.get('best_model') else 'Henüz yok')
+    st.metric("En İyi Model (Normal)", summary.get('best_model', 'N/A').title() if summary.get('best_model') else 'Henüz yok')
 with col3:
     if summary.get('best_accuracy'):
         st.metric("En İyi Accuracy", f"{summary['best_accuracy']*100:.1f}%")
@@ -80,12 +90,6 @@ if summary['total_predictions'] == 0:
     📊 **Henüz tahmin verisi yok!**
     
     Ensemble sistemi ile tahmin yapmaya başladıktan sonra buradan performans karşılaştırması görebilirsiniz.
-    
-    **Nasıl başlayabilirim?**
-    1. Ana sayfaya gidin
-    2. Ensemble mode'u seçin
-    3. Tahmin yapın ve gerçek değeri girin
-    4. Performans verileri otomatik olarak buraya yansıyacak
     """)
     st.stop()
 
@@ -112,9 +116,9 @@ model_names = {
     'ensemble': '⭐ Ensemble'
 }
 
-# En iyi modeli bul
-best_model = max(models, key=lambda m: report.get(m, {}).get('accuracy', 0))
-worst_model = min(models, key=lambda m: report.get(m, {}).get('accuracy', 1))
+# En iyi modeli bul (Normal Mod Accuracy bazlı)
+best_model = max(models, key=lambda m: report.get(m, {}).get('accuracy_normal', 0))
+worst_model = min(models, key=lambda m: report.get(m, {}).get('accuracy_normal', 1))
 
 for col, model in zip([col1, col2, col3, col4], models):
     with col:
@@ -130,19 +134,17 @@ for col, model in zip([col1, col2, col3, col4], models):
         st.markdown(f"""
         <div class="metric-card {card_class}">
             <h3>{model_names[model]}</h3>
-            <h2>{stats.get('accuracy', 0)*100:.1f}%</h2>
-            <p>{stats.get('trend', '➡️ stable')}</p>
+            <h2>{stats.get('accuracy_normal', 0)*100:.1f}%</h2>
+            <p>Normal Mod</p>
         </div>
         """, unsafe_allow_html=True)
         
         # Detaylı metrikler
         with st.expander("📋 Detaylar"):
-            st.metric("Genel Accuracy", f"{stats.get('accuracy', 0)*100:.1f}%")
-            st.metric("1.5 Altı Accuracy", f"{stats.get('below_1.5_accuracy', 0)*100:.1f}%")
-            st.metric("1.5 Üstü Accuracy", f"{stats.get('above_1.5_accuracy', 0)*100:.1f}%")
+            st.metric("Normal Mod Acc", f"{stats.get('accuracy_normal', 0)*100:.1f}%")
+            st.metric("Rolling Mod Acc", f"{stats.get('accuracy_rolling', 0)*100:.1f}%")
             st.metric("MAE", f"{stats.get('mae', 0):.3f}")
-            st.metric("Para Kaybı Riski", f"{stats.get('money_loss_risk', 0)*100:.1f}%")
-            st.metric("Toplam Tahmin", stats.get('total_predictions', 0))
+            st.metric("Trend", stats.get('trend', '➡️'))
 
 st.divider()
 
@@ -156,27 +158,24 @@ if len(chart_data) > 0:
     # Plotly line chart
     fig = go.Figure()
     
-    colors = {
-        'progressive': '#3498db',
-        'ultra': '#e74c3c',
-        'xgboost': '#2ecc71',
-        'ensemble': '#f39c12'
-    }
-    
-    for model in models:
-        col_name = f'{model}_correct_rolling'
-        if col_name in chart_data.columns:
-            fig.add_trace(go.Scatter(
-                x=chart_data.index,
-                y=chart_data[col_name] * 100,  # Yüzdeye çevir
-                mode='lines',
-                name=model_names[model],
-                line=dict(color=colors[model], width=2),
-                hovertemplate='%{y:.1f}%<extra></extra>'
-            ))
+    # Sadece Ensemble Normal ve Rolling modlarını göster (kalabalık olmasın)
+    if 'ensemble_correct_normal' in chart_data.columns:
+         # Rolling mean uygula
+         y_normal = chart_data['ensemble_correct_normal'].rolling(window=20).mean() * 100
+         fig.add_trace(go.Scatter(
+            x=chart_data.index, y=y_normal, mode='lines', name='Ensemble Normal',
+            line=dict(color='#f39c12', width=2)
+        ))
+         
+    if 'ensemble_correct_rolling' in chart_data.columns:
+         y_rolling = chart_data['ensemble_correct_rolling'].rolling(window=20).mean() * 100
+         fig.add_trace(go.Scatter(
+            x=chart_data.index, y=y_rolling, mode='lines', name='Ensemble Rolling',
+            line=dict(color='#2ecc71', width=2)
+        ))
     
     fig.update_layout(
-        title=f"Rolling Accuracy Trend (Son {chart_window} Tahmin, 20-tahmin ortalaması)",
+        title=f"Ensemble Rolling Accuracy Trend (Son {chart_window} Tahmin)",
         xaxis_title="Tahmin Sırası",
         yaxis_title="Accuracy (%)",
         hovermode='x unified',
@@ -191,7 +190,7 @@ else:
 st.divider()
 
 # Confusion Matrix Karşılaştırması
-st.subheader("🎯 Confusion Matrix Karşılaştırması")
+st.subheader("🎯 Confusion Matrix (Normal Mod - 0.85)")
 
 col1, col2 = st.columns(2)
 col3, col4 = st.columns(2)
@@ -202,7 +201,7 @@ for col, model in zip(cols, models):
     with col:
         st.markdown(f"**{model_names[model]}**")
         
-        cm = monitor.get_confusion_matrix(model, window=window_size)
+        cm = np.array(report.get(model, {}).get('confusion_matrix', [[0,0],[0,0]]))
         
         if cm.sum() > 0:
             # Heatmap oluştur
@@ -244,154 +243,32 @@ for model in models:
     stats = report.get(model, {})
     metrics_data.append({
         'Model': model_names[model],
-        'Accuracy': f"{stats.get('accuracy', 0)*100:.1f}%",
-        '1.5 Altı': f"{stats.get('below_1.5_accuracy', 0)*100:.1f}%",
-        '1.5 Üstü': f"{stats.get('above_1.5_accuracy', 0)*100:.1f}%",
+        'Normal Acc': f"{stats.get('accuracy_normal', 0)*100:.1f}%",
+        'Rolling Acc': f"{stats.get('accuracy_rolling', 0)*100:.1f}%",
         'MAE': f"{stats.get('mae', 0):.3f}",
-        'Para Kaybı': f"{stats.get('money_loss_risk', 0)*100:.1f}%",
         'Trend': stats.get('trend', '➡️'),
-        'Tahmin #': stats.get('total_predictions', 0)
+        'Para Kaybı': f"{stats.get('money_loss_risk', 0)*100:.1f}%"
     })
 
 df = pd.DataFrame(metrics_data)
 
-# Renklendirme için stil
+# Renklendirme
 def highlight_best(s):
-    """En iyi değeri yeşil, en kötüyü kırmızı yap"""
-    if s.name in ['Accuracy', '1.5 Altı', '1.5 Üstü']:
-        # Yüzdeleri sayıya çevir
+    if s.name in ['Normal Acc', 'Rolling Acc']:
         values = [float(x.strip('%')) for x in s]
         max_val = max(values)
-        min_val = min(values)
-        
-        colors = []
-        for v in values:
-            if v == max_val:
-                colors.append('background-color: #a8e063; color: black')
-            elif v == min_val:
-                colors.append('background-color: #f45c43; color: white')
-            else:
-                colors.append('')
-        return colors
+        return ['background-color: #a8e063; color: black' if v == max_val else '' for v in values]
     elif s.name in ['MAE', 'Para Kaybı']:
-        # Düşük iyi
         values = [float(x.strip('%')) for x in s]
-        max_val = max(values)
         min_val = min(values)
-        
-        colors = []
-        for v in values:
-            if v == min_val:
-                colors.append('background-color: #a8e063; color: black')
-            elif v == max_val:
-                colors.append('background-color: #f45c43; color: white')
-            else:
-                colors.append('')
-        return colors
-    else:
-        return ['' for _ in s]
+        return ['background-color: #a8e063; color: black' if v == min_val else '' for v in values]
+    return ['' for _ in s]
 
 st.dataframe(
     df.style.apply(highlight_best, axis=0),
     use_container_width=True,
     hide_index=True
 )
-
-st.divider()
-
-# Karşılaştırmalı Bar Charts
-st.subheader("📊 Karşılaştırmalı Grafikler")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    # Accuracy karşılaştırması
-    fig = go.Figure()
-    
-    accuracies = [report.get(m, {}).get('accuracy', 0) * 100 for m in models]
-    
-    fig.add_trace(go.Bar(
-        x=[model_names[m] for m in models],
-        y=accuracies,
-        marker_color=['#3498db', '#e74c3c', '#2ecc71', '#f39c12'],
-        text=[f'{a:.1f}%' for a in accuracies],
-        textposition='auto'
-    ))
-    
-    fig.update_layout(
-        title="Genel Accuracy Karşılaştırması",
-        yaxis_title="Accuracy (%)",
-        height=400,
-        yaxis=dict(range=[0, 100])
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-with col2:
-    # Para kaybı riski karşılaştırması
-    fig = go.Figure()
-    
-    risks = [report.get(m, {}).get('money_loss_risk', 0) * 100 for m in models]
-    
-    # Renk: Düşük=yeşil, Yüksek=kırmızı
-    colors = []
-    for r in risks:
-        if r < 15:
-            colors.append('#2ecc71')
-        elif r < 25:
-            colors.append('#f39c12')
-        else:
-            colors.append('#e74c3c')
-    
-    fig.add_trace(go.Bar(
-        x=[model_names[m] for m in models],
-        y=risks,
-        marker_color=colors,
-        text=[f'{r:.1f}%' for r in risks],
-        textposition='auto'
-    ))
-    
-    fig.update_layout(
-        title="Para Kaybı Riski Karşılaştırması",
-        yaxis_title="Risk (%)",
-        height=400
-    )
-    
-    # Hedef çizgisi (20%)
-    fig.add_hline(
-        y=20,
-        line_dash="dash",
-        line_color="red",
-        annotation_text="Hedef: <20%",
-        annotation_position="right"
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-st.divider()
-
-# MAE Karşılaştırması
-st.subheader("📏 MAE (Mean Absolute Error) Karşılaştırması")
-
-fig = go.Figure()
-
-maes = [report.get(m, {}).get('mae', 0) for m in models]
-
-fig.add_trace(go.Bar(
-    x=[model_names[m] for m in models],
-    y=maes,
-    marker_color=['#3498db', '#e74c3c', '#2ecc71', '#f39c12'],
-    text=[f'{mae:.3f}' for mae in maes],
-    textposition='auto'
-))
-
-fig.update_layout(
-    title="Value Prediction Error (MAE)",
-    yaxis_title="MAE",
-    height=400
-)
-
-st.plotly_chart(fig, use_container_width=True)
 
 st.divider()
 
@@ -418,52 +295,4 @@ with col2:
             )
             st.success(f"✅ CSV kaydedildi: {filename}")
 
-st.divider()
-
-# Insights & Recommendations
-st.subheader("💡 Öneriler ve İçgörüler")
-
-# En iyi ve en kötü modeli analiz et
-best_stats = report.get(best_model, {})
-worst_stats = report.get(worst_model, {})
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.success(f"**🏆 En İyi Model: {model_names[best_model]}**")
-    st.write(f"- Accuracy: {best_stats.get('accuracy', 0)*100:.1f}%")
-    st.write(f"- 1.5 Altı: {best_stats.get('below_1.5_accuracy', 0)*100:.1f}%")
-    st.write(f"- Para Kaybı: {best_stats.get('money_loss_risk', 0)*100:.1f}%")
-    st.write(f"- Trend: {best_stats.get('trend', '➡️')}")
-
-with col2:
-    st.error(f"**📉 En Düşük Performans: {model_names[worst_model]}**")
-    st.write(f"- Accuracy: {worst_stats.get('accuracy', 0)*100:.1f}%")
-    st.write(f"- 1.5 Altı: {worst_stats.get('below_1.5_accuracy', 0)*100:.1f}%")
-    st.write(f"- Para Kaybı: {worst_stats.get('money_loss_risk', 0)*100:.1f}%")
-    st.write(f"- Trend: {worst_stats.get('trend', '➡️')}")
-
-# Genel öneriler
-st.info("""
-**🎯 Genel Değerlendirme:**
-
-Ensemble sisteminin amacı, bireysel modellerin güçlü yönlerini birleştirerek daha iyi performans elde etmektir.
-
-**İdeal Senaryo:**
-- Ensemble accuracy > Tüm bireysel modellerin accuracy'si
-- Para kaybı riski < %15
-- 1.5 altı accuracy > %75
-
-**Eğer Ensemble beklenenden kötüyse:**
-1. Meta-model eğitime ihtiyaç duyuyor olabilir
-2. Bazı base modeller çok kötü performans gösteriyor olabilir
-3. Model ağırlıkları optimize edilmeli
-
-**Sonraki Adımlar:**
-- Düşük performanslı modelleri yeniden eğitin
-- Meta-model training scriptini çalıştırın
-- Hyperparameter optimization yapın
-""")
-
-# Footer
 st.caption(f"Son güncelleme: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
