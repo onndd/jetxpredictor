@@ -134,10 +134,12 @@ class BalancedBatchGenerator(Sequence):
         )
         
         # 1.5 üstü: replace=False (çok olduğu için her seferinde farklı)
+        # Eğer 1.5 üstü sayısı batch için yetersizse replace=True yap
+        replace_above = len(self.above_idx) < self.n_above_per_batch
         batch_above = np.random.choice(
             self.above_idx,
             size=self.n_above_per_batch,
-            replace=False
+            replace=replace_above
         )
         
         # İndeksleri birleştir ve shuffle et
@@ -164,7 +166,10 @@ class BalancedBatchGenerator(Sequence):
         """Her epoch sonunda çağrılır - shuffle için"""
         if self.shuffle:
             # Sadece seed'i yenile (her epoch farklı sampling olsun)
-            np.random.seed(self.seed + np.random.randint(0, 10000) if self.seed else None)
+            if self.seed is not None:
+                 np.random.seed(self.seed + np.random.randint(0, 10000))
+            else:
+                 np.random.seed(np.random.randint(0, 10000))
     
     def get_stats(self):
         """Generator istatistiklerini döndür"""
@@ -178,7 +183,6 @@ class BalancedBatchGenerator(Sequence):
             'samples_per_batch_below': self.n_below_per_batch,
             'samples_per_batch_above': self.n_above_per_batch
         }
-
 
 # Kullanım örneği
 if __name__ == "__main__":
