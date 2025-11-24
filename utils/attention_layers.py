@@ -5,6 +5,12 @@ Multi-Head Attention ve Transformer-like attention layers.
 Model performansını artırmak için sequence modellerine eklenebilir.
 """
 
+import tensorflow as tf
+from tensorflow.keras import layers
+import numpy as np
+from typing import Optional
+
+
 class PositionalEncoding(layers.Layer):
     """
     Positional Encoding for Transformer
@@ -14,20 +20,26 @@ class PositionalEncoding(layers.Layer):
         super().__init__(**kwargs)
         self.max_seq_len = max_seq_len
         self.d_model = d_model
+        self.pe = None
         
+    def build(self, input_shape):
         # Positional encoding matrix oluştur
-        position = tf.range(max_seq_len, dtype=tf.float32)[:, tf.newaxis]
-        div_term = tf.exp(tf.range(0, d_model, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / d_model))
+        position = tf.range(self.max_seq_len, dtype=tf.float32)[:, tf.newaxis]
+        div_term = tf.exp(tf.range(0, self.d_model, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / self.d_model))
         
-        pe = tf.zeros((max_seq_len, d_model))
         pe_sin = tf.sin(position * div_term)
         pe_cos = tf.cos(position * div_term)
         
-        # Sin ve cos değerlerini birleştir
-        pe_array = tf.Variable(pe, trainable=False)
-        pe_array[:, 0::2].assign(pe_sin)
-        pe_array[:, 1::2].assign(pe_cos)
-        self.pe = pe_array
+        pe_list = []
+        for i in range(self.d_model):
+            if i % 2 == 0:
+                pe_list.append(pe_sin[:, i // 2:i // 2 + 1])
+            else:
+                pe_list.append(pe_cos[:, i // 2:i // 2 + 1])
+        
+        pe = tf.concat(pe_list, axis=1)
+        self.pe = tf.constant(pe, dtype=tf.float32)
+        super().build(input_shape)
     
     def call(self, x):
         seq_len = tf.shape(x)[1]
@@ -169,10 +181,6 @@ class LightweightTransformerEncoder(layers.Layer):
             'dropout': self.dropout_rate
         })
         return config
-import tensorflow as tf
-from tensorflow.keras import layers
-import numpy as np
-from typing import Optional
 
 
 class MultiHeadAttention(layers.Layer):
@@ -518,15 +526,6 @@ def create_attention_enhanced_model(
 ):
     """
     Attention-enhanced model örneği
-    
-    Args:
-        input_shape: Input shape (seq_len, features)
-        attention_type: 'multi_head', 'self', 'temporal'
-        num_heads: Multi-head için head sayısı
-        key_dim: Key dimension
-        
-    Returns:
-        Keras model
     """
     inputs = layers.Input(shape=input_shape)
     
