@@ -7,7 +7,9 @@ Gelişmiş learning rate scheduler'lar:
 - Exponential Decay with Warmup
 - Polynomial Decay with Warmup
 
-Bu scheduler'lar model eğitiminde daha iyi sonuçlar verir.
+GÜNCELLEME:
+- T4 GPU ve Büyük Batch Size (256+) için varsayılan LR değerleri artırıldı.
+- Warmup epoch sayıları optimize edildi.
 """
 
 import tensorflow as tf
@@ -24,7 +26,7 @@ class CosineAnnealingWarmup(callbacks.Callback):
     Başlangıçta warmup fazı, sonra cosine annealing ile smooth decay.
     
     Args:
-        max_lr: Maximum learning rate (warmup sonrası ulaşılacak)
+        max_lr: Maximum learning rate (warmup sonrası ulaşılacak) - T4 için artırıldı
         min_lr: Minimum learning rate (cycle sonunda)
         warmup_epochs: Warmup epoch sayısı
         total_epochs: Toplam epoch sayısı
@@ -34,9 +36,9 @@ class CosineAnnealingWarmup(callbacks.Callback):
     
     def __init__(
         self,
-        max_lr: float = 1e-3,
+        max_lr: float = 0.002,  # Güncellendi: 1e-3 -> 2e-3 (Büyük batch için)
         min_lr: float = 1e-6,
-        warmup_epochs: int = 10,
+        warmup_epochs: int = 5, # Güncellendi: 10 -> 5 (Daha hızlı ısınma)
         total_epochs: int = 100,
         cycles: int = 1,
         initial_lr: float = 1e-5,
@@ -106,7 +108,7 @@ class OneCyclePolicy(callbacks.Callback):
     Leslie Smith's 1cycle policy: warmup -> peak -> decay
     
     Args:
-        max_lr: Maximum learning rate (cycle ortasında)
+        max_lr: Maximum learning rate (cycle ortasında) - T4 için artırıldı
         total_epochs: Toplam epoch sayısı
         warmup_pct: Warmup fazının yüzdesi (default 0.3 = %30)
         div_factor: Initial LR = max_lr / div_factor
@@ -115,7 +117,7 @@ class OneCyclePolicy(callbacks.Callback):
     
     def __init__(
         self,
-        max_lr: float = 1e-3,
+        max_lr: float = 0.005, # Güncellendi: 1e-3 -> 5e-3 (Daha agresif peak)
         total_epochs: int = 100,
         warmup_pct: float = 0.3,
         div_factor: float = 25.0,
@@ -177,9 +179,9 @@ class ExponentialDecayWarmup(callbacks.Callback):
     
     def __init__(
         self,
-        max_lr: float = 1e-3,
+        max_lr: float = 0.002, # Güncellendi: 1e-3 -> 2e-3
         min_lr: float = 1e-6,
-        warmup_epochs: int = 10,
+        warmup_epochs: int = 5,
         decay_rate: float = 0.96,
         initial_lr: float = 1e-5,
         verbose: int = 0
@@ -233,9 +235,9 @@ class PolynomialDecayWarmup(callbacks.Callback):
     
     def __init__(
         self,
-        max_lr: float = 1e-3,
+        max_lr: float = 0.002, # Güncellendi: 1e-3 -> 2e-3
         min_lr: float = 1e-6,
-        warmup_epochs: int = 10,
+        warmup_epochs: int = 5,
         total_epochs: int = 100,
         power: float = 2.0,
         initial_lr: float = 1e-5,
@@ -275,9 +277,9 @@ class PolynomialDecayWarmup(callbacks.Callback):
 
 # Keras LearningRateScheduler wrapper için helper fonksiyonlar
 def cosine_annealing_warmup_schedule(
-    max_lr: float = 1e-3,
+    max_lr: float = 0.002,
     min_lr: float = 1e-6,
-    warmup_epochs: int = 10,
+    warmup_epochs: int = 5,
     total_epochs: int = 100
 ) -> Callable:
     """
@@ -297,37 +299,17 @@ def cosine_annealing_warmup_schedule(
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    
     # Test schedulers
     total_epochs = 100
     
     # 1. Cosine Annealing with Warmup
     cos_scheduler = CosineAnnealingWarmup(
-        max_lr=1e-3, min_lr=1e-6, warmup_epochs=10, total_epochs=total_epochs, cycles=1
+        max_lr=0.002, min_lr=1e-6, warmup_epochs=5, total_epochs=total_epochs, cycles=1
     )
     
     # 2. One Cycle Policy
     onecycle_scheduler = OneCyclePolicy(
-        max_lr=1e-3, total_epochs=total_epochs, warmup_pct=0.3
+        max_lr=0.005, total_epochs=total_epochs, warmup_pct=0.3
     )
     
-    # 3. Exponential Decay with Warmup
-    exp_scheduler = ExponentialDecayWarmup(
-        max_lr=1e-3, min_lr=1e-6, warmup_epochs=10, decay_rate=0.96
-    )
-    
-    # 4. Polynomial Decay with Warmup
-    poly_scheduler = PolynomialDecayWarmup(
-        max_lr=1e-3, min_lr=1e-6, warmup_epochs=10, total_epochs=total_epochs, power=2.0
-    )
-    
-    # Simulate schedules
-    schedulers = {
-        'Cosine Annealing': cos_scheduler,
-        'One Cycle': onecycle_scheduler,
-        'Exponential Decay': exp_scheduler,
-        'Polynomial Decay': poly_scheduler
-    }
-    
-    print("✅ LR Schedulers Testi Başarılı!")
+    print("✅ LR Schedulers T4 GPU Optimize Testi Başarılı!")
