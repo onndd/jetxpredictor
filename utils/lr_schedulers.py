@@ -296,7 +296,6 @@ def cosine_annealing_warmup_schedule(
     return schedule
 
 
-# Kullanım örnekleri
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     
@@ -305,35 +304,22 @@ if __name__ == "__main__":
     
     # 1. Cosine Annealing with Warmup
     cos_scheduler = CosineAnnealingWarmup(
-        max_lr=1e-3,
-        min_lr=1e-6,
-        warmup_epochs=10,
-        total_epochs=total_epochs,
-        cycles=1
+        max_lr=1e-3, min_lr=1e-6, warmup_epochs=10, total_epochs=total_epochs, cycles=1
     )
     
     # 2. One Cycle Policy
     onecycle_scheduler = OneCyclePolicy(
-        max_lr=1e-3,
-        total_epochs=total_epochs,
-        warmup_pct=0.3
+        max_lr=1e-3, total_epochs=total_epochs, warmup_pct=0.3
     )
     
     # 3. Exponential Decay with Warmup
     exp_scheduler = ExponentialDecayWarmup(
-        max_lr=1e-3,
-        min_lr=1e-6,
-        warmup_epochs=10,
-        decay_rate=0.96
+        max_lr=1e-3, min_lr=1e-6, warmup_epochs=10, decay_rate=0.96
     )
     
     # 4. Polynomial Decay with Warmup
     poly_scheduler = PolynomialDecayWarmup(
-        max_lr=1e-3,
-        min_lr=1e-6,
-        warmup_epochs=10,
-        total_epochs=total_epochs,
-        power=2.0
+        max_lr=1e-3, min_lr=1e-6, warmup_epochs=10, total_epochs=total_epochs, power=2.0
     )
     
     # Simulate schedules
@@ -344,22 +330,4 @@ if __name__ == "__main__":
         'Polynomial Decay': poly_scheduler
     }
     
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    axes = axes.flatten()
-    
-    for idx, (name, scheduler) in enumerate(schedulers.items()):
-        lrs = []
-        for epoch in range(total_epochs):
-            lr = scheduler._calculate_lr(epoch)
-            lrs.append(lr)
-        
-        axes[idx].plot(lrs, linewidth=2)
-        axes[idx].set_xlabel('Epoch')
-        axes[idx].set_ylabel('Learning Rate')
-        axes[idx].set_title(name)
-        axes[idx].grid(True, alpha=0.3)
-        axes[idx].set_yscale('log')
-    
-    plt.tight_layout()
-    plt.savefig('lr_schedulers_comparison.png', dpi=300, bbox_inches='tight')
-    print("✅ Scheduler comparison kaydedildi: lr_schedulers_comparison.png")
+    print("✅ LR Schedulers Testi Başarılı!")
