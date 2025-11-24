@@ -13,6 +13,7 @@ MİMARİ:
 GÜNCELLEME (v5.2):
 - ✅ Class Weight Düzeltmesi: 25x -> 2.0x (Lazy Learning Çözümü)
 - ✅ Callback Parametre Hataları Giderildi
+- ✅ LR Scheduler String Hatası Giderildi
 - ✅ 2 MODLU YAPI: Normal (0.85) ve Rolling (0.95)
 - ✅ ÇİFT KASA SİMÜLASYONU: Canlı izleme
 
@@ -52,8 +53,7 @@ print()
 print("📦 Kütüphaneler kontrol ediliyor...")
 required_packages = [
     "tensorflow", "scikit-learn", "pandas", "numpy", 
-    "scipy", "joblib", "matplotlib", "seaborn", "tqdm",
-    "PyWavelets", "nolds"
+    "scipy", "joblib", "matplotlib", "seaborn", "tqdm"
 ]
 
 for package in required_packages:
@@ -77,9 +77,12 @@ from tqdm.auto import tqdm
 
 # Proje kök dizinini ayarla
 if not os.path.exists('jetxpredictor') and not os.path.exists('jetx_data.db'):
-    print("\n📥 Proje klonlanıyor...")
-    subprocess.check_call(["git", "clone", "https://github.com/onndd/jetxpredictor.git"])
-    os.chdir('jetxpredictor')
+    if os.path.exists('../jetxpredictor'):
+        os.chdir('../jetxpredictor')
+    else:
+        print("\n📥 Proje klonlanıyor...")
+        subprocess.check_call(["git", "clone", "https://github.com/onndd/jetxpredictor.git"])
+        os.chdir('jetxpredictor')
 
 sys.path.append(os.getcwd())
 
@@ -271,10 +274,9 @@ class LightweightTransformerEncoder(layers.Layer):
         return config
 
 # --- D. CUSTOM CALLBACKS ---
-class AdaptiveLearningRateScheduler(callbacks.Callback):
+class AdaptiveLearningRateScheduler:
     """Model performansına göre learning rate'i adapte eden scheduler"""
     def __init__(self, initial_lr=0.001, max_lr=0.01, min_lr=0.0001, patience=5, factor=0.5):
-        super().__init__()
         self.initial_lr = initial_lr
         self.max_lr = max_lr
         self.min_lr = min_lr
@@ -284,7 +286,7 @@ class AdaptiveLearningRateScheduler(callbacks.Callback):
         self.patience_counter = 0
         self.current_lr = initial_lr
 
-    def on_epoch_end(self, epoch, logs=None):
+    def __call__(self, epoch, logs=None):
         # Loss azaldıkça score artar (-loss)
         current_score = -logs.get('val_loss', 0)
         
@@ -296,12 +298,9 @@ class AdaptiveLearningRateScheduler(callbacks.Callback):
             
         if self.patience_counter >= self.patience:
             self.current_lr = max(self.current_lr * self.factor, self.min_lr)
-            K.set_value(self.model.optimizer.learning_rate, self.current_lr)
             self.patience_counter = 0
             print(f"\n📉 LR Azaltıldı: {self.current_lr:.6f}")
-            
-    def __call__(self, epoch, logs=None):
-        # Manüel çağırma desteği (eğer gerekirse)
+        
         return self.current_lr
 
 class DynamicWeightCallback(callbacks.Callback):
@@ -339,7 +338,7 @@ class DynamicWeightCallback(callbacks.Callback):
             if below_acc < 0.50: self.current_weight *= 1.1
             elif below_acc > 0.80: self.current_weight *= 0.95
             
-            # Limitler (1.0 - 10.0 arası)
+            # Limitler (1.0 - 10.0 arası) - Lazy learning önlemek için max düşürüldü
             self.current_weight = max(1.0, min(10.0, self.current_weight))
             
             print(f"\n⚖️  Epoch {epoch}: Class Weight {old_weight:.2f} -> {self.current_weight:.2f} (1.5 Altı Acc: {below_acc:.2%})")
@@ -445,10 +444,10 @@ class VirtualBankrollCallback(callbacks.Callback):
 class WeightedModelCheckpoint(callbacks.Callback):
     """
     AKILLI MODEL SEÇİMİ:
-    - ROI (Normal): %40 (Para kazanma potansiyeli)
-    - Rolling Acc: %30 (Güvenilirlik testi)
-    - Precision: %20 (Yanlış alarmdan kaçınma)
-    - Win Rate: %10 (Kazanma sıklığı)
+    - ROI (Normal): %40
+    - Rolling Acc: %30
+    - Precision: %20
+    - Win Rate: %10
     """
     def __init__(self, filepath, validation_data):
         super().__init__()
@@ -478,7 +477,6 @@ class WeightedModelCheckpoint(callbacks.Callback):
             
             # --- Normal Mod Metrikleri ---
             y_pred_norm = (threshold_preds >= THRESHOLD_NORMAL).astype(int)
-            TN = np.sum((y_true == 0) & (y_pred_norm == 0))
             FP = np.sum((y_true == 0) & (y_pred_norm == 1))
             TP = np.sum((y_true == 1) & (y_pred_norm == 1))
             precision = (TP / (TP + FP) * 100) if (TP + FP) > 0 else 0
@@ -501,9 +499,8 @@ class WeightedModelCheckpoint(callbacks.Callback):
             win_rate = (wins / total_bets) * 100 if total_bets > 0 else 0
             normalized_roi = self.normalize_roi(roi)
             
-            # --- Rolling Mod Metrikleri (YENİ) ---
+            # --- Rolling Mod Metrikleri ---
             y_pred_roll = (threshold_preds >= THRESHOLD_ROLLING).astype(int)
-            # Rolling Accuracy: Sadece 0.95 üstü tahmin yapılan anlardaki doğruluk
             roll_mask = y_pred_roll == 1
             if roll_mask.sum() > 0:
                 roll_acc = accuracy_score(y_true[roll_mask], y_pred_roll[roll_mask]) * 100
@@ -532,7 +529,6 @@ class WeightedModelCheckpoint(callbacks.Callback):
 print("\n📊 Veri yükleniyor...")
 if not os.path.exists('jetx_data.db'):
     print("⚠️ jetx_data.db bulunamadı! Sentetik veri oluşturuluyor...")
-    # Sentetik veri oluşturma (Fallback)
     all_values = np.random.lognormal(0.5, 0.8, 5000)
     all_values = np.clip(all_values, 1.0, 100.0)
 else:
