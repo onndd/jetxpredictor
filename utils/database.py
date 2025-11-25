@@ -114,6 +114,20 @@ class DatabaseManager:
             logger.error(f"Veritabanı bağlantı hatası: {e}", exc_info=True)
             raise
     
+    def _clean_value(self, value):
+        """Veritabanından gelen kirli veriyi temizler"""
+        try:
+            if isinstance(value, (int, float)):
+                return float(value)
+            # Unicode karakterleri temizle
+            val_str = str(value).replace('\u2028', '').replace('\u2029', '').strip()
+            # Birden fazla değer varsa ilkini al (örn: "2.29 1.29")
+            if ' ' in val_str:
+                val_str = val_str.split()[0]
+            return float(val_str)
+        except:
+            return None
+
     def get_all_results(self, limit: Optional[int] = None) -> List[float]:
         """Tüm JetX sonuçlarını getirir"""
         conn = None
@@ -126,12 +140,19 @@ class DatabaseManager:
             else:
                 cursor.execute("SELECT value FROM jetx_results ORDER BY id")
             
-            results = [row[0] for row in cursor.fetchall()]
+            raw_results = [row[0] for row in cursor.fetchall()]
+            
+            # VERİ TEMİZLEME İŞLEMİ
+            clean_results = []
+            for val in raw_results:
+                cleaned = self._clean_value(val)
+                if cleaned is not None:
+                    clean_results.append(cleaned)
             
             if limit:
-                results.reverse()
+                clean_results.reverse()
             
-            return results
+            return clean_results
         except Exception as e:
             logger.error(f"Hata (get_all_results): {e}")
             return []
