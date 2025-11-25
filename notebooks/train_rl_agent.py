@@ -1,376 +1,772 @@
 #!/usr/bin/env python3
 """
-🤖 RL Agent Training Script (v2.1 FIXED)
+🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim Stratejisi (v5.3 FIXED)
 
-Reinforcement Learning Agent'ı eğitir.
-Policy Gradient (REINFORCE) algoritması kullanır.
+BU DOSYA TEK BAŞINA ÇALIŞIR (STANDALONE).
+Tüm yardımcı sınıflar, loss fonksiyonları ve katmanlar içine gömülmüştür.
 
-GÜNCELLEME (v2.1):
-- ✅ Robust Path Handling: Dosya yolları garantiye alındı.
-- ✅ Fallback Mechanism: Diğer modeller eğitilmemişse bile çökmeden çalışır (Mock Predictor).
-- ✅ Database Protection: Veritabanı yoksa sentetik veri kullanır.
-- ✅ 2 Modlu Yapı: Normal (0.85) ve Rolling (0.95) uyumlu.
+MİMARİ:
+- Inputs: Features + 4 Sequence (50, 200, 500, 1000)
+- Layers: N-Beats + TCN + Transformer Encoder + Fusion
+- Outputs: Regression (Değer), Classification (3 Sınıf), Threshold (Binary)
+
+GÜNCELLEME (v5.3):
+- ✅ Veri Temizleme Bloğu Eklendi (String -> Float).
+- ✅ Class Weight Düzeltmesi: 25x -> 2.0x (Lazy Learning Çözümü)
+- ✅ Callback Parametre Hataları Giderildi
+- ✅ 2 MODLU YAPI: Normal (0.85) ve Rolling (0.95)
 """
 
-import numpy as np
-import pandas as pd
-import sqlite3
-import os
+import subprocess
 import sys
-import json
-import logging
+import os
+import time
 from datetime import datetime
-from typing import List, Dict, Tuple
-from tqdm import tqdm
+import json
+import shutil
+import pickle
 import warnings
+import math
+import random
 
 # Uyarıları kapat
 warnings.filterwarnings('ignore')
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-# Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+print("="*80)
+print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim (v5.3 FIXED)")
+print("="*80)
+print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # -----------------------------------------------------------------------------
-# 1. ORTAM VE DOSYA YOLU AYARLARI
+# 1. KÜTÜPHANE KURULUMU VE İMPORTLAR
 # -----------------------------------------------------------------------------
-def setup_project_path():
-    """Proje kök dizinini bulur ve sys.path'e ekler"""
-    current_dir = os.getcwd()
-    possible_paths = [
-        current_dir,
-        os.path.join(current_dir, 'jetxpredictor'),
-        os.path.dirname(os.path.abspath(__file__)), # notebooks klasörü
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # proje kök dizini
-    ]
-    
-    project_root = None
-    for path in possible_paths:
-        if os.path.exists(os.path.join(path, 'category_definitions.py')):
-            project_root = path
-            break
-    
-    if project_root:
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
-        print(f"✅ Proje kök dizini ayarlandı: {project_root}")
-        return project_root
+print("📦 Kütüphaneler kontrol ediliyor...")
+required_packages = [
+    "tensorflow", "scikit-learn", "pandas", "numpy", 
+    "scipy", "joblib", "matplotlib", "seaborn", "tqdm"
+]
+
+for package in required_packages:
+    try:
+        __import__(package)
+    except ImportError:
+        print(f"   ⬇️ {package} kuruluyor...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", package])
+
+import numpy as np
+import pandas as pd
+import joblib
+import sqlite3
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras import layers, models, callbacks, backend as K
+from tensorflow.keras.optimizers import Adam
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score, confusion_matrix, classification_report
+from tqdm.auto import tqdm
+
+# Proje kök dizinini ayarla
+if not os.path.exists('jetxpredictor') and not os.path.exists('jetx_data.db'):
+    if os.path.exists('../jetxpredictor'):
+        os.chdir('../jetxpredictor')
     else:
-        # Son çare: çalışılan dizini ekle
-        sys.path.insert(0, current_dir)
-        print(f"⚠️ Proje kökü tam tespit edilemedi, mevcut dizin kullanılıyor: {current_dir}")
-        return current_dir
+        print("\n📥 Proje klonlanıyor...")
+        subprocess.check_call(["git", "clone", "https://github.com/onndd/jetxpredictor.git"])
+        os.chdir('jetxpredictor')
 
-PROJECT_ROOT = setup_project_path()
-
-# Kütüphane kontrolü
-try:
-    import tensorflow as tf
-    from tensorflow.keras import models, layers, optimizers, callbacks
-    from sklearn.preprocessing import StandardScaler
-    import joblib
-except ImportError as e:
-    print(f"❌ Kritik kütüphane eksik: {e}")
-    sys.exit(1)
+sys.path.append(os.getcwd())
 
 # GPU Ayarları
+print("\n🚀 GPU Ayarları Yapılandırılıyor...")
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"✅ GPU Aktif: {len(gpus)} adet")
+        from tensorflow.keras import mixed_precision
+        mixed_precision.set_global_policy('mixed_float16')
+        print(f"✅ GPU Aktif: {len(gpus)} adet (Mixed Precision)")
     except RuntimeError as e:
         print(f"⚠️ GPU Hatası: {e}")
+else:
+    print("⚠️ GPU Bulunamadı! CPU modunda devam ediliyor.")
 
-# Proje importları
-try:
-    from category_definitions import FeatureEngineering
-    from utils.all_models_predictor import AllModelsPredictor
-    from utils.psychological_analyzer import PsychologicalAnalyzer
-    from utils.anomaly_streak_detector import AnomalyStreakDetector
-    from utils.risk_manager import RiskManager
-    from utils.advanced_bankroll import AdvancedBankrollManager
-    from utils.rl_agent import RLAgent
-except ImportError as e:
-    print(f"⚠️ Modül import uyarısı (Mock nesneler kullanılacak): {e}")
+# Kritik Eşikler
+THRESHOLD_NORMAL = 0.85
+THRESHOLD_ROLLING = 0.95
 
-# -----------------------------------------------------------------------------
-# 2. YARDIMCI SINIFLAR
-# -----------------------------------------------------------------------------
+# =============================================================================
+# 2. GÖMÜLÜ YARDIMCI MODÜLLER
+# =============================================================================
 
-class MockPredictor:
-    """
-    Eğer diğer modeller (NN, CatBoost) henüz eğitilmemişse
-    RL Agent eğitiminin çökmemesi için rastgele/mantıklı tahminler üretir.
-    """
-    def predict_all(self, history: np.ndarray) -> Dict:
-        # Basit bir "trend takip eden" sanal tahmin üret
-        recent_avg = np.mean(history[-10:]) if len(history) >= 10 else 1.5
-        
-        # Rastgelelik ekle ama trende sadık kal
-        pred_val = max(1.0, recent_avg + np.random.normal(0, 0.5))
-        conf = min(0.99, max(0.5, 0.7 + np.random.normal(0, 0.1)))
-        
-        is_normal = conf >= 0.85
-        is_rolling = conf >= 0.95
-        
-        return {
-            'consensus': {
-                'prediction': pred_val,
-                'confidence': conf,
-                'above_threshold': pred_val >= 1.5,
-                'is_normal': is_normal,
-                'is_rolling': is_rolling
-            }
-        }
-
-class RLAgentTrainer:
-    """RL Agent eğitici sınıfı"""
+# --- A. FEATURE ENGINEERING & DEFINITIONS ---
+class CategoryDefinitions:
+    """Kategori tanımları"""
+    CRITICAL_THRESHOLD = 1.5
     
-    def __init__(
-        self,
-        state_dim: int = 200,
-        action_dim: int = 4, # 0: Bekle, 1: Rolling, 2: Normal, 3: Normal
-        learning_rate: float = 0.001,
-        batch_size: int = 32
-    ):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.learning_rate = learning_rate
-        self.batch_size = batch_size
-        self.scaler = StandardScaler()
-        self.model = None
-        
-        # Analyzers (Hata korumalı)
-        try:
-            self.psychological_analyzer = PsychologicalAnalyzer(threshold=1.5)
-            self.anomaly_detector = AnomalyStreakDetector(threshold=1.5)
-        except:
-            self.psychological_analyzer = None
-            self.anomaly_detector = None
-        
-    def build_model(self) -> tf.keras.Model:
-        """Policy Network oluştur"""
-        model = models.Sequential([
-            layers.Dense(256, activation='relu', input_shape=(self.state_dim,)),
-            layers.Dropout(0.3),
-            layers.Dense(128, activation='relu'),
-            layers.Dropout(0.3),
-            layers.Dense(64, activation='relu'),
-            layers.Dropout(0.2),
-            layers.Dense(self.action_dim, activation='softmax')
-        ])
-        
-        model.compile(
-            optimizer=optimizers.Adam(learning_rate=self.learning_rate),
-            loss='categorical_crossentropy',
-            metrics=['accuracy']
-        )
-        self.model = model
-        return model
+    @staticmethod
+    def get_category_numeric(val): 
+        if val < 1.5: return 0
+        elif val < 2.0: return 1
+        else: return 2
+
+class FeatureEngineering:
+    """Özellik çıkarma fonksiyonları"""
     
-    def load_data(self, db_path: str = 'jetx_data.db', min_history: int = 500) -> np.ndarray:
-        """Veritabanından veri yükle (Hata korumalı)"""
-        full_db_path = os.path.join(PROJECT_ROOT, db_path)
+    @staticmethod
+    def extract_all_features(history: list) -> dict:
+        features = {}
+        if not history:
+            return features
+            
+        # Temel istatistikler
+        features['mean_50'] = np.mean(history[-50:]) if len(history) >= 50 else np.mean(history)
+        features['std_50'] = np.std(history[-50:]) if len(history) >= 50 else np.std(history)
+        features['min_50'] = np.min(history[-50:]) if len(history) >= 50 else np.min(history)
+        features['max_50'] = np.max(history[-50:]) if len(history) >= 50 else np.max(history)
         
-        if not os.path.exists(full_db_path):
-            print("⚠️ Veritabanı bulunamadı, sentetik veri oluşturuluyor...")
-            return self._generate_synthetic_data(min_history * 2)
-            
+        # Threshold özellikleri
+        recent_10 = history[-10:] if len(history) >= 10 else history
+        features['below_threshold_10'] = sum(1 for x in recent_10 if x < 1.5)
+        features['above_threshold_10'] = sum(1 for x in recent_10 if x >= 1.5)
+        
+        # Volatilite
+        if len(history) >= 20:
+            recent_20 = history[-20:]
+            features['volatility_20'] = np.std(recent_20) / (np.mean(recent_20) + 1e-8)
+        else:
+            features['volatility_20'] = 0.0
+        
+        # Son değerler
+        features['last_val'] = history[-1]
+        features['diff_1'] = history[-1] - history[-2] if len(history) > 1 else 0
+        
+        return features
+
+# --- B. CUSTOM LOSS FUNCTIONS ---
+def percentage_aware_regression_loss(y_true, y_pred):
+    epsilon = K.epsilon()
+    percentage_error = K.abs(y_true - y_pred) / (K.abs(y_true) + epsilon)
+    high_value_weight = tf.where(y_true >= 5.0, 1.2, 1.0)
+    weighted_percentage_error = percentage_error * high_value_weight
+    return K.mean(weighted_percentage_error)
+
+def balanced_focal_loss(gamma=2.0, alpha=0.7):
+    def loss(y_true, y_pred):
+        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+        pt = y_true * y_pred + (1 - y_true) * (1 - y_pred)
+        focal_weight = alpha * K.pow(1 - pt, gamma)
+        return -K.mean(focal_weight * K.log(pt))
+    return loss
+
+def create_weighted_binary_crossentropy(weight_0, weight_1):
+    def loss(y_true, y_pred):
+        y_pred = K.clip(y_pred, K.epsilon(), 1 - K.epsilon())
+        bce = -(y_true * K.log(y_pred) + (1 - y_true) * K.log(1 - y_pred))
+        weights = y_true * weight_1 + (1 - y_true) * weight_0
+        return K.mean(bce * weights)
+    return loss
+
+# --- C. ATTENTION & TRANSFORMER LAYERS ---
+class PositionalEncoding(layers.Layer):
+    def __init__(self, max_seq_len=1000, d_model=256, **kwargs):
+        super().__init__(**kwargs)
+        self.max_seq_len = max_seq_len
+        self.d_model = d_model
+        self.pe = None
+        
+    def build(self, input_shape):
+        position = tf.range(self.max_seq_len, dtype=tf.float32)[:, tf.newaxis]
+        div_term = tf.exp(tf.range(0, self.d_model, 2, dtype=tf.float32) * -(tf.math.log(10000.0) / self.d_model))
+        pe_sin = tf.sin(position * div_term)
+        pe_cos = tf.cos(position * div_term)
+        pe_list = []
+        for i in range(self.d_model):
+            if i % 2 == 0: pe_list.append(pe_sin[:, i // 2:i // 2 + 1])
+            else: pe_list.append(pe_cos[:, i // 2:i // 2 + 1])
+        pe = tf.concat(pe_list, axis=1)
+        self.pe = tf.constant(pe, dtype=tf.float32)
+        super().build(input_shape)
+    
+    def call(self, x):
+        seq_len = tf.shape(x)[1]
+        return x + self.pe[:seq_len, :]
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({'max_seq_len': self.max_seq_len, 'd_model': self.d_model})
+        return config
+
+class LightweightTransformerEncoder(layers.Layer):
+    def __init__(self, d_model=256, num_layers=4, num_heads=8, dff=1024, dropout=0.2, **kwargs):
+        super().__init__(**kwargs)
+        self.d_model = d_model
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.dff = dff
+        self.dropout_rate = dropout
+        self.input_projection = layers.Dense(d_model)
+        self.pos_encoding = PositionalEncoding(max_seq_len=1000, d_model=d_model)
+        self.encoder_layers = []
+        for _ in range(num_layers):
+            self.encoder_layers.append({
+                'mha': layers.MultiHeadAttention(num_heads=num_heads, key_dim=d_model // num_heads, dropout=dropout),
+                'ffn': tf.keras.Sequential([layers.Dense(dff, activation='relu'), layers.Dropout(dropout), layers.Dense(d_model)]),
+                'layernorm1': layers.LayerNormalization(epsilon=1e-6),
+                'layernorm2': layers.LayerNormalization(epsilon=1e-6),
+                'dropout1': layers.Dropout(dropout),
+                'dropout2': layers.Dropout(dropout)
+            })
+        self.global_pool = layers.GlobalAveragePooling1D()
+        self.output_projection = layers.Dense(d_model)
+        self.dropout_final = layers.Dropout(dropout)
+    
+    def call(self, inputs, training=None):
+        x = self.input_projection(inputs)
+        x = self.pos_encoding(x)
+        for layer in self.encoder_layers:
+            attn_output = layer['mha'](query=x, key=x, value=x, training=training)
+            attn_output = layer['dropout1'](attn_output, training=training)
+            x = layer['layernorm1'](x + attn_output)
+            ffn_output = layer['ffn'](x)
+            ffn_output = layer['dropout2'](ffn_output, training=training)
+            x = layer['layernorm2'](x + ffn_output)
+        x = self.global_pool(x)
+        x = self.output_projection(x)
+        x = self.dropout_final(x, training=training)
+        return x
+    
+    def get_config(self):
+        config = super().get_config()
+        config.update({'d_model': self.d_model, 'num_layers': self.num_layers, 'num_heads': self.num_heads, 'dff': self.dff, 'dropout': self.dropout_rate})
+        return config
+
+# --- D. CUSTOM CALLBACKS ---
+class AdaptiveLearningRateScheduler:
+    def __init__(self, initial_lr=0.001, max_lr=0.01, min_lr=0.0001, patience=5, factor=0.5):
+        self.initial_lr = initial_lr
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.patience = patience
+        self.factor = factor
+        self.best_score = float('-inf')
+        self.patience_counter = 0
+        self.current_lr = initial_lr
+
+    def __call__(self, epoch, logs=None):
+        current_score = -logs.get('val_loss', 0)
+        if current_score > self.best_score:
+            self.best_score = current_score
+            self.patience_counter = 0
+        else:
+            self.patience_counter += 1
+        if self.patience_counter >= self.patience:
+            self.current_lr = max(self.current_lr * self.factor, self.min_lr)
+            self.patience_counter = 0
+            print(f"\n📉 LR Azaltıldı: {self.current_lr:.6f}")
+        return self.current_lr
+
+class DynamicWeightCallback(callbacks.Callback):
+    def __init__(self, validation_data, initial_weight=2.0):
+        super().__init__()
+        self.validation_data = validation_data
+        self.current_weight = initial_weight
+        
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch % 5 != 0: return
         try:
-            conn = sqlite3.connect(full_db_path)
-            data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
-            conn.close()
-            
-            values = data['value'].values
-            if len(values) < min_history:
-                print(f"⚠️ Yetersiz veri ({len(values)}), sentetik veri ile tamamlanıyor...")
-                synthetic = self._generate_synthetic_data(min_history * 2)
-                return np.concatenate([values, synthetic])
-                
-            print(f"✅ {len(values):,} veri yüklendi")
-            return values
+            X_val_data, y_val_data = self.validation_data
+            y_thr_val = y_val_data.get('threshold') if isinstance(y_val_data, dict) else y_val_data
+            preds = self.model.predict(X_val_data, verbose=0)
+            p = preds[2].flatten()
+            t = y_thr_val.flatten()
+            p_cls = (p >= THRESHOLD_NORMAL).astype(int)
+            t_cls = (t >= 1.5).astype(int)
+            mask_below = t_cls == 0
+            below_acc = accuracy_score(t_cls[mask_below], p_cls[mask_below]) if mask_below.sum() > 0 else 0
+            if below_acc < 0.50: self.current_weight *= 1.1
+            elif below_acc > 0.80: self.current_weight *= 0.95
+            self.current_weight = max(1.0, min(10.0, self.current_weight))
+            print(f"\n⚖️  Epoch {epoch}: Class Weight {self.current_weight:.2f} (1.5 Altı Acc: {below_acc:.2%})")
         except Exception as e:
-            print(f"⚠️ Veritabanı okuma hatası: {e}, sentetik veri kullanılıyor.")
-            return self._generate_synthetic_data(min_history * 2)
+            print(f"⚠️ DynamicWeightCallback hatası: {e}")
 
-    def _generate_synthetic_data(self, count):
-        return np.random.lognormal(0.5, 0.8, count).clip(1.0, 100.0)
-    
-    def calculate_reward(self, action, predicted_value, actual_value, bet_amount, bankroll):
-        """Reward hesapla"""
-        if action == 0:  # BEKLE
-            return 0.1 if actual_value < 1.5 else -0.05
-        
-        # BAHIS YAP
-        if actual_value >= 1.5:
-            if action == 1:  # ROLLING
-                profit = bet_amount * 0.5 # 1.5x çıkış
-                return profit / bankroll * 10.0
-            elif action >= 2:  # NORMAL
-                exit_mult = min(predicted_value * 0.8, 2.5)
-                if actual_value >= exit_mult:
-                    profit = bet_amount * (exit_mult - 1.0)
-                    return profit / bankroll * 12.0
-                else:
-                    return -bet_amount / bankroll * 5.0
-        else:
-            return -bet_amount / bankroll * 10.0
+class ProgressiveMetricsCallback(callbacks.Callback):
+    def __init__(self, validation_data):
+        super().__init__()
+        self.validation_data = validation_data
 
-    def prepare_training_data(self, values, predictor, window_size=500, sample_ratio=0.1):
-        """Eğitim verisi hazırla"""
-        print("🔨 Eğitim verisi hazırlanıyor...")
-        states, actions, rewards = [], [], []
-        
-        # Hız için verinin bir kısmını kullan
-        total = len(values) - window_size - 1
-        indices = np.linspace(0, total-1, int(total * sample_ratio)).astype(int)
-        
-        # RL Agent instance (state vector oluşturmak için)
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch % 5 != 0: return
         try:
-            temp_agent = RLAgent()
-        except:
-            # Fallback agent class
-            class TempAgent:
-                def create_state_vector(self, **kwargs): return np.zeros(200)
-            temp_agent = TempAgent()
-        
-        bankroll = 1000.0
-        
-        for idx in tqdm(indices, desc="Veri Hazırlığı"):
-            try:
-                history = values[:window_size + idx]
-                actual = values[window_size + idx]
-                
-                # Tahmin al
-                preds = predictor.predict_all(history)
-                cons = preds.get('consensus', {})
-                
-                # State oluştur
-                state = temp_agent.create_state_vector(
-                    history=history.tolist(),
-                    model_predictions=preds,
-                    bankroll_manager=None
-                )
-                
-                # Optimal action (Etiketleme)
-                conf = cons.get('confidence', 0.5)
-                if conf >= 0.95: optimal = 1 # Rolling
-                elif conf >= 0.85: optimal = 2 # Normal
-                else: optimal = 0 # Bekle
-                
-                # Reward
-                bet = 0
-                if optimal == 1: bet = bankroll * 0.02
-                elif optimal >= 2: bet = bankroll * 0.04
-                
-                r = self.calculate_reward(optimal, cons.get('prediction', 1.5), actual, bet, bankroll)
-                
-                states.append(state)
-                actions.append(optimal)
-                rewards.append(r)
-                
-            except Exception:
-                continue
-                
-        return np.array(states), tf.keras.utils.to_categorical(actions, num_classes=4), np.array(rewards)
+            X_val_data, y_val_data = self.validation_data
+            y_reg_val = y_val_data.get('regression') if isinstance(y_val_data, dict) else y_val_data
+            preds = self.model.predict(X_val_data, verbose=0)
+            p = preds[2].flatten()
+            t = (y_reg_val >= 1.5).astype(int)
+            acc_norm = accuracy_score(t, (p >= THRESHOLD_NORMAL).astype(int))
+            acc_roll = accuracy_score(t, (p >= THRESHOLD_ROLLING).astype(int))
+            print(f"\n📊 Epoch {epoch+1} Metrics: Normal: {acc_norm:.2%} | Rolling: {acc_roll:.2%}")
+        except Exception as e:
+            print(f"⚠️ Metrics Callback Hatası: {e}")
 
-    def train(self, states, actions, rewards, epochs=20):
-        """Model eğit"""
-        print(f"🚀 Model eğitiliyor ({len(states)} örnek)...")
+class VirtualBankrollCallback(callbacks.Callback):
+    def __init__(self, stage_name, validation_data, starting_capital=1000.0, bet_amount=10.0):
+        super().__init__()
+        self.stage_name = stage_name
+        self.validation_data = validation_data
+        self.starting_capital = starting_capital
+        self.bet_amount = bet_amount
+        self.best_roi_normal = -float('inf')
+        self.best_roi_rolling = -float('inf')
         
-        self.scaler.fit(states)
-        states_scaled = self.scaler.transform(states)
-        
-        # Sample weights from rewards
-        sample_weights = (rewards - rewards.min()) / (rewards.max() - rewards.min() + 1e-8)
-        
-        callbacks_list = [
-            callbacks.EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
-        ]
-        
-        history = self.model.fit(
-            states_scaled, actions,
-            sample_weight=sample_weights,
-            epochs=epochs,
-            batch_size=self.batch_size,
-            callbacks=callbacks_list,
-            verbose=1
-        )
-        return history
-        
-    def save(self, path='models/rl_agent_model.h5'):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.model.save(path)
-        scaler_path = path.replace('.h5', '_scaler.pkl')
-        joblib.dump(self.scaler, scaler_path)
-        print(f"💾 Model kaydedildi: {path}")
-
-# -----------------------------------------------------------------------------
-# 3. ANA EĞİTİM DÖNGÜSÜ
-# -----------------------------------------------------------------------------
-def main():
-    print("="*80)
-    print("🤖 RL AGENT TRAINING (ROBUST MODE)")
-    print("="*80)
-    
-    trainer = RLAgentTrainer()
-    trainer.build_model()
-    
-    # Veri yükle
-    values = trainer.load_data()
-    
-    # Predictor yükle (Hata korumalı)
-    print("\n📦 Tahmin Modelleri Yükleniyor...")
-    try:
-        predictor = AllModelsPredictor()
-        loaded = predictor.load_all_models()
-        
-        # Eğer hiçbir model yüklenemediyse Mock kullan
-        if not any(loaded.values()):
-            print("⚠️ Hiçbir model bulunamadı! Mock Predictor devreye giriyor.")
-            print("   Bu sayede RL Agent eğitim süreci test edilebilir.")
-            predictor = MockPredictor()
-        else:
-            print(f"✅ {sum(loaded.values())} model yüklendi.")
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch % 5 != 0: return
+        try:
+            X_val_data, y_val_data = self.validation_data
+            y_reg_val = y_val_data.get('regression') if isinstance(y_val_data, dict) else y_val_data
+            preds = self.model.predict(X_val_data, verbose=0)
+            p_thr = preds[2].flatten()
+            p_reg = preds[0].flatten()
+            actuals = y_reg_val.flatten()
             
-    except Exception as e:
-        print(f"⚠️ Model yükleme hatası: {e}. Mock Predictor kullanılıyor.")
-        predictor = MockPredictor()
-    
-    # Veri hazırla
-    states, actions, rewards = trainer.prepare_training_data(values, predictor)
-    
-    # Eğer veri oluşmadıysa (örn. çok kısa history), yapay veri üret
-    if len(states) < 10:
-        print("⚠️ Yetersiz eğitim verisi. Dummy veri ile model başlatılıyor (Placeholder).")
-        states = np.random.random((100, 200))
-        actions = tf.keras.utils.to_categorical(np.random.randint(0, 3, 100), num_classes=4)
-        rewards = np.random.random(100)
-    
-    # Eğit
-    trainer.train(states, actions, rewards)
-    
-    # Kaydet
-    trainer.save()
-    
-    # Info dosyası
-    info = {
-        'model': 'RL_Agent_Robust',
-        'version': '2.1',
-        'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'status': 'Trained (Potentially with Mock Data if models missing)'
-    }
-    
-    try:
-        with open('models/rl_agent_info.json', 'w') as f:
-            json.dump(info, f, indent=2)
-    except:
-        pass
+            wallet1 = self.starting_capital
+            bets1 = 0
+            wallet2 = self.starting_capital
+            bets2 = 0
+            
+            for i in range(len(p_thr)):
+                if p_thr[i] >= THRESHOLD_NORMAL:
+                    wallet1 -= self.bet_amount
+                    bets1 += 1
+                    exit_pt = min(max(1.5, p_reg[i] * 0.8), 2.5)
+                    if actuals[i] >= exit_pt: wallet1 += self.bet_amount * exit_pt
+                if p_thr[i] >= THRESHOLD_ROLLING:
+                    wallet2 -= self.bet_amount
+                    bets2 += 1
+                    if actuals[i] >= 1.5: wallet2 += self.bet_amount * 1.5
+            
+            roi1 = (wallet1 - self.starting_capital) / self.starting_capital * 100
+            roi2 = (wallet2 - self.starting_capital) / self.starting_capital * 100
+            if roi1 > self.best_roi_normal: self.best_roi_normal = roi1
+            if roi2 > self.best_roi_rolling: self.best_roi_rolling = roi2
+            print(f"\n💰 {self.stage_name} KASA: Normal ROI {roi1:+.2f}% | Rolling ROI {roi2:+.2f}%")
+        except Exception as e:
+            print(f"⚠️ Bankroll Callback Hatası: {e}")
 
-    print("\n✅ İŞLEM TAMAMLANDI!")
+class WeightedModelCheckpoint(callbacks.Callback):
+    def __init__(self, filepath, validation_data):
+        super().__init__()
+        self.filepath = filepath
+        self.validation_data = validation_data
+        self.best_score = -float('inf')
+    
+    def normalize_roi(self, roi):
+        return max(0, 40 + roi * 0.4) if roi < 0 else min(100, 50 + roi * 0.5)
+    
+    def on_epoch_end(self, epoch, logs=None):
+        try:
+            X_val_data, y_val_data = self.validation_data
+            y_reg_val = y_val_data.get('regression') if isinstance(y_val_data, dict) else y_val_data
+            preds = self.model.predict(X_val_data, verbose=0)
+            if not (isinstance(preds, list) and len(preds) >= 3): return 
+            threshold_preds = preds[2].flatten()
+            y_true = (y_reg_val.flatten() >= 1.5).astype(int)
+            y_pred_norm = (threshold_preds >= THRESHOLD_NORMAL).astype(int)
+            
+            FP = np.sum((y_true == 0) & (y_pred_norm == 1))
+            TP = np.sum((y_true == 1) & (y_pred_norm == 1))
+            precision = (TP / (TP + FP) * 100) if (TP + FP) > 0 else 0
+            
+            initial = 10000
+            wallet = initial
+            total_bets = 0
+            wins = 0
+            for pred, actual in zip(threshold_preds, y_reg_val.flatten()):
+                if pred >= THRESHOLD_NORMAL:
+                    total_bets += 1
+                    wallet -= 10
+                    if actual >= 1.5:
+                        wallet += 15
+                        wins += 1
+            roi = ((wallet - initial) / initial) * 100 if total_bets > 0 else 0
+            win_rate = (wins / total_bets) * 100 if total_bets > 0 else 0
+            
+            y_pred_roll = (threshold_preds >= THRESHOLD_ROLLING).astype(int)
+            roll_mask = y_pred_roll == 1
+            roll_acc = accuracy_score(y_true[roll_mask], y_pred_roll[roll_mask]) * 100 if roll_mask.sum() > 0 else 0
+            
+            weighted_score = 0.40 * self.normalize_roi(roi) + 0.30 * roll_acc + 0.20 * precision + 0.10 * win_rate
+            
+            if weighted_score > self.best_score:
+                self.best_score = weighted_score
+                self.model.save(self.filepath)
+                print(f"\n✨ YENİ EN İYİ MODEL! Score: {weighted_score:.2f}")
+        except Exception as e:
+            print(f"⚠️ Checkpoint hatası: {e}")
 
-if __name__ == '__main__':
-    main()
+# -----------------------------------------------------------------------------
+# 3. VERİ YÜKLEME VE HAZIRLIK
+# -----------------------------------------------------------------------------
+print("\n📊 Veri yükleniyor...")
+if not os.path.exists('jetx_data.db'):
+    print("⚠️ jetx_data.db bulunamadı! Sentetik veri oluşturuluyor...")
+    all_values = np.random.lognormal(0.5, 0.8, 5000).clip(1.0, 100.0)
+else:
+    conn = sqlite3.connect('jetx_data.db')
+    data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
+    conn.close()
+    
+    # --- VERİ TEMİZLEME (FIX) ---
+    raw_values = data['value'].values
+    cleaned_values = []
+    for val in raw_values:
+        try:
+            val_str = str(val).replace('\u2028', '').replace('\u2029', '').strip()
+            if ' ' in val_str: val_str = val_str.split()[0]
+            cleaned_values.append(float(val_str))
+        except:
+            continue
+    all_values = np.array(cleaned_values)
+    # ----------------------------
+
+print(f"✅ {len(all_values):,} veri temizlendi ve yüklendi")
+
+# Feature Extraction Loop
+print("\n🔧 Feature extraction (Multi-Scale)...")
+window_size = 1000 
+X_f, X_50, X_200, X_500, X_1000 = [], [], [], [], []
+y_reg, y_cls, y_thr = [], [], []
+
+for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
+    hist = all_values[:i].tolist()
+    target = all_values[i]
+    
+    feats = FeatureEngineering.extract_all_features(hist)
+    X_f.append(list(feats.values()))
+    X_50.append(all_values[i-50:i])
+    X_200.append(all_values[i-200:i])
+    X_500.append(all_values[i-500:i])
+    X_1000.append(all_values[i-1000:i])
+    
+    y_reg.append(target)
+    if target < 1.5: cat = 0
+    elif target < 10: cat = 1
+    else: cat = 2
+    onehot = np.zeros(3)
+    onehot[cat] = 1
+    y_cls.append(onehot)
+    y_thr.append(1.0 if target >= 1.5 else 0.0)
+
+X_f = np.array(X_f)
+X_50 = np.array(X_50).reshape(-1, 50, 1)
+X_200 = np.array(X_200).reshape(-1, 200, 1)
+X_500 = np.array(X_500).reshape(-1, 500, 1)
+X_1000 = np.array(X_1000).reshape(-1, 1000, 1)
+y_reg = np.array(y_reg)
+y_cls = np.array(y_cls)
+y_thr = np.array(y_thr).reshape(-1, 1)
+
+print(f"✅ {len(X_f):,} örnek hazırlandı")
+
+print("\n📊 Normalizasyon...")
+scaler = StandardScaler()
+X_f = scaler.fit_transform(X_f)
+X_50 = np.log10(X_50 + 1e-8)
+X_200 = np.log10(X_200 + 1e-8)
+X_500 = np.log10(X_500 + 1e-8)
+X_1000 = np.log10(X_1000 + 1e-8)
+
+print("\n📊 TIME-SERIES SPLIT (Kronolojik)...")
+test_size = 1500
+val_size = 1000
+train_size = len(X_f) - test_size - val_size
+
+X_f_tr = X_f[:train_size]
+X_50_tr = X_50[:train_size]
+X_200_tr = X_200[:train_size]
+X_500_tr = X_500[:train_size]
+X_1000_tr = X_1000[:train_size]
+y_reg_tr = y_reg[:train_size]
+y_cls_tr = y_cls[:train_size]
+y_thr_tr = y_thr[:train_size]
+
+X_f_val = X_f[train_size:train_size+val_size]
+X_50_val = X_50[train_size:train_size+val_size]
+X_200_val = X_200[train_size:train_size+val_size]
+X_500_val = X_500[train_size:train_size+val_size]
+X_1000_val = X_1000[train_size:train_size+val_size]
+y_reg_val = y_reg[train_size:train_size+val_size]
+y_cls_val = y_cls[train_size:train_size+val_size]
+y_thr_val = y_thr[train_size:train_size+val_size]
+
+X_f_te = X_f[train_size+val_size:]
+X_50_te = X_50[train_size+val_size:]
+X_200_te = X_200[train_size+val_size:]
+X_500_te = X_500[train_size+val_size:]
+X_1000_te = X_1000[train_size+val_size:]
+y_reg_te = y_reg[train_size+val_size:]
+y_cls_te = y_cls[train_size+val_size:]
+y_thr_te = y_thr[train_size+val_size:]
+
+print(f"   Train: {len(X_f_tr):,}")
+print(f"   Val:   {len(X_f_val):,}")
+print(f"   Test:  {len(X_f_te):,}")
+
+# -----------------------------------------------------------------------------
+# 4. MODEL MİMARİSİ OLUŞTURMA FONKSİYONU
+# -----------------------------------------------------------------------------
+def build_progressive_model(n_features):
+    inp_f = layers.Input((n_features,), name='features')
+    inp_50 = layers.Input((50, 1), name='seq50')
+    inp_200 = layers.Input((200, 1), name='seq200')
+    inp_500 = layers.Input((500, 1), name='seq500')
+    inp_1000 = layers.Input((1000, 1), name='seq1000')
+    
+    def nbeats_block(x, units, blocks):
+        for _ in range(blocks):
+            x = layers.Dense(units, activation='relu', kernel_regularizer='l2')(x)
+            x = layers.BatchNormalization()(x)
+            x = layers.Dropout(0.2)(x)
+        return x
+
+    nb_s = nbeats_block(layers.Flatten()(inp_50), 128, 5)
+    nb_m = nbeats_block(layers.Flatten()(inp_200), 192, 6)
+    nb_l = nbeats_block(layers.Flatten()(inp_500), 256, 7)
+    nb_xl = nbeats_block(layers.Flatten()(inp_1000), 384, 9)
+    nb_all = layers.Concatenate()([nb_s, nb_m, nb_l, nb_xl])
+    
+    def tcn_block(x, filters, dilation):
+        conv = layers.Conv1D(filters, 3, dilation_rate=dilation, padding='causal', activation='relu')(x)
+        conv = layers.BatchNormalization()(conv)
+        residual = layers.Conv1D(filters, 1, padding='same')(x) if x.shape[-1] != filters else x
+        return layers.Add()([conv, residual])
+    
+    tcn = inp_500
+    for i, dilation in enumerate([1, 2, 4, 8, 16, 32]):
+        filters = 128 if i < 3 else 256
+        tcn = tcn_block(tcn, filters, dilation)
+    tcn = layers.GlobalAveragePooling1D()(tcn)
+    
+    transformer = LightweightTransformerEncoder(
+        d_model=256, num_layers=4, num_heads=8, dff=1024, dropout=0.2
+    )(inp_1000)
+    
+    fus = layers.Concatenate()([inp_f, nb_all, tcn, transformer])
+    fus = layers.Dense(512, activation='relu')(fus)
+    fus = layers.BatchNormalization()(fus)
+    fus = layers.Dropout(0.3)(fus)
+    fus = layers.Dense(256, activation='relu')(fus)
+    fus = layers.Dropout(0.2)(fus)
+    
+    out_reg = layers.Dense(1, activation='linear', name='regression')(fus)
+    out_cls = layers.Dense(3, activation='softmax', name='classification')(fus)
+    out_thr = layers.Dense(1, activation='sigmoid', name='threshold')(fus)
+    
+    return models.Model([inp_f, inp_50, inp_200, inp_500, inp_1000], [out_reg, out_cls, out_thr])
+
+# -----------------------------------------------------------------------------
+# 5. YARDIMCI FONKSİYONLAR (CHECKPOINT)
+# -----------------------------------------------------------------------------
+def save_checkpoint(stage, epoch, model):
+    filename = f'checkpoint_stage{stage}.pkl'
+    checkpoint = {'stage': stage, 'epoch': epoch, 'weights': model.get_weights(), 'timestamp': datetime.now().isoformat()}
+    with open(filename, 'wb') as f: pickle.dump(checkpoint, f)
+    print(f"💾 Stage {stage} checkpoint kaydedildi.")
+
+def load_checkpoint(stage):
+    filename = f'checkpoint_stage{stage}.pkl'
+    if os.path.exists(filename):
+        with open(filename, 'rb') as f: return pickle.load(f)
+    return None
+
+# -----------------------------------------------------------------------------
+# 6. EĞİTİM AŞAMALARI
+# -----------------------------------------------------------------------------
+model = build_progressive_model(X_f.shape[1])
+print(f"\n🏗️ Model oluşturuldu: {model.count_params():,} parametre")
+
+val_data_dict = {'regression': y_reg_val, 'classification': y_cls_val, 'threshold': y_thr_val}
+val_inputs = [X_f_val, X_50_val, X_200_val, X_500_val, X_1000_val]
+
+class AdaptiveLRCallback(callbacks.Callback):
+    def __init__(self, scheduler): super().__init__(); self.scheduler = scheduler
+    def on_epoch_end(self, epoch, logs=None): K.set_value(self.model.optimizer.learning_rate, self.scheduler(epoch, logs or {}))
+
+# --- AŞAMA 1 ---
+print("\n" + "="*60)
+print("🔥 AŞAMA 1: FOUNDATION TRAINING (100 Epoch)")
+print("="*60)
+
+chk1 = load_checkpoint(1)
+if chk1: model.set_weights(chk1['weights']); print("🔄 AŞAMA 1 Checkpoint yüklendi.")
+
+adaptive_scheduler = AdaptiveLearningRateScheduler(initial_lr=0.001, patience=5)
+w0 = 2.0 
+w1 = 1.0
+
+model.compile(
+    optimizer=Adam(0.0001),
+    loss={'regression': percentage_aware_regression_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0, w1)},
+    loss_weights={'regression': 0.65, 'classification': 0.10, 'threshold': 0.25},
+    metrics={'threshold': ['accuracy']}
+)
+
+hist1 = model.fit(
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
+    {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
+    epochs=100, batch_size=64, shuffle=False,
+    validation_data=(val_inputs, val_data_dict),
+    callbacks=[
+        DynamicWeightCallback(validation_data=(val_inputs, val_data_dict), initial_weight=w0),
+        ProgressiveMetricsCallback(validation_data=(val_inputs, val_data_dict)),
+        VirtualBankrollCallback("AŞAMA 1", validation_data=(val_inputs, val_data_dict), starting_capital=1000.0), 
+        AdaptiveLRCallback(adaptive_scheduler),
+        callbacks.EarlyStopping(patience=15, restore_best_weights=True),
+        callbacks.ReduceLROnPlateau(factor=0.5, patience=5)
+    ],
+    verbose=1
+)
+save_checkpoint(1, len(hist1.history['loss']), model)
+
+# --- AŞAMA 2 ---
+print("\n" + "="*60)
+print("🔥 AŞAMA 2: THRESHOLD FINE-TUNING (80 Epoch)")
+print("="*60)
+
+chk2 = load_checkpoint(2)
+if chk2: model.set_weights(chk2['weights'])
+w0_stage2 = 2.5
+
+model.compile(
+    optimizer=Adam(0.00005),
+    loss={'regression': percentage_aware_regression_loss, 'classification': 'categorical_crossentropy', 'threshold': create_weighted_binary_crossentropy(w0_stage2, 1.0)},
+    loss_weights={'regression': 0.55, 'classification': 0.10, 'threshold': 0.35},
+    metrics={'threshold': ['accuracy']}
+)
+
+hist2 = model.fit(
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
+    {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
+    epochs=80, batch_size=32, shuffle=False,
+    validation_data=(val_inputs, val_data_dict),
+    callbacks=[
+        ProgressiveMetricsCallback(validation_data=(val_inputs, val_data_dict)),
+        VirtualBankrollCallback("AŞAMA 2", validation_data=(val_inputs, val_data_dict)),
+        callbacks.EarlyStopping(patience=10, restore_best_weights=True)
+    ],
+    verbose=1
+)
+save_checkpoint(2, len(hist2.history['loss']), model)
+
+# --- AŞAMA 3 ---
+print("\n" + "="*60)
+print("🔥 AŞAMA 3: FULL MODEL FINE-TUNING (80 Epoch)")
+print("="*60)
+
+chk3 = load_checkpoint(3)
+if chk3: model.set_weights(chk3['weights'])
+
+model.compile(
+    optimizer=Adam(0.00001),
+    loss={'regression': percentage_aware_regression_loss, 'classification': 'categorical_crossentropy', 'threshold': balanced_focal_loss(gamma=2.0, alpha=0.7)},
+    loss_weights={'regression': 0.50, 'classification': 0.15, 'threshold': 0.35},
+    metrics={'threshold': ['accuracy']}
+)
+
+checkpoint_callback = WeightedModelCheckpoint(
+    filepath='jetx_progressive_final.h5',
+    validation_data=(val_inputs, val_data_dict)
+)
+
+hist3 = model.fit(
+    [X_f_tr, X_50_tr, X_200_tr, X_500_tr, X_1000_tr],
+    {'regression': y_reg_tr, 'classification': y_cls_tr, 'threshold': y_thr_tr},
+    epochs=80, batch_size=16, shuffle=False,
+    validation_data=(val_inputs, val_data_dict),
+    callbacks=[
+        ProgressiveMetricsCallback(validation_data=(val_inputs, val_data_dict)),
+        VirtualBankrollCallback("AŞAMA 3", validation_data=(val_inputs, val_data_dict)),
+        checkpoint_callback,
+        callbacks.EarlyStopping(patience=8, restore_best_weights=True)
+    ],
+    verbose=1
+)
+save_checkpoint(3, len(hist3.history['loss']), model)
+
+# -----------------------------------------------------------------------------
+# 7. FİNAL DEĞERLENDİRME VE SİMÜLASYON
+# -----------------------------------------------------------------------------
+print("\n" + "="*60)
+print("📊 FİNAL DEĞERLENDİRME & KASA SİMÜLASYONU")
+print("="*60)
+
+if os.path.exists('jetx_progressive_final.h5'):
+    try: model.load_weights('jetx_progressive_final.h5')
+    except: print("⚠️ Ağırlıklar yüklenemedi, mevcut model kullanılıyor.")
+
+pred = model.predict([X_f_te, X_50_te, X_200_te, X_500_te, X_1000_te], verbose=0)
+p_reg = pred[0].flatten()
+p_thr = pred[2].flatten()
+mae = mean_absolute_error(y_reg_te, p_reg)
+y_true_cls = (y_reg_te >= 1.5).astype(int)
+p_norm = (p_thr >= THRESHOLD_NORMAL).astype(int)
+p_roll = (p_thr >= THRESHOLD_ROLLING).astype(int)
+acc_norm = accuracy_score(y_true_cls, p_norm)
+acc_roll = accuracy_score(y_true_cls, p_roll)
+
+print(f"\n📈 Regression MAE: {mae:.4f}")
+print(f"🎯 Normal Mod Accuracy: {acc_norm:.2%}")
+print(f"🚀 Rolling Mod Accuracy: {acc_roll:.2%}")
+
+initial_bankroll = 1000.0
+bet_amount = 10.0
+w1, b1, w_cnt1 = initial_bankroll, 0, 0
+for i in range(len(y_reg_te)):
+    if p_thr[i] >= THRESHOLD_NORMAL:
+        w1 -= bet_amount
+        b1 += 1
+        exit_pt = min(max(1.5, p_reg[i] * 0.8), 2.5)
+        if y_reg_te[i] >= exit_pt: w1 += exit_pt * bet_amount; w_cnt1 += 1
+roi1 = (w1 - initial_bankroll) / initial_bankroll * 100
+
+w2, b2, w_cnt2 = initial_bankroll, 0, 0
+for i in range(len(y_reg_te)):
+    if p_thr[i] >= THRESHOLD_ROLLING:
+        w2 -= bet_amount
+        b2 += 1
+        if y_reg_te[i] >= 1.5: w2 += 1.5 * bet_amount; w_cnt2 += 1
+roi2 = (w2 - initial_bankroll) / initial_bankroll * 100
+
+print(f"\n💰 KASA 1 (NORMAL): ROI {roi1:+.2f}%")
+print(f"💰 KASA 2 (ROLLING): ROI {roi2:+.2f}%")
+
+# -----------------------------------------------------------------------------
+# 8. KAYDET VE PAKETLE
+# -----------------------------------------------------------------------------
+print("\n" + "="*60)
+print("📦 KAYIT VE PAKETLEME")
+print("="*60)
+
+os.makedirs('models', exist_ok=True)
+joblib.dump(scaler, 'models/scaler_progressive.pkl')
+
+info = {
+    'model': 'Progressive_Transformer_Ultimate',
+    'version': '5.3_FIXED',
+    'metrics': {'mae': float(mae), 'normal_acc': float(acc_norm), 'rolling_acc': float(acc_roll)},
+    'simulation': {'normal_roi': float(roi1), 'rolling_roi': float(roi2)}
+}
+with open('models/model_info.json', 'w') as f: json.dump(info, f, indent=2)
+
+shutil.make_archive('jetx_models_progressive_v5.3', 'zip', 'models')
+print("✅ ZIP oluşturuldu.")
+
+try:
+    from google.colab import files
+    files.download('jetx_models_progressive_v5.3.zip')
+except:
+    print("⚠️ Manuel indirme gerekli: jetx_models_progressive_v5.3.zip")
+
+print("\n🎉 İŞLEM BAŞARIYLA TAMAMLANDI!")
+print("="*80)
