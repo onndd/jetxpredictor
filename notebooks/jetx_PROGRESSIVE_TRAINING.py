@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim Stratejisi (v5.2 FIXED)
+🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim Stratejisi (v5.3 FIXED)
 
 BU DOSYA TEK BAŞINA ÇALIŞIR (STANDALONE).
 Tüm yardımcı sınıflar, loss fonksiyonları ve katmanlar içine gömülmüştür.
@@ -10,19 +10,26 @@ MİMARİ:
 - Layers: N-Beats + TCN + Transformer Encoder + Fusion
 - Outputs: Regression (Değer), Classification (3 Sınıf), Threshold (Binary)
 
-GÜNCELLEME (v5.2):
-- ✅ Class Weight Düzeltmesi: 25x -> 2.0x (Lazy Learning Çözümü)
-- ✅ Callback Parametre Hataları Giderildi
-- ✅ LR Scheduler String Hatası Giderildi
+GÜNCELLEME (v5.3):
+- ✅ PATH FIX: Proje ana dizini otomatik tespit edilir (ModuleNotFoundError çözümü).
+- ✅ DATA CLEANING: Veritabanı okuma sırasında sıkı temizlik (ValueError çözümü).
+- ✅ Class Weight Düzeltmesi: 2.0x
 - ✅ 2 MODLU YAPI: Normal (0.85) ve Rolling (0.95)
-- ✅ ÇİFT KASA SİMÜLASYONU: Canlı izleme
-
-SÜRE: ~2.5 - 3.0 saat (GPU ile)
 """
 
-import subprocess
 import sys
 import os
+from pathlib import Path
+
+# --- KRİTİK PATH DÜZELTMESİ ---
+# Bu scriptin bulunduğu klasörün bir üstünü (proje kök dizini) sys.path'e ekle
+# Böylece 'utils' ve 'category_definitions' modülleri sorunsuz bulunur.
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+    print(f"🔧 Python Path Eklendi: {project_root}")
+
 import time
 from datetime import datetime
 import json
@@ -31,21 +38,15 @@ import pickle
 import warnings
 import math
 import random
+import subprocess
 
 # Uyarıları kapat
 warnings.filterwarnings('ignore')
 
 print("="*80)
-print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim (v5.2 FIXED)")
+print("🎯 JetX PROGRESSIVE TRAINING - 3 Aşamalı Eğitim (v5.3 FIXED)")
 print("="*80)
 print(f"Başlangıç: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print()
-print("🔧 SİSTEM KONFIGURASYONU:")
-print("   Normal Mod Eşik: 0.85")
-print("   Rolling Mod Eşik: 0.95")
-print("   Mimari: Hybrid (LSTM + TCN + Transformer)")
-print("   Düzeltme: Lazy Learning Önleyici Ağırlıklar")
-print()
 
 # -----------------------------------------------------------------------------
 # 1. KÜTÜPHANE KURULUMU VE İMPORTLAR
@@ -74,17 +75,6 @@ from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error, accuracy_score, confusion_matrix, classification_report
 from tqdm.auto import tqdm
-
-# Proje kök dizinini ayarla
-if not os.path.exists('jetxpredictor') and not os.path.exists('jetx_data.db'):
-    if os.path.exists('../jetxpredictor'):
-        os.chdir('../jetxpredictor')
-    else:
-        print("\n📥 Proje klonlanıyor...")
-        subprocess.check_call(["git", "clone", "https://github.com/onndd/jetxpredictor.git"])
-        os.chdir('jetxpredictor')
-
-sys.path.append(os.getcwd())
 
 # GPU Ayarları
 print("\n🚀 GPU Ayarları Yapılandırılıyor...")
@@ -527,15 +517,26 @@ class WeightedModelCheckpoint(callbacks.Callback):
 # 3. VERİ YÜKLEME VE HAZIRLIK
 # -----------------------------------------------------------------------------
 print("\n📊 Veri yükleniyor...")
-if not os.path.exists('jetx_data.db'):
-    print("⚠️ jetx_data.db bulunamadı! Sentetik veri oluşturuluyor...")
+# Veritabanı yolunu bul (önce current dir, sonra project root)
+db_names = ['jetx_data.db', os.path.join(str(project_root), 'jetx_data.db')]
+db_path = None
+for name in db_names:
+    if os.path.exists(name):
+        db_path = name
+        break
+
+if not db_path:
+    print("⚠️ Veritabanı bulunamadı! Sentetik veri oluşturuluyor...")
     all_values = np.random.lognormal(0.5, 0.8, 5000)
     all_values = np.clip(all_values, 1.0, 100.0)
 else:
-    conn = sqlite3.connect('jetx_data.db')
+    print(f"   DB bulundu: {db_path}")
+    conn = sqlite3.connect(db_path)
     data = pd.read_sql_query("SELECT value FROM jetx_results ORDER BY id", conn)
     conn.close()
     
+    # --- VERİ TEMİZLEME (FIX) ---
+    # Bozuk karakterleri (Unicode) temizle ve float'a çevir
     raw_values = data['value'].values
     cleaned_values = []
     for val in raw_values:
@@ -546,8 +547,16 @@ else:
         except:
             continue
     all_values = np.array(cleaned_values)
+    # ----------------------------
 
-print(f"✅ {len(all_values):,} veri yüklendi")
+print(f"✅ {len(all_values):,} veri temizlendi ve yüklendi")
+if len(all_values) < 100:
+    print("⚠️ Çok az veri var, sentetik veri ekleniyor...")
+    synth = np.random.lognormal(0.5, 0.8, 1000)
+    synth = np.clip(synth, 1.0, 100.0)
+    all_values = np.concatenate([all_values, synth])
+
+print(f"   Kullanılacak Veri: {len(all_values)}")
 print(f"   Aralık: {all_values.min():.2f}x - {all_values.max():.2f}x")
 
 # Feature Extraction Loop
@@ -556,7 +565,14 @@ window_size = 1000
 X_f, X_50, X_200, X_500, X_1000 = [], [], [], [], []
 y_reg, y_cls, y_thr = [], [], []
 
-for i in tqdm(range(window_size, len(all_values)-1), desc='Features'):
+# Hız için limit koyalım (Çok büyük veride yavaşlamasın)
+MAX_SAMPLES = 10000
+if len(all_values) > MAX_SAMPLES + window_size:
+    start_idx = len(all_values) - MAX_SAMPLES
+else:
+    start_idx = window_size
+
+for i in tqdm(range(start_idx, len(all_values)-1), desc='Features'):
     hist = all_values[:i].tolist()
     target = all_values[i]
     
@@ -609,8 +625,8 @@ X_1000 = np.log10(X_1000 + 1e-8)
 
 # Kronolojik Split
 print("\n📊 TIME-SERIES SPLIT (Kronolojik)...")
-test_size = 1500
-val_size = 1000
+test_size = int(len(X_f) * 0.15)
+val_size = int(len(X_f) * 0.15)
 train_size = len(X_f) - test_size - val_size
 
 # Train
@@ -842,9 +858,12 @@ model.compile(
     metrics={'threshold': ['accuracy']}
 )
 
+# Models dizini oluştur
+os.makedirs('models', exist_ok=True)
+
 # Weighted Checkpoint (YENİ: Rolling Acc DAHİL)
 checkpoint_callback = WeightedModelCheckpoint(
-    filepath='jetx_progressive_final.h5',
+    filepath='models/jetx_progressive_final.h5',
     validation_data=(val_inputs, val_data_dict)
 )
 
@@ -871,9 +890,9 @@ print("📊 FİNAL DEĞERLENDİRME & KASA SİMÜLASYONU")
 print("="*60)
 
 # Modeli yükle (en iyi hali)
-if os.path.exists('jetx_progressive_final.h5'):
+if os.path.exists('models/jetx_progressive_final.h5'):
     try:
-        model.load_weights('jetx_progressive_final.h5')
+        model.load_weights('models/jetx_progressive_final.h5')
     except:
         print("⚠️ Ağırlıklar yüklenemedi, mevcut model kullanılıyor.")
 
@@ -937,30 +956,21 @@ print("\n" + "="*60)
 print("📦 KAYIT VE PAKETLEME")
 print("="*60)
 
-os.makedirs('models', exist_ok=True)
 joblib.dump(scaler, 'models/scaler_progressive.pkl')
 
 # Info
 info = {
     'model': 'Progressive_Transformer_Ultimate',
-    'version': '5.2_FIXED',
+    'version': '5.3_FIXED',
     'thresholds': {'normal': THRESHOLD_NORMAL, 'rolling': THRESHOLD_ROLLING},
     'metrics': {'mae': float(mae), 'normal_acc': float(acc_norm), 'rolling_acc': float(acc_roll)},
     'simulation': {'normal_roi': float(roi1), 'rolling_roi': float(roi2)}
 }
 with open('models/model_info.json', 'w') as f: json.dump(info, f, indent=2)
 
-# Zip
+# Zip (models klasörünü ziple)
 shutil.make_archive('jetx_models_progressive_v5.2', 'zip', 'models')
 print("✅ ZIP oluşturuldu.")
-
-# Colab İndirme
-try:
-    import google.colab
-    from google.colab import files
-    files.download('jetx_models_progressive_v5.2.zip')
-except:
-    print("⚠️ Manuel indirme gerekli: jetx_models_progressive_v5.2.zip")
 
 print("\n🎉 İŞLEM BAŞARIYLA TAMAMLANDI!")
 print("="*80)
